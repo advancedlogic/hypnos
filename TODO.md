@@ -81,7 +81,7 @@ _No cards yet._
       back-pressure that never stalls the other slots. Config knob stays `slots`. Measured: four clients
       on gemma4:26b-q4 reach 2.18x single-client aggregate decode tokens/s (wall 4.9 s -> 2.1 s),
       single-client TTFT unchanged; the dense E4B only 1.10x, see the plan
-      (`docs/bench/after-C-2026-10-29.md`).
+      (`docs/bench/after-C-2026-10-29.md`). Commit `4f12845`.
 - [x] 🟧 **PERF-3** `P1` Streaming text-to-speech
       Work item D of `docs/execution-efficiency-plan.md`: `synthesize_speech_stream` on the backend
       trait, Kokoro emits each chunk (and the first clause early) as ONNX returns it,
