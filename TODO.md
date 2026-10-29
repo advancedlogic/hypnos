@@ -50,13 +50,52 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 2   | 1   | 1   | 5    | 1   | 1     | 1   | 1    |
+| 2  | 2   | 1   | 1   | 6    | 1   | 4     | 4   | 1    |
 
 ---
 
 ## Backlog
 
-- [ ] 🟪 **API-1** `P1` HTTPS and API-key authentication for the HTTP server
+- [ ] ⬜ **DOC-1** `P1` Add a LICENSE file to the repository
+      Without one nobody may legally use or contribute to the code. Pick a license (MIT and/or
+      Apache-2.0 are the Rust norm), check compatibility with the vendored engines (llama.cpp,
+      sd.cpp, ONNX Runtime, espeak-ng is GPL-3.0) and the model licenses, add `LICENSE`, set
+      `license` in the workspace `Cargo.toml` and mention it in the README.
+- [ ] 🟧 **PERF-5** `P1` Benchmark model swap latency: cold vs warm vs hot
+      The 3-tier hierarchy is the headline claim but no bench measures it (baseline shows 9
+      promotions averaging ~4.8 s each). Add a `bench.sh` scenario that times the first request
+      to a large model (`gemma4:26b-q4`) starting from Tier 3 (NVMe mmap), Tier 2 (pinned RAM)
+      and Tier 1 (resident), using `POST /v1/memory/tier` to stage it. Report tier-switch ms and
+      TTFT per start tier on CUDA and Metal; save under `docs/bench/` and chart it for the README.
+- [ ] ⬛ **BUILD-1** `P1` Publish prebuilt release binaries
+      The 10-20 min native build plus vendoring, CMake/Ninja and the CUDA host-compiler pin stop
+      most people. Release workflow producing archives for Windows x64 (CUDA), Linux x64 (CUDA)
+      and macOS arm64 (Metal), each with the sd.cpp shared library, `espeak-ng-data`, the
+      example config and the built frontend. Document the CUDA runtime / driver requirement.
+- [ ] ⬛ **BUILD-2** `P2` Provide a Docker image with CUDA support
+      Multi-stage Dockerfile (build on a CUDA devel image, run on a CUDA runtime image), models
+      mounted as a volume, config via mount or env. Publish to GHCR from the release workflow
+      (BUILD-1) and add a `docker run --gpus all ...` quickstart to the README.
+- [ ] ⬛ **BUILD-3** `P2` Re-enable CI
+      `.github/workflows/ci.yml` is fully commented out. Restore the engine-free jobs: CPU-only
+      `cargo build --workspace --no-default-features`, `cargo test --workspace`, scoped `cargo fmt
+      --check` and clippy, plus `npm run build` for the frontend. Add a macOS Metal build job if
+      runner time allows.
+- [ ] ⬜ **DOC-2** `P1` Rewrite README around the pitch, a quickstart and bring-your-own models
+      Lead with the one-line pitch (one OpenAI endpoint for every modality on one GPU, with a
+      scheduler that manages VRAM), then a short demo GIF/video of the 3-tier visualizer, then a
+      quickstart (binary or Docker, one model, one request). Show a minimal `[[models]]` config
+      for an arbitrary GGUF (verify `HypnosConfig` accepts it without the default lineup) and
+      move the default lineup, build-from-source and tuning details further down. Add a short
+      comparison with Ollama / LocalAI / llama-swap and the PERF-5 swap chart.
+
+## In Progress
+
+_No cards yet._
+
+## Done
+
+- [x] 🟪 **API-1** `P1` HTTPS and API-key authentication for the HTTP server
       Today the server binds loopback only and has no authentication (the README tells people to
       put a proxy in front). Add both natively so `server.host = "0.0.0.0"` is safe on its own:
       TLS termination in-process (rustls through `axum-server` or `tokio-rustls`) configured by
@@ -67,13 +106,11 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       the key. CORS already allows `Authorization`; the playground needs an API-key field stored
       per browser and sent on every request (including streamed and multipart ones).
       Related: `cors_layer`, `observe_request`, `ServerConfig`, `validate` warning on non-loopback host.
-
-## In Progress
-
-_No cards yet._
-
-## Done
-
+      Shipped: `auth.rs` middleware (SHA-256 digests, constant-time match, 401 `invalid_api_key`
+      with `WWW-Authenticate`), `server.api_keys` / `HYPNOS_API_KEYS` / `metrics_require_auth`,
+      `[server.tls]` served by axum-server + rustls (ring), validation errors and exposure warnings,
+      playground API-key field (`apiFetch` on all 11 calls). Verified over HTTPS with streamed TTS
+      and multipart STT; the key never appears in logs. Commit `8a5658c`.
 - [x] 🟦 **UI-1** `P1` Add request log inspector panel with per-call telemetry
       Backend: keep a bounded in-memory ring of per-request records (request id, route, model id,
       status, start/end time, processing ms, tokens in / out / cached, tokens/s, tier-switch ms,
