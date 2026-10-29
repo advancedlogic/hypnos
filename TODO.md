@@ -85,7 +85,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       trait, Kokoro emits each chunk (and the first clause early) as ONNX returns it,
       `POST /v1/audio/speech` with `"stream": true` streams raw PCM or a live WAV (open-ended
       header). `hypnos_tts_ttfa_ms` records time to first audio. Measured: time to first audio 5.4 s -> 385 ms, total synthesis unchanged
-      (`docs/bench/after-D-2026-10-29.md`).
+      (`docs/bench/after-D-2026-10-29.md`). Commit `945b333`.
 - [x] 🟧 **PERF-2** `P1` Engine worker: persistent llama.cpp context, slots, prefix reuse
       Work item B of `docs/execution-efficiency-plan.md`: one worker thread per resident llama.cpp
       model owning a single context (`n_seq_max = slots`), requests served through slots with
