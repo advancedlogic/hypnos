@@ -1,0 +1,5 @@
+# Keep shell scripts runnable on Linux/macOS checkouts even when core.autocrlf=true (Windows):
+# bash rejects CRLF line endings. Batch files stay CRLF, which cmd.exe expects.
+*.sh  text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf

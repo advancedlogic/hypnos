@@ -286,11 +286,16 @@ fn run_generation(
         .unwrap_or(*resident_ctx)
         .clamp(512, model.n_ctx_train().max(512));
     let n_batch = n_ctx.min(2048);
+    // Image embeddings are decoded by mtmd as ONE non-causal batch (676 tokens per Gemma 4 image
+    // slice), and llama.cpp asserts `n_ubatch >= n_tokens` for non-causal attention. Text-only
+    // requests keep the smaller micro-batch (smaller compute buffer); multimodal ones get the
+    // whole batch so an image slice always fits.
+    let n_ubatch = if media.is_empty() { n_batch.min(512) } else { n_batch };
     let (type_k, type_v) = kv_types(cfg.arch.kv_dtype);
     let cparams = LlamaContextParams::default()
         .with_n_ctx(NonZeroU32::new(n_ctx))
         .with_n_batch(n_batch)
-        .with_n_ubatch(n_batch.min(512))
+        .with_n_ubatch(n_ubatch)
         .with_n_threads(n_threads)
         .with_n_threads_batch(n_threads)
         .with_offload_kqv(*gpu_layers > 0)

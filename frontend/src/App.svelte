@@ -20,9 +20,14 @@
   let chatModel = $state('gemma4:26b-q4');
   let chatPrompt = $state('Explain how Gemma 4 hybrid Sliding Window Attention reduces KV cache VRAM usage.');
   let includeVisionImage = $state(false);
-  let visionImageUrl = $state(
-    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
-  );
+  // 1x1 transparent PNG: lets the vision code path be exercised without a real picture.
+  const PLACEHOLDER_IMAGE_URL =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  let visionImageUrl = $state(PLACEHOLDER_IMAGE_URL);
+  // Metadata of an uploaded picture (null when the URL field was typed by hand).
+  let visionImageFile = $state(null);
+  // Mirrors `max_image_bytes` in backend/hypnos.example.toml (32 MiB).
+  const MAX_VISION_IMAGE_BYTES = 32 * 1024 * 1024;
   let chatContextLen = $state(16384);
   let chatMaxTokens = $state(128);
   let chatStream = $state(false);
@@ -194,9 +199,66 @@
   // -------------------------------------------------------------------------
   // Action Handlers for the 5 Playground Tabs
   // -------------------------------------------------------------------------
+  // Vision image upload: the picture is embedded in the request as a base64 `data:` URL, which
+  // is what the backend's `image_url` content part accepts (no server-side upload endpoint needed).
+  function onVisionFileChange(e) {
+    const file = e.target.files?.[0] || null;
+    if (!file) return;
+    lastError = '';
+    if (!file.type.startsWith('image/')) {
+      lastError = `"${file.name}" is not an image file.`;
+      e.target.value = '';
+      return;
+    }
+    if (file.size > MAX_VISION_IMAGE_BYTES) {
+      lastError = `"${file.name}" is ${formatFileSize(file.size)}; the backend accepts at most ${formatFileSize(MAX_VISION_IMAGE_BYTES)} per image.`;
+      e.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      visionImageUrl = reader.result;
+      visionImageFile = { name: file.name, size: file.size, type: file.type };
+      includeVisionImage = true;
+    };
+    reader.onerror = () => {
+      lastError = `Could not read "${file.name}".`;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function clearVisionImage() {
+    visionImageUrl = PLACEHOLDER_IMAGE_URL;
+    visionImageFile = null;
+    const input = document.getElementById('vision-file');
+    if (input) input.value = '';
+  }
+
+  // Typing or pasting into the URL field replaces whatever was uploaded.
+  function onVisionUrlInput() {
+    visionImageFile = null;
+  }
+
+  function formatFileSize(n) {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
+    return `${(n / (1024 * 1024)).toFixed(2)} MiB`;
+  }
+
+  // True when the URL field holds something the browser can render as a preview.
+  let visionPreviewUrl = $derived(
+    includeVisionImage && visionImageUrl && visionImageUrl !== PLACEHOLDER_IMAGE_URL
+      ? visionImageUrl
+      : ''
+  );
+
   async function runChatCompletion(e) {
     e?.preventDefault();
     if (!chatPrompt.trim()) return;
+    if (includeVisionImage && !visionImageUrl.trim()) {
+      lastError = 'Attach an image or enter an image URL, or untick "Attach Vision Image".';
+      return;
+    }
     isLoading = true;
     lastError = '';
 
@@ -206,6 +268,8 @@
           { type: 'image_url', image_url: { url: visionImageUrl } },
         ]
       : chatPrompt;
+    // Keep a thumbnail with the message so the log shows what the model actually saw.
+    const sentImage = includeVisionImage ? visionImageUrl : null;
 
     const payload = {
       model: chatModel,
@@ -256,6 +320,7 @@
           {
             prompt: chatPrompt,
             hasImage: includeVisionImage,
+            image: sentImage,
             reply: accumulated,
             model: chatModel,
             telemetry: capturedTelemetry,
@@ -274,6 +339,7 @@
           {
             prompt: chatPrompt,
             hasImage: includeVisionImage,
+            image: sentImage,
             reply,
             model: chatModel,
             telemetry: data.hypnos_telemetry,
@@ -835,14 +901,63 @@
             </div>
 
             {#if includeVisionImage}
-              <div>
-                <label class="block text-xs text-slate-400 mb-1" for="vision-url">Image URL / Base64 Data URI</label>
-                <input
-                  id="vision-url"
-                  type="text"
-                  bind:value={visionImageUrl}
-                  class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-300"
-                />
+              <div class="rounded-lg border border-slate-800 bg-slate-900/60 p-3 space-y-3">
+                <div class="space-y-2">
+                  <label class="block text-xs text-slate-400" for="vision-file">
+                    Upload an image (<strong class="text-slate-200">PNG, JPEG, WebP or GIF</strong>, up to {formatFileSize(MAX_VISION_IMAGE_BYTES)}).
+                    It is sent inline as a base64 <code class="text-indigo-300">data:</code> URL.
+                  </label>
+                  <input
+                    id="vision-file"
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif,image/*"
+                    onchange={onVisionFileChange}
+                    class="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700"
+                  />
+                </div>
+
+                {#if visionPreviewUrl}
+                  <div class="flex items-start gap-3">
+                    <img
+                      src={visionPreviewUrl}
+                      alt="Vision attachment preview"
+                      class="max-h-40 max-w-[16rem] rounded-lg border border-slate-700 object-contain bg-slate-950"
+                    />
+                    <div class="flex-1 min-w-0 text-xs text-slate-400 space-y-1">
+                      {#if visionImageFile}
+                        <div class="truncate text-slate-200" title={visionImageFile.name}>{visionImageFile.name}</div>
+                        <div>{visionImageFile.type} • {formatFileSize(visionImageFile.size)}</div>
+                        <div class="font-mono text-[11px]">data URL: {formatFileSize(visionImageUrl.length)}</div>
+                      {:else}
+                        <div class="text-slate-200">From URL field</div>
+                      {/if}
+                      <button
+                        type="button"
+                        onclick={clearVisionImage}
+                        class="mt-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition"
+                      >
+                        Remove image
+                      </button>
+                    </div>
+                  </div>
+                {:else}
+                  <div class="text-[11px] text-slate-500">
+                    No image selected: the request will carry a 1×1 transparent placeholder, which only exercises the vision code path.
+                  </div>
+                {/if}
+
+                <div>
+                  <label class="block text-xs text-slate-400 mb-1" for="vision-url">
+                    …or paste an image URL / Base64 Data URI
+                  </label>
+                  <input
+                    id="vision-url"
+                    type="text"
+                    bind:value={visionImageUrl}
+                    oninput={onVisionUrlInput}
+                    class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-300"
+                  />
+                </div>
               </div>
             {/if}
 
@@ -883,6 +998,13 @@
                     {/if}
                   </div>
                   <div class="text-slate-300"><strong>User:</strong> {msg.prompt}</div>
+                  {#if msg.image && msg.image !== PLACEHOLDER_IMAGE_URL}
+                    <img
+                      src={msg.image}
+                      alt="Attachment sent with this prompt"
+                      class="max-h-32 rounded border border-slate-700 object-contain bg-slate-950"
+                    />
+                  {/if}
                   <div class="text-emerald-200 font-mono bg-slate-900/90 p-2.5 rounded border border-slate-800">
                     {msg.reply}
                   </div>

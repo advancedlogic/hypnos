@@ -89,21 +89,28 @@ Notes:
 
 ### One-Command Launch (Root Scripts)
 
-`run.bat` (Windows) and `run.sh` (Linux / macOS / Git Bash) are small process managers:
+`run.bat` (Windows) and `run.sh` (Linux / macOS / Git Bash) are small process managers. Building
+and starting are separate steps: `build` compiles, `start` launches the compiled binary and never
+invokes cargo.
 
 ```text
-run.bat [start|stop|restart|status]      [backend|frontend|all]
-./run.sh [start|stop|restart|status|logs] [backend|frontend|all]
+run.bat [build|start|stop|restart|status]      [backend|frontend|all]
+./run.sh [build|start|stop|restart|status|logs] [backend|frontend|all]
 ```
 
 | Command                     | Effect                                                        |
 |-----------------------------|---------------------------------------------------------------|
-| `run.bat` / `./run.sh`      | start backend (port 8080) and frontend (port 5173)            |
-| `... start backend`         | start only the Rust server (`cargo run`, compiles on first run)|
+| `... build`                 | `cargo build --release --bin hypnos` + `npm install` (first run compiles the native engines) |
+| `... build backend`         | compile only the Rust server to `backend/target/release/hypnos[.exe]` |
+| `run.bat` / `./run.sh`      | start backend (port 8080) and frontend (port 5173) from the built artifacts |
+| `... start backend`         | start only the Rust server binary; fails with a hint if it is not built yet |
 | `... restart frontend`      | stop + start only the Vite dev server                         |
 | `... stop`                  | stop both (kills the whole process tree, frees the ports)     |
-| `... status`                | show what is running and on which PID                         |
+| `... status`                | show what is running, on which PID, and whether the backend is built |
 | `./run.sh logs [target]`    | follow `.run/backend.log` / `.run/frontend.log`               |
+
+`restart` does not rebuild: run `build` after changing Rust code, then `restart backend`.
+`HYPNOS_PROFILE=debug` makes `build`/`start` use the dev profile (`backend/target/debug/`) instead.
 
 On Windows each service gets its own console window; on Linux/macOS they run detached with logs
 under `.run/`. Both scripts prefer the rustup toolchain in `~/.cargo/bin` (the native engines need

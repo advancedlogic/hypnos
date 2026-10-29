@@ -2,14 +2,20 @@
 # ============================================================================
 #  Hypnos process manager (Linux / macOS / Git Bash)
 #
-#    ./run.sh [start|stop|restart|status|logs] [backend|frontend|all]
+#    ./run.sh [build|start|stop|restart|status|logs] [backend|frontend|all]
 #
-#    ./run.sh                  -> start all (background, logs in .run/)
-#    ./run.sh restart backend  -> rebuild + restart only the Rust backend
+#    ./run.sh build            -> compile the backend (cargo build --release) + npm install
+#    ./run.sh                  -> start all (background, logs in .run/; never compiles)
+#    ./run.sh restart backend  -> stop + start the already-built backend binary
 #    ./run.sh stop             -> stop backend and frontend
 #    ./run.sh logs             -> follow both logs
 #
-#  Backend : Rust server on http://localhost:8080  (cargo run)
+#  Build and start are separate steps: `start` launches the compiled binary
+#  backend/target/<profile>/hypnos (hypnos.exe on Windows) and refuses to run when it is
+#  missing, so a stale or in-progress cargo build can never masquerade as a running server.
+#  Set HYPNOS_PROFILE=debug to build/start the dev profile instead of release.
+#
+#  Backend : Rust server on http://localhost:8080  (compiled hypnos binary)
 #  Frontend: Vite dev server on http://localhost:5173 (npm run dev)
 #  Output goes to .run/*.log. On Linux/macOS each service runs in its own process group
 #  (pid in .run/*.pid); on Windows (Git Bash) the listening port is the source of truth.
@@ -27,6 +33,23 @@ BACKEND_CONFIG="hypnos.example.toml"
 ACTION="${1:-start}"
 TARGET="${2:-all}"
 
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;;
+    *) IS_WINDOWS=0 ;;
+esac
+
+# Cargo profile for the backend binary: release (default) or debug (`cargo build` dev profile).
+HYPNOS_PROFILE="${HYPNOS_PROFILE:-release}"
+[ "$HYPNOS_PROFILE" = dev ] && HYPNOS_PROFILE=debug
+case "$HYPNOS_PROFILE" in
+    release) CARGO_PROFILE_FLAGS=(--release) ;;
+    debug)   CARGO_PROFILE_FLAGS=() ;;
+    *)       CARGO_PROFILE_FLAGS=(--profile "$HYPNOS_PROFILE") ;;
+esac
+BACKEND_TARGET_DIR="$ROOT_DIR/backend/target/$HYPNOS_PROFILE"
+BACKEND_BIN="$BACKEND_TARGET_DIR/hypnos"
+[ "$IS_WINDOWS" = 1 ] && BACKEND_BIN="$BACKEND_BIN.exe"
+
 # Prefer the rustup-managed toolchain: the native engines need rustc >= 1.92 and a standalone
 # Rust install may come first on PATH.
 # `rustup run stable cargo` pins rustc as well: calling cargo by path still resolves `rustc` from
@@ -40,22 +63,22 @@ if [ -x "$HOME/.cargo/bin/rustup" ] || [ -x "$HOME/.cargo/bin/rustup.exe" ]; the
     CARGO_CMD=("$HOME/.cargo/bin/rustup" run stable cargo)
 fi
 
-case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;;
-    *) IS_WINDOWS=0 ;;
-esac
-
 usage() {
     cat <<EOF
 
-  Usage: ./run.sh [start|stop|restart|status|logs] [backend|frontend|all]
+  Usage: ./run.sh [build|start|stop|restart|status|logs] [backend|frontend|all]
 
-    ./run.sh                    start backend + frontend (default)
-    ./run.sh start backend      start only the Rust backend (port $BACKEND_PORT)
+    ./run.sh build              cargo build --release the backend + npm install the frontend
+    ./run.sh build backend      compile only the Rust server (backend/target/$HYPNOS_PROFILE/hypnos)
+    ./run.sh                    start backend + frontend from the built artifacts (default)
+    ./run.sh start backend      start only the Rust backend binary (port $BACKEND_PORT)
     ./run.sh restart frontend   restart only the Vite dev server (port $FRONTEND_PORT)
     ./run.sh stop               stop both
-    ./run.sh status             show what is running
+    ./run.sh status             show what is running and whether the backend is built
     ./run.sh logs [target]      tail the log file(s) in .run/
+
+  start/restart never compile; run ./run.sh build after changing Rust code.
+  HYPNOS_PROFILE=debug selects the dev profile (backend/target/debug/hypnos).
 
 EOF
     exit 1
@@ -155,7 +178,7 @@ stop_one() {
         kill_tree "$pid"; stopped=1
     done
     if [ "$name" = backend ] && [ "$IS_WINDOWS" = 1 ]; then
-        # The server binary may outlive cargo if the console was interrupted mid-run.
+        # The server binary may outlive its console if it was interrupted mid-start.
         if "$SYSTEMROOT/System32/tasklist.exe" //FI "IMAGENAME eq hypnos.exe" //NH 2>/dev/null | grep -qi 'hypnos.exe'; then
             "$SYSTEMROOT/System32/taskkill.exe" //IM hypnos.exe //F >/dev/null 2>&1
             stopped=1
@@ -171,17 +194,57 @@ stop_one() {
 }
 
 # ---------------------------------------------------------------------------
+# build
+# ---------------------------------------------------------------------------
+# build_backend: cargo build in the foreground (progress is visible, exit code propagates).
+# The vendored engine build scripts copy the stable-diffusion shared library next to the binary.
+build_backend() {
+    echo "[Hypnos] Building backend ($HYPNOS_PROFILE profile) -> $BACKEND_BIN"
+    echo "         The first build compiles the native engines (llama.cpp, stable-diffusion.cpp, espeak-ng); this takes a while."
+    (cd "$ROOT_DIR/backend" && "${CARGO_CMD[@]}" build "${CARGO_PROFILE_FLAGS[@]}" --bin hypnos)
+    local rc=$?
+    if [ "$rc" != 0 ]; then
+        echo "[Hypnos] backend build FAILED (cargo exit code $rc)."
+        return 1
+    fi
+    if [ ! -x "$BACKEND_BIN" ]; then
+        echo "[Hypnos] cargo reported success but $BACKEND_BIN does not exist."
+        return 1
+    fi
+    echo "[Hypnos] backend built: $BACKEND_BIN"
+}
+
+# build_frontend: install/refresh node dependencies. The Vite dev server bundles on the fly.
+build_frontend() {
+    echo "[Hypnos] Installing frontend dependencies (npm install)..."
+    (cd "$ROOT_DIR/frontend" && npm install) || { echo "[Hypnos] frontend dependency install FAILED."; return 1; }
+    echo "[Hypnos] frontend dependencies ready."
+}
+
+# ---------------------------------------------------------------------------
 # services
 # ---------------------------------------------------------------------------
+# start_backend: run the compiled binary. Never compiles: a missing binary points at `build`.
 start_backend() {
     local pid
     if pid="$(is_running backend "$BACKEND_PORT")"; then
         echo "[Hypnos] backend already running (pid $pid, port $BACKEND_PORT)."
         return 0
     fi
-    echo "[Hypnos] backend starting (cargo run; the first run compiles the native engines, which takes a while)"
+    if [ ! -x "$BACKEND_BIN" ]; then
+        echo "[Hypnos] backend binary not found: $BACKEND_BIN"
+        echo "         Run ./run.sh build backend first (or set HYPNOS_PROFILE to the profile you built)."
+        return 1
+    fi
+    # `cargo run` would add target/<profile>/deps to the loader path; do the same for the
+    # stable-diffusion shared library when launching the binary directly.
+    if [ "$IS_WINDOWS" = 0 ]; then
+        export LD_LIBRARY_PATH="$BACKEND_TARGET_DIR:$BACKEND_TARGET_DIR/deps${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        export DYLD_LIBRARY_PATH="$BACKEND_TARGET_DIR:$BACKEND_TARGET_DIR/deps${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+    fi
+    echo "[Hypnos] backend starting ($HYPNOS_PROFILE build: $BACKEND_BIN)"
     echo "         log: $RUN_DIR/backend.log"
-    spawn backend "$ROOT_DIR/backend" "${CARGO_CMD[@]}" run --bin hypnos -- "$BACKEND_CONFIG"
+    spawn backend "$ROOT_DIR/backend" "$BACKEND_BIN" "$BACKEND_CONFIG"
     wait_up backend "$BACKEND_PORT" 5
 }
 
@@ -192,8 +255,9 @@ start_frontend() {
         return 0
     fi
     if [ ! -d "$ROOT_DIR/frontend/node_modules" ]; then
-        echo "[Hypnos] Installing frontend dependencies..."
-        (cd "$ROOT_DIR/frontend" && npm install) || { echo "[Hypnos] npm install failed."; return 1; }
+        echo "[Hypnos] frontend dependencies not installed: $ROOT_DIR/frontend/node_modules"
+        echo "         Run ./run.sh build frontend first."
+        return 1
     fi
     echo "[Hypnos] frontend starting (npm run dev)"
     echo "         log: $RUN_DIR/frontend.log"
@@ -207,6 +271,13 @@ status_one() {
         echo "[Hypnos] $name: RUNNING  (pid $pid, http://localhost:$port)"
     else
         echo "[Hypnos] $name: stopped  (port $port free)"
+    fi
+    if [ "$name" = backend ]; then
+        if [ -x "$BACKEND_BIN" ]; then
+            echo "[Hypnos] backend binary: $BACKEND_BIN"
+        else
+            echo "[Hypnos] backend binary: not built (./run.sh build backend)"
+        fi
     fi
 }
 
@@ -226,24 +297,29 @@ logs() {
 # ---------------------------------------------------------------------------
 case "$TARGET" in backend|frontend|all) ;; *) echo "[Hypnos] Unknown target '$TARGET'."; usage ;; esac
 
+RC=0
 case "$ACTION" in
+    build)
+        [ "$TARGET" != frontend ] && { build_backend  || RC=1; }
+        [ "$TARGET" != backend ]  && { build_frontend || RC=1; }
+        ;;
     start)
-        [ "$TARGET" != frontend ] && start_backend
-        [ "$TARGET" != backend ] && start_frontend
+        [ "$TARGET" != frontend ] && { start_backend  || RC=1; }
+        [ "$TARGET" != backend ]  && { start_frontend || RC=1; }
         ;;
     stop)
-        [ "$TARGET" != backend ] && stop_one frontend "$FRONTEND_PORT"
+        [ "$TARGET" != backend ]  && stop_one frontend "$FRONTEND_PORT"
         [ "$TARGET" != frontend ] && stop_one backend "$BACKEND_PORT"
         ;;
     restart)
-        [ "$TARGET" != backend ] && stop_one frontend "$FRONTEND_PORT"
+        [ "$TARGET" != backend ]  && stop_one frontend "$FRONTEND_PORT"
         [ "$TARGET" != frontend ] && stop_one backend "$BACKEND_PORT"
-        [ "$TARGET" != frontend ] && start_backend
-        [ "$TARGET" != backend ] && start_frontend
+        [ "$TARGET" != frontend ] && { start_backend  || RC=1; }
+        [ "$TARGET" != backend ]  && { start_frontend || RC=1; }
         ;;
     status)
         [ "$TARGET" != frontend ] && status_one backend "$BACKEND_PORT"
-        [ "$TARGET" != backend ] && status_one frontend "$FRONTEND_PORT"
+        [ "$TARGET" != backend ]  && status_one frontend "$FRONTEND_PORT"
         ;;
     logs)
         logs
@@ -256,4 +332,4 @@ case "$ACTION" in
         usage
         ;;
 esac
-exit 0
+exit "$RC"
