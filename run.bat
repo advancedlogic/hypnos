@@ -16,7 +16,8 @@ REM
 REM  Build and start are separate steps: `start` launches the compiled executable
 REM  backend\target\<profile>\hypnos.exe and refuses to run when it is missing, so a
 REM  stale or in-progress cargo build can never masquerade as a running server.
-REM  Set HYPNOS_PROFILE=debug to build/start the dev profile instead of release.
+REM  Set HYPNOS_PROFILE=debug to build/start the dev profile instead of release, and
+REM  HYPNOS_CONFIG=<file> (relative to backend\) to start the backend with your own config.
 REM
 REM  Backend : Rust server on http://localhost:8080  (hypnos.exe, own console window)
 REM  Frontend: Vite dev server on http://localhost:5173 (npm run dev, own console window)
@@ -32,6 +33,7 @@ if not exist "%RUN_DIR%" mkdir "%RUN_DIR%"
 set "BACKEND_PORT=8080"
 set "FRONTEND_PORT=5173"
 set "BACKEND_CONFIG=hypnos.example.toml"
+if defined HYPNOS_CONFIG set "BACKEND_CONFIG=%HYPNOS_CONFIG%"
 
 REM Cargo profile for the backend binary: release (default) or debug (`cargo build` dev profile).
 if not defined HYPNOS_PROFILE set "HYPNOS_PROFILE=release"

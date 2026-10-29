@@ -14,7 +14,8 @@
 #  Build and start are separate steps: `start` launches the compiled binary
 #  backend/target/<profile>/hypnos (hypnos.exe on Windows) and refuses to run when it is
 #  missing, so a stale or in-progress cargo build can never masquerade as a running server.
-#  Set HYPNOS_PROFILE=debug to build/start the dev profile instead of release.
+#  Set HYPNOS_PROFILE=debug to build/start the dev profile instead of release, and
+#  HYPNOS_CONFIG=<file> (relative to backend/) to start the backend with your own config.
 #
 #  Backend : Rust server on http://localhost:8080  (compiled hypnos binary)
 #  Frontend: Vite dev server on http://localhost:5173 (npm run dev)
@@ -29,7 +30,7 @@ mkdir -p "$RUN_DIR"
 
 BACKEND_PORT=8080
 FRONTEND_PORT=5173
-BACKEND_CONFIG="hypnos.example.toml"
+BACKEND_CONFIG="${HYPNOS_CONFIG:-hypnos.example.toml}"
 
 ACTION="${1:-start}"
 TARGET="${2:-all}"
@@ -43,7 +44,7 @@ esac
 CARGO_FEATURE_FLAGS=()
 if [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ]; then
     CARGO_FEATURE_FLAGS=(--no-default-features --features metal)
-    [ -f "$ROOT_DIR/backend/hypnos.macos.example.toml" ] && BACKEND_CONFIG="hypnos.macos.example.toml"
+    [ -z "${HYPNOS_CONFIG:-}" ] && [ -f "$ROOT_DIR/backend/hypnos.macos.example.toml" ] && BACKEND_CONFIG="hypnos.macos.example.toml"
 fi
 
 # Cargo profile for the backend binary: release (default) or debug (`cargo build` dev profile).

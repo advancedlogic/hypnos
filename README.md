@@ -4,40 +4,159 @@
 
 <h1 align="center">Hypnos</h1>
 
-**Hypnos** is an OpenAI-compatible multi-modal Rust inference server (`backend/`) and Svelte 5 + Tailwind CSS interactive playground (`frontend/`) that dynamically manages model weights and KV caches across a **3-tier memory hierarchy**:
+<p align="center">
+  <b>One OpenAI-compatible endpoint for every modality on one GPU,<br>
+  with a scheduler that decides what lives in VRAM so you don't have to.</b>
+</p>
 
-1. **Tier 1 — Hot (GPU VRAM / Wired Unified Memory):** Active model layers + dynamically budgeted KV cache + activation scratchpad.
-2. **Tier 2 — Warm (Pinned Host RAM / `VirtualLock` / `mlock`):** Page-locked system RAM for ultra-fast PCIe DMA promotion (~25–55 GB/s on CUDA/ROCm) or zero-copy residency on Apple Silicon Unified Memory.
-3. **Tier 3 — Cold (NVMe SSD via `memmap2`):** Memory-mapped `.gguf`, `.safetensors`, and `.onnx` model repositories.
+Hypnos serves chat, vision, speech-to-text, text-to-speech, embeddings and image generation from a
+single Rust process. llama.cpp, stable-diffusion.cpp and ONNX Runtime are linked in, so there is no
+Python, no sidecar and no second server competing for the same GPU. A lease-based scheduler moves
+models between GPU memory, pinned RAM and NVMe on demand: the models you use all the time stay hot,
+the big ones come in when asked for, and nothing is evicted while a request is using it.
+
+- **One process, one port, one memory budget.** Every engine books its weights, KV cache and scratch
+  space with the same planner, which checks its bookings against the GPU's real free memory after
+  every load.
+- **Three memory tiers.** Tier 1 is GPU VRAM (on Apple Silicon, Metal's share of unified memory),
+  Tier 2 is page-locked host RAM that promotes over PCIe without touching the disk, and Tier 3 is the
+  memory-mapped model file on NVMe.
+- **Priorities, not timeouts.** `realtime_pinned` models never leave the GPU, `high` ones are kept
+  warm in RAM, `low` ones are evicted first. Models that don't fully fit run with part of their
+  layers on the GPU (CUDA).
+- **Drop-in for OpenAI clients.** `/v1/chat/completions` (streaming, images, audio), `/v1/embeddings`,
+  `/v1/audio/transcriptions`, `/v1/audio/speech` (streaming), `/v1/images/generations`, with
+  optional API keys and in-process HTTPS.
+- **Observable.** A live playground shows each model's tier as requests come in, every response
+  carries its placement and timing, `/metrics` is Prometheus, and a request log keeps recent calls.
+- **Runs on CUDA (Windows, Linux) and Apple Silicon (Metal).**
+
+<!-- DOC-3: demo GIF of the playground's 3-tier visualizer goes here. -->
+
+### Measured
+
+Measured on one 24 GB CUDA GPU with the default lineup (full reports in [docs/bench/](docs/bench/)):
+
+| Scenario | Result |
+| :--- | :--- |
+| Chat decode, Gemma 4 26B-A4B Q4 | ~100 tokens/s per stream |
+| Five-turn chat, time to first token per turn | 300 ms → **145 ms** with KV prefix reuse |
+| Follow-up question about the same image | 300 ms → **105 ms** (image not re-encoded) |
+| Four concurrent chat clients | **2.18x** the aggregate decode throughput of one (continuous batching) |
+| Text-to-speech, time to first audio | 5.4 s → **385 ms** with streaming synthesis |
+
+<!-- PERF-5: cold (NVMe) vs warm (pinned RAM) vs hot (VRAM) model swap chart goes here. -->
+
+### How it compares
+
+| | Hypnos | Ollama | LocalAI | llama-swap |
+| :--- | :--- | :--- | :--- | :--- |
+| Shape | one process, engines linked in | one server, a runner process per loaded model | API gateway over separate backend processes | proxy that starts and stops one server per model |
+| Focus | every modality on one GPU at once | LLMs, easy model library | broadest set of backends and model formats | swapping any OpenAI-compatible server |
+| Deciding what is loaded | shared memory planner, priorities, leases, warm RAM tier | load on request, unload after an idle timeout | per backend | one model (or group) at a time |
+
+Pick Ollama if you want the easiest install and a curated model library, LocalAI if you need a
+backend Hypnos doesn't have, and vLLM or SGLang for multi-user datacenter throughput. Hypnos is for
+the case where one machine has to serve a whole multi-modal stack (a voice assistant, an agent with
+speech, images and retrieval) and VRAM is the bottleneck.
 
 ---
 
-## Repository Structure
+## Quickstart
 
-```text
-hypnos/
-├── backend/                     # Rust Workspace (Axum OpenAI Server + 3-Tier Memory Scheduler)
-│   ├── Cargo.toml
-│   ├── hypnos.example.toml
-│   └── crates/
-│       ├── hypnos-core/         # Config, KV-Cache + Gemma 4 SWA Estimator, OpenAI Schemas
-│       ├── hypnos-memory/       # CUDA / ROCm / Metal UMA Topology & OS Pinned RAM Manager
-│       ├── hypnos-scheduler/    # Lease-based Admission Control, Partial Offload & Eviction
-│       ├── hypnos-backends/     # Native llama.cpp+mtmd, stable-diffusion.cpp & ONNX Runtime engines
-│       └── hypnos-server/       # Axum HTTP/SSE OpenAI Server & Multi-Modal Lifecycle Tests
-└── frontend/                    # Svelte 5 (Runes) + Tailwind CSS Interactive Playground
-    ├── package.json
-    ├── vite.config.js
-    └── src/
-        └── App.svelte           # Live 3-Tier Visualizer + 5-Tab Modality Playground
+Prebuilt binaries and a Docker image are not published yet (BUILD-1, BUILD-2), so for now Hypnos
+builds from source. The first build compiles every native engine and takes 10–20 minutes.
+
+**You need:** Rust 1.92+ through rustup, CMake 3.2x+, Ninja, Node.js (for the playground), and
+either the CUDA toolkit with an NVIDIA GPU (Windows needs MSVC 2022; see
+[Building from source](#building-from-source)) or an Apple Silicon Mac with the Xcode command line
+tools.
+
+```bash
+git clone https://github.com/advancedlogic/hypnos.git && cd hypnos
+./backend/scripts/setup-build-env.sh   # once per machine: GPU arch, toolchain pins
+./backend/scripts/vendor.sh            # fetch the pinned engine sources into backend/vendor/
+./run.sh models                        # the default lineup, ~31 GB into backend/models/
+./run.sh build                         # backend + playground (Metal is picked automatically on Apple Silicon)
+./run.sh start                         # API on http://localhost:8080, playground on http://localhost:5173
 ```
 
+On Windows use `powershell -ExecutionPolicy Bypass -File backend\scripts\setup-build-env.ps1` and
+`run.bat` with the same arguments; `vendor.sh` runs under Git Bash.
+
+Startup refuses to run when a configured model's files are missing, so the default profile needs the
+whole lineup. To try Hypnos with a single model, use a config of your own instead (next section).
+On a Mac, [macOS (Apple Silicon)](#macos-apple-silicon) lists which models fit at once for each RAM
+size.
+
+Then send a request with any OpenAI client, or curl:
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gemma4:e4b-q4", "messages": [{"role": "user", "content": "Hello!"}]}'
+```
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="unused")
+print(client.chat.completions.create(
+    model="gemma4:e4b-q4",
+    messages=[{"role": "user", "content": "Hello!"}],
+).choices[0].message.content)
+```
+
+`./backend/scripts/smoke_test.sh` sends one real request per modality to a running server.
+
 ---
 
-## Default Multi-Modal Model Lineup
+## Bring your own models
+
+Any GGUF that llama.cpp loads works for chat and embeddings; the chat template is read from the
+file. A complete config with a single model looks like this (paths are relative to `backend/`):
+
+```toml
+# backend/my.toml
+[[models]]
+id = "qwen3:8b"                      # the "model" name clients send
+modality = "text_generation"         # or "embeddings"; add additional_modalities = ["vision"] with an mmproj
+engine = "ggml_llama"
+weights_path = "models/Qwen3-8B-Q4_K_M.gguf"
+# aux_weights_path = "models/mmproj-....gguf"   # vision / audio projector, if the model has one
+priority = "high"                    # realtime_pinned | high | normal | low
+initial_tier = "tier2_pinned_ram"    # stage in RAM at startup; default tier3_nvme_ssd loads on first use
+
+[models.arch]                        # used to size the KV cache and the GPU/CPU layer split
+num_layers = 36                      # GGUF <arch>.block_count
+num_kv_heads = 8                     # GGUF <arch>.attention.head_count_kv
+head_dim = 128                       # GGUF <arch>.attention.key_length
+default_context_len = 8192
+max_context_len = 32768
+kv_dtype = "q8_0"                    # f16 | q8_0 | q4_0
+```
+
+```bash
+HYPNOS_CONFIG=my.toml ./run.sh start backend     # or: cd backend && ./target/release/hypnos my.toml
+```
+
+On Windows: `set HYPNOS_CONFIG=my.toml` and then `run.bat start backend`.
+
+- Hypnos does not read `[models.arch]` from the GGUF yet: copy the three values from the file's
+  metadata (the Hugging Face file page shows it, or `gguf-dump` from llama.cpp's `gguf-py`). Wrong
+  values only make the VRAM plan inaccurate; the defaults assume 32 layers, 8 KV heads and
+  `head_dim = 128`.
+- Weight size is read from the file. `[server]`, `[limits]` and `[hardware]` are optional; GPU
+  memory is detected, so you only set budgets to stay below what the device has.
+- Speech, text-to-speech and image generation need the engine-specific fields shown in
+  [backend/hypnos.example.toml](backend/hypnos.example.toml), which documents every option.
+  Startup validates the config and prints one error per problem.
+
+---
+
+## Default model lineup
 
 Every engine runs **inside the `hypnos` process**: llama.cpp + libmtmd, stable-diffusion.cpp and
-ONNX Runtime + espeak-ng are compiled and linked natively (CUDA). No Ollama, LM Studio or Python
+ONNX Runtime + espeak-ng are compiled and linked natively (CUDA or Metal). No Ollama, LM Studio or Python
 sidecar is involved.
 
 | Model ID | Modalities Served | Engine | Files (under `backend/models/`) | Default Tier Policy |
@@ -76,7 +195,11 @@ Notes:
 - `kv_dtype = "q8_0"` and the sliding-window KV cache keep the Gemma 4 context budgets small; all
   budgets live in `backend/hypnos.example.toml`.
 
-### Build prerequisites (native engines)
+---
+
+## Building from source
+
+### Prerequisites
 
 - Rust **1.92+** (rustup stable). `backend/.cargo/config.toml` pins the rustup toolchain's `rustc`
   because a standalone Rust install may shadow it on PATH.
@@ -113,32 +236,30 @@ brew install cmake ninja
   or `moss-image` plus the small models; 48 GB, both Gemma 4 models; 64 GB and up, the whole lineup.
 - For manual debugging, use `brew install llama.cpp` instead of the Windows binaries in `backend/tools/`.
 
-### Limiting memory and simulating smaller machines
+### First-time build setup
 
-All in `[hardware]` (bytes; 0 = off / auto):
+The native engines need machine-specific settings (GPU architecture, CUDA host compiler, rustc pin).
+Generate them once; the result lands in the git-ignored `<repo>/.cargo/config.toml`:
 
-| Setting | Effect |
-| :--- | :--- |
-| `vram_budget_bytes` | Cap on Tier 1 (GPU memory). Clamped to what the device reports, so it can only lower the budget. |
-| `pinned_ram_budget_bytes` | Cap on Tier 2 (warm host RAM). Clamped to physical RAM minus a 4 GiB reserve. |
-| `simulate_physical_memory_bytes` | Behave like a machine with this much RAM (never more than installed): Tier 1 and Tier 2 are derived as there. On a Mac this includes Metal's GPU share, estimated at 2/3 of RAM up to 36 GB and 3/4 above. |
-| `max_process_memory_bytes` | Soft cap on memory the `hypnos` process holds, measured from the OS before every model load. Idle models are evicted to stay under it; if that is not enough the request fails with HTTP 507 (`process_memory_cap`). |
+```powershell
+# Windows
+powershell -ExecutionPolicy Bypass -File backend\scripts\setup-build-env.ps1
+```
+```bash
+# Linux / macOS
+./backend/scripts/setup-build-env.sh
+```
 
-The budgets steer the scheduler, they are not OS-enforced: memory an engine allocates beyond its
-estimate is caught only by `max_process_memory_bytes`, and only at the next load. On macOS the process
-figure is the `phys_footprint` plus the model weights llama.cpp maps into Metal (file-backed, so the
-footprint leaves them out); on Linux the resident set; on Windows the working set. GPU memory on a
-discrete card is limited by `vram_budget_bytes` only. `/v1/memory/status` reports
-`process_memory_bytes` next to the budgets, and `recent_evictions` lists the scheduler's last automatic
-evictions with their reason (`memory_budget`, `full_gpu_placement`, `process_memory_cap`). The
-playground's memory panel shows the process bar, a "Simulated" tag and those evictions. Disk space is only consumed by `models` downloads, which
-check free space first.
+`backend/vendor/` (engine sources, git-ignored) is recreated from pinned commits plus patches with
+`./backend/scripts/vendor.sh`, whose header lists the pins; the patches are in
+[backend/vendor/patches/](backend/vendor/patches/). CPU-only builds (no CUDA toolkit, e.g. CI) use
+`cargo build --workspace --no-default-features`.
 
 ---
 
-## Running Backend & Frontend
+## Running
 
-### One-Command Launch (Root Scripts)
+### Run scripts
 
 `run.bat` (Windows) and `run.sh` (Linux / macOS / Git Bash) are small process managers. Building
 and starting are separate steps: `build` compiles, `start` launches the compiled binary and never
@@ -168,25 +289,48 @@ On Windows each service gets its own console window; on Linux/macOS they run det
 under `.run/`. Both scripts prefer the rustup toolchain in `~/.cargo/bin` (the native engines need
 rustc 1.92 or newer).
 
-### First-time build setup
+### Manual launch
 
-The native engines need machine-specific settings (GPU architecture, CUDA host compiler, rustc pin).
-Generate them once; the result lands in the git-ignored `<repo>/.cargo/config.toml`:
-
-```powershell
-# Windows
-powershell -ExecutionPolicy Bypass -File backend\scripts\setup-build-env.ps1
-```
+#### 1. Start the Rust Backend (`http://localhost:8080`)
 ```bash
-# Linux / macOS
-./backend/scripts/setup-build-env.sh
+cd backend
+cargo test
+cargo run --bin hypnos -- hypnos.example.toml
 ```
 
-`backend/vendor/` (engine sources, git-ignored) is recreated from pinned commits plus patches with
-`./backend/scripts/vendor.sh`; see [backend/vendor/VENDOR.md](backend/vendor/VENDOR.md). CPU-only
-builds (no CUDA toolkit, e.g. CI) use `cargo build --workspace --no-default-features`.
+#### 2. Start the Svelte 5 Playground (`http://localhost:5173`)
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-### Operating the server
+---
+
+## Limiting memory and simulating smaller machines
+
+All in `[hardware]` (bytes; 0 = off / auto):
+
+| Setting | Effect |
+| :--- | :--- |
+| `vram_budget_bytes` | Cap on Tier 1 (GPU memory). Clamped to what the device reports, so it can only lower the budget. |
+| `pinned_ram_budget_bytes` | Cap on Tier 2 (warm host RAM). Clamped to physical RAM minus a 4 GiB reserve. |
+| `simulate_physical_memory_bytes` | Behave like a machine with this much RAM (never more than installed): Tier 1 and Tier 2 are derived as there. On a Mac this includes Metal's GPU share, estimated at 2/3 of RAM up to 36 GB and 3/4 above. |
+| `max_process_memory_bytes` | Soft cap on memory the `hypnos` process holds, measured from the OS before every model load. Idle models are evicted to stay under it; if that is not enough the request fails with HTTP 507 (`process_memory_cap`). |
+
+The budgets steer the scheduler, they are not OS-enforced: memory an engine allocates beyond its
+estimate is caught only by `max_process_memory_bytes`, and only at the next load. On macOS the process
+figure is the `phys_footprint` plus the model weights llama.cpp maps into Metal (file-backed, so the
+footprint leaves them out); on Linux the resident set; on Windows the working set. GPU memory on a
+discrete card is limited by `vram_budget_bytes` only. `/v1/memory/status` reports
+`process_memory_bytes` next to the budgets, and `recent_evictions` lists the scheduler's last automatic
+evictions with their reason (`memory_budget`, `full_gpu_placement`, `process_memory_cap`). The
+playground's memory panel shows the process bar, a "Simulated" tag and those evictions. Disk space is only consumed by `models` downloads, which
+check free space first.
+
+---
+
+## Operating the server
 
 | Endpoint | Purpose |
 | :--- | :--- |
@@ -236,8 +380,8 @@ Behaviour that matters in production:
 - **Tests**: `cargo test --workspace` runs engine-free scheduler tests (mock backend: promotion,
   eviction order, rollback on load failure, admission, cancellation, shutdown) plus unit tests;
   `cargo test -- --ignored` runs the GPU lifecycle test against the real weights;
-  `backend/scripts/smoke_test.sh` exercises every endpoint of a running server. CI
-  (`.github/workflows/ci.yml`) builds and tests CPU-only on Ubuntu and Windows.
+  `backend/scripts/smoke_test.sh` exercises every endpoint of a running server. CI is currently
+  disabled (BUILD-3); `.github/workflows/ci.yml` holds the CPU-only build and test jobs it ran.
 - **Telemetry**: every response's `hypnos_telemetry` carries the tier placement plus an `engine`
   object with the request's timing split (`queue_ms`, `context_ms`, `prefill_ms`, `decode_ms`,
   `ttft_ms`, `prefill_tokens_per_s`, `decode_tokens_per_s`; `audio_secs` and `rtf` for speech).
@@ -253,19 +397,26 @@ Behaviour that matters in production:
   vision chat, concurrent clients, TTS, voice round trip) against a running server and prints a
   Markdown report; the current baseline is `docs/bench/baseline-2026-10-29.md`.
 
-### Manual Launch
-#### 1. Start the Rust Backend (`http://localhost:8080`)
-```bash
-cd backend
-cargo test
-cargo run --bin hypnos -- hypnos.example.toml
-```
+---
 
-### 2. Start the Svelte 5 Playground (`http://localhost:5173`)
-```bash
-cd frontend
-npm install
-npm run dev
+## Repository Structure
+
+```text
+hypnos/
+├── backend/                     # Rust Workspace (Axum OpenAI Server + 3-Tier Memory Scheduler)
+│   ├── Cargo.toml
+│   ├── hypnos.example.toml
+│   └── crates/
+│       ├── hypnos-core/         # Config, KV-Cache + Gemma 4 SWA Estimator, OpenAI Schemas
+│       ├── hypnos-memory/       # CUDA / ROCm / Metal UMA Topology & OS Pinned RAM Manager
+│       ├── hypnos-scheduler/    # Lease-based Admission Control, Partial Offload & Eviction
+│       ├── hypnos-backends/     # Native llama.cpp+mtmd, stable-diffusion.cpp & ONNX Runtime engines
+│       └── hypnos-server/       # Axum HTTP/SSE OpenAI Server & Multi-Modal Lifecycle Tests
+└── frontend/                    # Svelte 5 (Runes) + Tailwind CSS Interactive Playground
+    ├── package.json
+    ├── vite.config.js
+    └── src/
+        └── App.svelte           # Live 3-Tier Visualizer + 5-Tab Modality Playground
 ```
 
 ---

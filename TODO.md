@@ -50,7 +50,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 2   | 1   | 1   | 6    | 1   | 4     | 4   | 1    |
+| 2  | 2   | 3   | 2   | 6    | 1   | 4     | 4   | 1    |
 
 ---
 
@@ -79,13 +79,31 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       `cargo build --workspace --no-default-features`, `cargo test --workspace`, scoped `cargo fmt
       --check` and clippy, plus `npm run build` for the frontend. Add a macOS Metal build job if
       runner time allows.
-- [ ] ⬜ **DOC-2** `P1` Rewrite README around the pitch, a quickstart and bring-your-own models
-      Lead with the one-line pitch (one OpenAI endpoint for every modality on one GPU, with a
-      scheduler that manages VRAM), then a short demo GIF/video of the 3-tier visualizer, then a
-      quickstart (binary or Docker, one model, one request). Show a minimal `[[models]]` config
-      for an arbitrary GGUF (verify `HypnosConfig` accepts it without the default lineup) and
-      move the default lineup, build-from-source and tuning details further down. Add a short
-      comparison with Ollama / LocalAI / llama-swap and the PERF-5 swap chart.
+- [ ] 🟩 **ENG-1** `P2` Add Docling document conversion (PDF / images to Markdown)
+      Serve Docling-style conversion in-process, without the Python library: run
+      `granite-docling-258M` (GGUF + mmproj) through the existing llama.cpp + mtmd path on page
+      images, then turn its DocTags output into Markdown / JSON. Needs a new modality
+      (`document_conversion`), a Hypnos extension endpoint (e.g. `POST /v1/documents/convert`,
+      multipart file or URL, `output_format`), PDF page rasterization (pdfium is BSD; avoid
+      AGPL MuPDF) and per-page streaming. Check the pinned llama.cpp supports the model; add it
+      to `models.manifest`, the example configs and the default profile.
+- [ ] 🟩 **ENG-2** `P2` Add GLiNER zero-shot named-entity extraction
+      Run GLiNER ONNX exports on CPU through ONNX Runtime, like Kokoro (`onnx_runtime` engine,
+      `realtime_pinned`): tokenizer via the `tokenizers` crate, span decoding and thresholding
+      (`gline-rs`, Apache-2.0, is a reference or a dependency). New modality
+      (`entity_extraction`) and endpoint (e.g. `POST /v1/entities` with `model`, `text` or a
+      list, `labels`, `threshold`) returning spans with label, offsets and score. Add a
+      playground tab, the model to `models.manifest` and the example configs.
+- [ ] ⬜ **DOC-3** `P1` Record a demo GIF of the 3-tier visualizer for the README
+      30-60 s screen recording of the playground while chat, speech and image requests move
+      models between tiers (evictions and promotions visible). Keep it under ~5 MB, save under
+      `assets/`, and replace the `DOC-3` placeholder comment at the top of `README.md`.
+- [ ] 🟫 **MEM-1** `P2` Read `[models.arch]` defaults from GGUF metadata
+      Custom models must copy `num_layers`, `num_kv_heads` and `head_dim` from the GGUF by hand
+      (README "Bring your own models"); the defaults (32 / 8 / 128) misplan anything else. Fill
+      unset fields from `<arch>.block_count`, `.attention.head_count_kv`, `.attention.key_length`,
+      `.context_length` and the sliding-window keys, keep explicit config values, and log what
+      was detected. `gguf_inspector.rs` already parses the header.
 
 ## In Progress
 
@@ -93,6 +111,17 @@ _No cards yet._
 
 ## Done
 
+- [x] ⬜ **DOC-2** `P1` Rewrite README around the pitch, a quickstart and bring-your-own models
+      Lead with the one-line pitch (one OpenAI endpoint for every modality on one GPU, with a
+      scheduler that manages VRAM), then a short demo GIF/video of the 3-tier visualizer, then a
+      quickstart (binary or Docker, one model, one request). Show a minimal `[[models]]` config
+      for an arbitrary GGUF (verify `HypnosConfig` accepts it without the default lineup) and
+      move the default lineup, build-from-source and tuning details further down. Add a short
+      comparison with Ollama / LocalAI / llama-swap and the PERF-5 swap chart.
+      Shipped: pitch, measured results and comparison up front, then quickstart (from source until
+      BUILD-1/2) and a validated single-GGUF config; details moved below. `HYPNOS_CONFIG` selects
+      the backend config in `run.sh` / `run.bat`; an omitted `[hardware]` now auto-detects VRAM
+      (it used to book a fixed 24 GB). Demo GIF split into DOC-3, swap chart waits on PERF-5.
 - [x] ⬜ **DOC-1** `P1` Add a LICENSE file to the repository
       Without one nobody may legally use or contribute to the code. Pick a license (MIT and/or
       Apache-2.0 are the Rust norm), check compatibility with the vendored engines (llama.cpp,
