@@ -50,7 +50,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 1   | 1   | 1   | 5    | 1   | 1     | 1   | 1    |
+| 2  | 2   | 1   | 1   | 5    | 1   | 1     | 1   | 1    |
 
 ---
 
@@ -67,6 +67,17 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       route, duration, tokens in/out/cached and tokens/s, a level selector, filter by model/route,
       and a detail view showing the full input and output of the selected call.
       Related: `ExecutionTelemetry`, `metrics.rs`, `x-request-id` header.
+- [ ] 🟪 **API-1** `P1` HTTPS and API-key authentication for the HTTP server
+      Today the server binds loopback only and has no authentication (the README tells people to
+      put a proxy in front). Add both natively so `server.host = "0.0.0.0"` is safe on its own:
+      TLS termination in-process (rustls through `axum-server` or `tokio-rustls`) configured by
+      `server.tls.cert_path` / `server.tls.key_path` (PEM; plain HTTP when unset), and bearer
+      authentication for every `/v1/*` route from a `server.api_keys` list (env override
+      `HYPNOS_API_KEYS`; `/health`, `/ready` and `/metrics` stay open or get their own flag).
+      Compare keys in constant time, answer 401 in the OpenAI error shape, log rejections without
+      the key. CORS already allows `Authorization`; the playground needs an API-key field stored
+      per browser and sent on every request (including streamed and multipart ones).
+      Related: `cors_layer`, `observe_request`, `ServerConfig`, `validate` warning on non-loopback host.
 
 ## In Progress
 
