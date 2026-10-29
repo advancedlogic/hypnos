@@ -71,7 +71,7 @@ fi
 echo "-- audio/speech (kokoro-82m-q4) ..."
 code=$(curl -s -m 300 -o "$OUT/speech.wav" -w '%{http_code}' "$HOST/v1/audio/speech" -H 'Content-Type: application/json' \
   -d '{"model":"kokoro-82m-q4","input":"Hypnos speaks with Kokoro, entirely in process.","voice":"af_heart"}')
-size=$(stat -c %s "$OUT/speech.wav" 2>/dev/null || echo 0)
+size=$(wc -c < "$OUT/speech.wav" 2>/dev/null | tr -d " " || echo 0)  # wc: portable (BSD stat has no -c)
 head -c 4 "$OUT/speech.wav" | grep -q RIFF && [ "$code" = 200 ] && [ "$size" -gt 20000 ] && ok "tts ($size bytes wav)" || bad "tts (http $code, $size bytes)"
 
 # 7. embeddings -----------------------------------------------------------------------------

@@ -19,8 +19,10 @@ Implementation status (M5 Max, 128 GB, macOS 27):
 | 1.2 two Metal backends | done: with the shared sd.cpp build there are no duplicate symbols, and `GGMLMetalClass` is only compiled when `GGML_METAL_EMBED_LIBRARY` is off, so neither image defines it (R1 closed) |
 | 1.3 device probe | verified: Metal reports `total = recommendedMaxWorkingSetSize`, `free = total - currentAllocatedSize`, type `GPU` (R2 closed) |
 | 1.4 BF16 projectors | works on M5 (native bfloat); M1 still unverified. The E4B repo ships no F16 projector, so the fallback above only exists for the 26B model |
-| 1.5 sd.cpp flash attention | pending (MOSS-Image test) |
-| Endpoints | verified: `/v1/embeddings` (768-d), `/v1/audio/speech`, `gemma4:e4b-q4` text, vision and `jfk.wav` transcription |
+| 1.5 sd.cpp flash attention | verified: MOSS-Image 1024x1024 with `diffusion_flash_attn = true` on Metal, correct image, 131 s (125 s sampling); no change needed |
+| Endpoints | verified: `backend/scripts/smoke_test.sh` passes 9/9 against `./run.sh start backend` with the full macOS profile (the TTS size check used GNU `stat -c`, now `wc -c`) |
+| Section 8 checks | all five models resident at once: 34.6 GiB booked of 128 GiB physical, 26.6 GiB actually allocated by Metal; wired memory 32.9 GiB while running, 6.0 GiB after `./run.sh stop` |
+| 2.1 eviction | verified with Tier 1 capped at 22 GiB (emulating a 32 GB Mac's working set): `moss-image` with `gemma4:26b-q4` resident evicts the 26B model to Tier 2 and succeeds. A real 32 GB machine is still untested |
 | Full GPU offload | fixed for all platforms: a full placement now passes `n_gpu_layers > n_layer`, so llama.cpp also offloads the output layer (43/43 instead of 42/43; E4B decode about 36-47 to 53-57 tok/s) |
 | 2.1 one physical budget, 2.2 Metal working set, 2.3 all-or-nothing placement, 2.5 `mlock`/`MADV_DONTNEED` off on UMA | done; 2.2 verified live (estimate 96 GiB, Metal 107.5 GiB, Tier 2 re-derived to 16.5 GiB) |
 | 2.4 promotion cost model | not started (keep-loaded demotion is the follow-up) |
