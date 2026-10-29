@@ -346,7 +346,7 @@ impl Default for HardwareConfig {
         Self {
             accelerator: AcceleratorKind::Auto,
             device_id: 0,
-            vram_budget_bytes: 24 * 1024 * 1024 * 1024, // 24 GB default
+            vram_budget_bytes: 0, // auto-detect, as when [hardware] omits the key
             vram_safety_margin_bytes: default_vram_safety_margin(),
             pinned_ram_budget_bytes: default_pinned_ram_budget(),
             lock_host_memory: None,
