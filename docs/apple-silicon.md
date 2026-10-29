@@ -3,10 +3,30 @@
 Implementation guide for running the Hypnos backend natively on Apple Silicon Macs (M1 and later)
 with the GPU driven through Metal, plus an assessment of an optional MLX engine.
 
-Status: **design / work plan**. Nothing in this document has been implemented or verified on a Mac
-yet. Every claim about upstream behaviour (ggml, llama.cpp, stable-diffusion.cpp, macOS) is
-annotated with where it comes from, and every item that needs a real machine to confirm is marked
-**VERIFY**.
+Status: **partially implemented**. Every claim about upstream behaviour (ggml, llama.cpp,
+stable-diffusion.cpp, macOS) is annotated with where it comes from, and every item that needs a real
+machine to confirm is marked **VERIFY**.
+
+Implementation status (M5 Max, 128 GB, macOS 27):
+
+| Item | State |
+| :--- | :--- |
+| 0.1 `metal` feature (option A), forwarded by `hypnos-server` | done |
+| 0.2 `run.sh` flags + macOS profile, `setup-build-env.sh` Darwin branch | done |
+| 0.3 OpenMP only with `cuda` | done |
+| 0.4 performance-core thread count | done |
+| 1.1 rpath for `libstable-diffusion.dylib` | done: `-rpath @executable_path` from the `hypnos-backends` and `hypnos-server` build scripts (a dependency's `rustc-link-arg` does not reach other crates, so it cannot live in the diffusion-rs patch); binary and tests run without `DYLD_LIBRARY_PATH` |
+| 1.2 two Metal backends | done: with the shared sd.cpp build there are no duplicate symbols, and `GGMLMetalClass` is only compiled when `GGML_METAL_EMBED_LIBRARY` is off, so neither image defines it (R1 closed) |
+| 1.3 device probe | verified: Metal reports `total = recommendedMaxWorkingSetSize`, `free = total - currentAllocatedSize`, type `GPU` (R2 closed) |
+| 1.4 BF16 projectors | works on M5 (native bfloat); M1 still unverified. The E4B repo ships no F16 projector, so the fallback above only exists for the 26B model |
+| 1.5 sd.cpp flash attention | pending (MOSS-Image test) |
+| Endpoints | verified: `/v1/embeddings` (768-d), `/v1/audio/speech`, `gemma4:e4b-q4` text, vision and `jfk.wav` transcription |
+| Full GPU offload | fixed for all platforms: a full placement now passes `n_gpu_layers > n_layer`, so llama.cpp also offloads the output layer (43/43 instead of 42/43; E4B decode about 36-47 to 53-57 tok/s) |
+| 2.1 one physical budget, 2.2 Metal working set, 2.3 all-or-nothing placement, 2.5 `mlock`/`MADV_DONTNEED` off on UMA | done; 2.2 verified live (estimate 96 GiB, Metal 107.5 GiB, Tier 2 re-derived to 16.5 GiB) |
+| 2.4 promotion cost model | not started (keep-loaded demotion is the follow-up) |
+| 2.6 status JSON | `physical_pool_free_bytes` and `capabilities.physical_memory_bytes` added; frontend not changed |
+| 3 macOS profile + README | done (`backend/hypnos.macos.example.toml`) |
+| 4 CI | macOS job added to the (still disabled) workflow; unit tests added |
 
 ---
 
@@ -89,9 +109,11 @@ root; line numbers refer to the current tree.
   sets `use_metal = true` whenever the target triple contains `apple` and Vulkan is not requested
   (line 101), then defines `SD_METAL=ON` and links `Metal` and `MetalKit` (lines 162 to 171).
   sd.cpp's own CMake maps `SD_METAL` to `GGML_METAL` (`stable-diffusion.cpp/CMakeLists.txt` line 113).
-- **ONNX Runtime (Kokoro)** uses the CPU execution provider on every platform
-  (`backend/crates/hypnos-backends/src/kokoro.rs`, session built around line 246). That is correct
-  for an 82M-parameter model and needs no change. A CoreML provider is possible later but not needed.
+- **ONNX Runtime (Kokoro)**: the session sets no execution provider
+  (`backend/crates/hypnos-backends/src/kokoro.rs`, session built around line 246), and on macOS
+  ort's default `AutoDevicePolicy::MaxEfficiency` registers CoreML. CoreML takes only 71 of the
+  graph's 2273 nodes (24 partitions), yet it is faster on an M5 Max: 0.79 s per sentence against
+  1.15 s with `PreferCPU`. Keep the default.
 
 ### 3.2 Memory layer
 

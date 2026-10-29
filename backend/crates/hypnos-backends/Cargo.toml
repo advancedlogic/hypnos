@@ -10,7 +10,10 @@ rust-version.workspace = true
 default = ["cuda"]
 # GPU acceleration for llama.cpp and stable-diffusion.cpp. Disable (`--no-default-features`) for
 # CPU-only builds, e.g. on CI runners without a CUDA toolkit.
-cuda = ["llama-cpp-2/cuda", "diffusion-rs-sys/cuda"]
+cuda = ["llama-cpp-2/cuda", "llama-cpp-2/openmp", "diffusion-rs-sys/cuda"]
+# Apple Silicon: `--no-default-features --features metal`. The vendored crates already turn Metal on
+# for aarch64 macOS; the feature makes that explicit and keeps `cuda` (and its nvcc probe) out.
+metal = ["llama-cpp-2/metal", "diffusion-rs-sys/metal"]
 
 [dependencies]
 hypnos-core.workspace = true

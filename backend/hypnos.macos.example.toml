@@ -1,0 +1,207 @@
+# =============================================================================
+# Hypnos — Apple Silicon (Metal, unified memory) profile
+#
+# Same models as hypnos.example.toml; only the [hardware] section and the GPU layer ratios differ.
+# On unified memory CPU and GPU share one pool of RAM:
+#   Tier 1 = the Metal working set (Metal's recommendedMaxWorkingSetSize, about 2/3 to 3/4 of RAM)
+#   Tier 2 = weights kept warm in the page cache, budgeted from what Tier 1 leaves free
+#   Tier 3 = NVMe SSD
+# A model is either fully on the GPU or not resident; partial layer splits buy nothing here.
+#
+# What fits at once (weights only):
+#   16 GB  gemma4:e4b-q4 + embeddings + Kokoro (the 26B model does not fit)
+#   32 GB  one of gemma4:26b-q4 / moss-image, plus the small models
+#   48 GB  gemma4:26b-q4 + gemma4:e4b-q4 + small models, or 26B + MOSS
+#   64 GB+ the whole lineup (about 31 GiB) with KV-cache headroom
+#
+# To raise the GPU ceiling (not persistent across reboots):
+#   sudo sysctl iogpu.wired_limit_mb=<MiB>
+# Hypnos reads that limit, and Metal's own figure once the engines start.
+#
+# Every model below runs INSIDE the hypnos process (llama.cpp, stable-diffusion.cpp and
+# ONNX Runtime are linked natively). No Ollama / LM Studio / Python sidecar is involved.
+#
+#   1. gemma4:26b-q4   (Text Generation + Vision)           llama.cpp + libmtmd
+#   2. gemma4:e4b-q4   (Audio / Speech-to-Text + Chat)      llama.cpp + libmtmd (audio encoder)
+#   3. kokoro-82m-q4   (Text-to-Speech)                     ONNX Runtime + espeak-ng
+#   4. gemmaembedding2 (Vector Embeddings)                  llama.cpp
+#   5. moss-image      (Image Generation)                   stable-diffusion.cpp
+#
+# Paths are relative to the working directory (run from `backend/`).
+# =============================================================================
+
+[server]
+# Loopback only: the API has no authentication. Use "0.0.0.0" solely behind an authenticating proxy.
+host = "127.0.0.1"
+port = 8080
+kv_idle_timeout_secs = 300
+# CORS: exact origins or "http://localhost:*" / "http://127.0.0.1:*" wildcards. Empty = any loopback origin.
+allowed_origins = []
+# "pretty" for terminals, "json" (one object per line) for log shippers. Env HYPNOS_LOG_FORMAT overrides.
+log_format = "pretty"
+
+[limits]
+request_timeout_secs = 900          # wall-clock budget per request (streaming: until headers are sent)
+max_queue_per_model = 8             # queued + running requests per model; beyond this -> HTTP 429
+max_body_bytes = 268435456          # 256 MiB HTTP body (multipart uploads included)
+max_audio_bytes = 67108864          # 64 MiB per audio clip
+max_image_bytes = 33554432          # 32 MiB per image (data: URL or remote download)
+max_prompt_chars = 1000000          # total characters across messages / embedding inputs / TTS text
+max_tokens_cap = 8192               # upper bound applied to max_tokens
+max_images_per_request = 4          # cap on `n` for /v1/images/generations
+allow_remote_image_urls = true      # set false to accept only data: URLs (no outbound fetches)
+
+[hardware]
+# Options: "auto", "nvidia_cuda", "amd_rocm", "apple_metal_uma", "vulkan"
+accelerator = "apple_metal_uma"
+device_id = 0
+# 0 = use the Metal working set (iogpu.wired_limit_mb if raised, else Metal's recommended size)
+vram_budget_bytes = 0
+vram_safety_margin_bytes = 2147483648   # 2 GiB: the window server and other apps share the GPU pool
+# Upper bound only: on unified memory Tier 2 is clamped to RAM - working set - 4 GiB OS reserve.
+pinned_ram_budget_bytes = 34359738368
+# mlock and Metal share one wired-memory limit; keep pages warm via the page cache instead.
+lock_host_memory = false
+
+# -----------------------------------------------------------------------------
+# 1. Gemma 4 26B-A4B (MoE, Q4_0) — Text Generation + Vision (/v1/chat/completions)
+#    ggml-org/gemma-4-26B-A4B-it-GGUF
+# -----------------------------------------------------------------------------
+[[models]]
+id = "gemma4:26b-q4"
+modality = "text_generation"
+additional_modalities = ["vision"]
+engine = "ggml_llama"
+weights_path = "models/gemma-4-26B-A4B-it-Q4_0.gguf"
+aux_weights_path = "models/mmproj-gemma-4-26B-A4B-it-BF16.gguf"
+total_weight_bytes = 15814641056        # 13.6 GiB weights + 1.1 GiB vision projector
+min_gpu_layer_ratio = 1.0               # unified memory: all layers or none
+initial_tier = "tier2_pinned_ram"       # Pre-stage in pinned RAM on boot for fast promotion
+keep_warm_in_ram = true
+priority = "high"
+
+[models.arch]
+num_layers = 30
+num_kv_heads = 8                        # global layers: 8 KV heads x 512 head_dim; SWA layers: 2 x 256
+head_dim = 512
+default_context_len = 16384
+max_context_len = 131072
+sliding_window_len = 1024
+global_attn_every_n_layers = 6          # 5 local SWA layers per 1 full global layer
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 2415919104   # token embeddings + 1.1 GiB vision tower (not splittable)
+activation_workspace_bytes = 805306368
+
+# -----------------------------------------------------------------------------
+# 2. Gemma 4 E4B (Q4_0) — Audio / Speech-to-Text (/v1/audio/transcriptions) + Chat
+#    ggml-org/gemma-4-E4B-it-GGUF with the BF16 audio+vision projector
+# -----------------------------------------------------------------------------
+[[models]]
+id = "gemma4:e4b-q4"
+modality = "speech_to_text"
+additional_modalities = ["text_generation", "vision"]
+engine = "ggml_llama"
+weights_path = "models/gemma-4-E4B-it-Q4_0.gguf"
+aux_weights_path = "models/mmproj-gemma-4-E4B-it-BF16.gguf"
+total_weight_bytes = 5582359648         # 4.3 GiB weights + 0.9 GiB audio/vision projector
+min_gpu_layer_ratio = 1.0               # unified memory: all layers or none
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+
+[models.arch]
+num_layers = 42
+num_kv_heads = 2
+head_dim = 512
+default_context_len = 8192
+max_context_len = 131072
+sliding_window_len = 512
+global_attn_every_n_layers = 6
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 1610612736   # embeddings + conformer audio encoder + vision tower
+activation_workspace_bytes = 536870912
+
+# -----------------------------------------------------------------------------
+# 3. Kokoro 82M (fp16 ONNX) — Text-to-Speech (/v1/audio/speech)
+#    onnx-community/Kokoro-82M-v1.0-ONNX; runs on CPU via ONNX Runtime (82M params, real-time+).
+#    The id is kept as "kokoro-82m-q4" for API compatibility with the playground, but the fp16 graph is
+#    used: the quantized model_q8f16.onnx / model_q4.onnx variants crash the statically linked
+#    ONNX Runtime 1.31 CPU provider at session creation on Windows.
+# -----------------------------------------------------------------------------
+[[models]]
+id = "kokoro-82m-q4"
+modality = "text_to_speech"
+engine = "onnx_runtime"
+weights_path = "models/kokoro/model_fp16.onnx"
+voices_path = "models/kokoro/voices"
+total_weight_bytes = 0                  # auto-detected from the file (~82 MiB)
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier1_gpu_vram"
+keep_warm_in_ram = true
+priority = "realtime_pinned"
+
+[models.arch]
+num_layers = 12
+num_kv_heads = 0
+head_dim = 64
+default_context_len = 512
+max_context_len = 2048
+kv_dtype = "f16"
+non_layer_overhead_bytes = 15728640
+activation_workspace_bytes = 67108864
+
+# -----------------------------------------------------------------------------
+# 4. EmbeddingGemma 2 (Q8_0) — Vector Embeddings (/v1/embeddings)
+#    ggml-org/embeddinggemma-2-GGUF, 768-dim output, mean pooling
+# -----------------------------------------------------------------------------
+[[models]]
+id = "gemmaembedding2"
+modality = "embeddings"
+engine = "ggml_llama"
+weights_path = "models/embeddinggemma-2-Q8_0.gguf"
+total_weight_bytes = 0                  # auto-detected (~296 MiB)
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier1_gpu_vram"         # Always hot in Tier 1 VRAM
+keep_warm_in_ram = true
+priority = "realtime_pinned"            # Never evicted when heavy models load
+
+[models.arch]
+num_layers = 24
+num_kv_heads = 2
+head_dim = 512
+default_context_len = 2048
+max_context_len = 8192
+sliding_window_len = 1024
+global_attn_every_n_layers = 6
+kv_dtype = "f16"
+non_layer_overhead_bytes = 104857600
+activation_workspace_bytes = 134217728
+
+# -----------------------------------------------------------------------------
+# 5. MOSS-Image SFT (Q4_K) — Image Generation (/v1/images/generations)
+#    DiT: leejet/MOSS-Image-SFT-GGUF, text encoder: unsloth/Qwen3.5-9B-GGUF Q4_K_M,
+#    VAE: Comfy-Org/MOSS-Image flux2-vae, tokenizer: OpenMOSS-Team/MOSS-Image-Base
+# -----------------------------------------------------------------------------
+[[models]]
+id = "moss-image"
+modality = "image_generation"
+engine = "ggml_diffusion"
+weights_path = "models/MOSS-Image-SFT-Q4_K.gguf"
+text_encoder_path = "models/Qwen3.5-9B-Q4_K_M.gguf"
+aux_weights_path = "models/flux2-vae.safetensors"
+tokenizer_path = "models/moss_tokenizer.json"
+total_weight_bytes = 9344134556         # 3.3 GiB DiT + 5.7 GiB Qwen3.5-9B + 0.3 GiB VAE
+min_gpu_layer_ratio = 1.0               # unified memory: all layers or none
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = true
+priority = "low"
+
+[models.arch]
+num_layers = 48
+num_kv_heads = 0
+head_dim = 128
+default_context_len = 512
+max_context_len = 1024
+kv_dtype = "f16"
+non_layer_overhead_bytes = 6442450944   # text encoder + VAE are not block-splittable
+activation_workspace_bytes = 3221225472

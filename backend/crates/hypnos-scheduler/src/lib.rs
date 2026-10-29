@@ -255,15 +255,7 @@ impl ModelScheduler {
         // Ground the budget view in the device's real free memory before planning.
         self.memory.reconcile_vram();
 
-        // Available VRAM includes whatever VRAM `model_id` is ALREADY holding.
-        let mut avail_vram = self
-            .memory
-            .effective_free_vram_bytes()
-            .saturating_add(current_plan.total_vram_bytes());
-        let mut avail_ram = self
-            .memory
-            .free_pinned_ram_bytes()
-            .saturating_add(current_plan.pinned_ram_bytes);
+        let (mut avail_vram, mut avail_ram) = self.available_for(&current_plan);
 
         let mut target_plan = KvCacheEstimator::compute_optimal_placement(
             &cfg,
@@ -310,14 +302,7 @@ impl ModelScheduler {
             evicted_models.push(candidate_id);
 
             self.memory.reconcile_vram();
-            avail_vram = self
-                .memory
-                .effective_free_vram_bytes()
-                .saturating_add(current_plan.total_vram_bytes());
-            avail_ram = self
-                .memory
-                .free_pinned_ram_bytes()
-                .saturating_add(current_plan.pinned_ram_bytes);
+            (avail_vram, avail_ram) = self.available_for(&current_plan);
 
             target_plan = KvCacheEstimator::compute_optimal_placement(
                 &cfg,
@@ -398,6 +383,29 @@ impl ModelScheduler {
             evicted_models,
             _admission: admission,
         })
+    }
+
+    /// `(vram, pinned_ram)` a new placement for a model currently at `current` may use, counting what
+    /// that model already holds.
+    fn available_for(&self, current: &LayerPlacementPlan) -> (u64, u64) {
+        let mut vram = self
+            .memory
+            .effective_free_vram_bytes()
+            .saturating_add(current.total_vram_bytes());
+        let ram = self
+            .memory
+            .free_pinned_ram_bytes()
+            .saturating_add(current.pinned_ram_bytes);
+        if let Some(pool_free) = self.memory.physical_pool_free_bytes() {
+            // Unified memory: Tier 1 and Tier 2 are the same RAM, so the model's Tier 2 pages are
+            // released when it becomes resident, and other models' Tier 2 bookings limit Tier 1.
+            vram = vram.min(
+                pool_free
+                    .saturating_add(current.total_vram_bytes())
+                    .saturating_add(current.pinned_ram_bytes),
+            );
+        }
+        (vram, ram)
     }
 
     /// Manually promotes or demotes a model to a specific tier (`/v1/memory/tier`).

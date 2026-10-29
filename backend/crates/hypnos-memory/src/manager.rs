@@ -1,4 +1,4 @@
-use crate::hardware::DeviceMemoryCapabilities;
+use crate::hardware::{DeviceMemoryCapabilities, UMA_OS_RESERVE_BYTES};
 use crate::mmap_cache::MmapWeightBuffer;
 use hypnos_core::config::{HardwareConfig, MemoryTier, MemoryTopology, ModelConfig};
 use hypnos_core::error::{HypnosError, Result};
@@ -42,6 +42,9 @@ pub struct MemoryHierarchyStatus {
     pub tier1_vram_effective_free_bytes: u64,
     pub tier2_pinned_ram_used_bytes: u64,
     pub tier2_pinned_ram_free_bytes: u64,
+    /// Unified memory only: physical RAM not booked by either tier (Tier 1 and Tier 2 share it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub physical_pool_free_bytes: Option<u64>,
     pub models: Vec<ModelTierSnapshot>,
 }
 
@@ -63,7 +66,12 @@ pub struct ModelTierSnapshot {
 /// Coordinates memory placement across Tier 1 (GPU VRAM / Wired UMA),
 /// Tier 2 (Pinned Host RAM / Warm UMA), and Tier 3 (NVMe SSD).
 pub struct TieredMemoryManager {
-    capabilities: DeviceMemoryCapabilities,
+    /// Mutable only on unified memory, where the GPU's own working-set figure replaces the
+    /// startup estimate once the engine is initialised.
+    capabilities: RwLock<DeviceMemoryCapabilities>,
+    /// `hardware.vram_budget_bytes` (0 = derive from the device).
+    configured_vram_budget_bytes: u64,
+    configured_pinned_ram_budget_bytes: u64,
     lock_host_memory: bool,
     models: RwLock<HashMap<String, ManagedModelMemory>>,
     vram_used_bytes: AtomicU64,
@@ -79,7 +87,19 @@ pub struct TieredMemoryManager {
 impl TieredMemoryManager {
     pub fn new(hw_config: &HardwareConfig, model_configs: Vec<ModelConfig>) -> Result<Self> {
         let capabilities = DeviceMemoryCapabilities::detect(hw_config);
-        if hw_config.lock_host_memory {
+        let is_uma = capabilities.topology == MemoryTopology::UnifiedMemory;
+        let lock_host_memory = hw_config.lock_host_memory_for(capabilities.topology);
+        if is_uma {
+            if lock_host_memory {
+                warn!("lock_host_memory = true on unified memory: mlock and the Metal working set share one wired-memory limit");
+            }
+            if let Some(w) =
+                hw_config.unified_memory_oversubscription(capabilities.physical_memory_bytes)
+            {
+                warn!(config_warning = %w);
+            }
+        }
+        if lock_host_memory {
             crate::mmap_cache::raise_working_set_limit(
                 hw_config
                     .pinned_ram_budget_bytes
@@ -89,8 +109,11 @@ impl TieredMemoryManager {
         let mut models = HashMap::new();
 
         for mut cfg in model_configs {
-            let host_buffer =
-                MmapWeightBuffer::open_or_virtual(&cfg.weights_path, cfg.total_weight_bytes)?;
+            let host_buffer = MmapWeightBuffer::open_or_virtual(
+                &cfg.weights_path,
+                cfg.total_weight_bytes,
+                !is_uma,
+            )?;
             if cfg.total_weight_bytes == 0 {
                 cfg.total_weight_bytes = host_buffer.len_bytes().max(512 * 1024 * 1024);
             }
@@ -120,8 +143,10 @@ impl TieredMemoryManager {
         }
 
         Ok(Self {
-            capabilities,
-            lock_host_memory: hw_config.lock_host_memory,
+            capabilities: RwLock::new(capabilities),
+            configured_vram_budget_bytes: hw_config.vram_budget_bytes,
+            configured_pinned_ram_budget_bytes: hw_config.pinned_ram_budget_bytes,
+            lock_host_memory,
             models: RwLock::new(models),
             vram_used_bytes: AtomicU64::new(0),
             pinned_ram_used_bytes: AtomicU64::new(0),
@@ -133,18 +158,39 @@ impl TieredMemoryManager {
         })
     }
 
-    pub fn capabilities(&self) -> &DeviceMemoryCapabilities {
-        &self.capabilities
+    pub fn capabilities(&self) -> DeviceMemoryCapabilities {
+        self.capabilities.read().clone()
     }
 
     pub fn is_unified_memory(&self) -> bool {
-        self.capabilities.topology == MemoryTopology::UnifiedMemory
+        self.capabilities.read().topology == MemoryTopology::UnifiedMemory
     }
 
     /// Installs a live device-memory probe. Called by the server once an engine is available.
+    ///
+    /// On unified memory with an auto-detected budget, the device's total (Metal's
+    /// `recommendedMaxWorkingSetSize`) becomes the Tier 1 ceiling, replacing the sysctl estimate.
     pub fn set_gpu_probe(&self, probe: Arc<dyn GpuMemoryProbe>) {
         *self.gpu_probe.write() = Some(probe);
-        self.reconcile_vram();
+        let Some((_, device_total)) = self.reconcile_vram() else {
+            return;
+        };
+        if !self.is_unified_memory() || self.configured_vram_budget_bytes > 0 || device_total == 0 {
+            return;
+        }
+        let mut caps = self.capabilities.write();
+        if caps.total_vram_bytes == device_total {
+            return;
+        }
+        let estimated_mb = caps.total_vram_bytes / (1024 * 1024);
+        caps.apply_uma_working_set(device_total, self.configured_pinned_ram_budget_bytes);
+        info!(
+            estimated_mb,
+            device_working_set_mb = device_total / (1024 * 1024),
+            usable_vram_mb = caps.usable_vram_budget_bytes / (1024 * 1024),
+            pinned_ram_mb = caps.pinned_ram_budget_bytes / (1024 * 1024),
+            "Unified memory: Tier 1 budget set from the GPU's recommended working set"
+        );
     }
 
     /// Re-reads device memory and derives how much VRAM is in use beyond what the planner booked.
@@ -177,6 +223,7 @@ impl TieredMemoryManager {
     /// Budget-based free VRAM (what the planner has not booked).
     pub fn free_vram_bytes(&self) -> u64 {
         self.capabilities
+            .read()
             .usable_vram_budget_bytes
             .saturating_sub(self.used_vram_bytes())
     }
@@ -199,10 +246,10 @@ impl TieredMemoryManager {
         let budget_free = self.free_vram_bytes();
         match self.real_free_vram_bytes() {
             Some(real_free) => {
-                let margin = self
-                    .capabilities
+                let caps = self.capabilities.read();
+                let margin = caps
                     .total_vram_bytes
-                    .saturating_sub(self.capabilities.usable_vram_budget_bytes);
+                    .saturating_sub(caps.usable_vram_budget_bytes);
                 budget_free.min(real_free.saturating_sub(margin))
             }
             None => budget_free,
@@ -215,8 +262,24 @@ impl TieredMemoryManager {
 
     pub fn free_pinned_ram_bytes(&self) -> u64 {
         self.capabilities
+            .read()
             .pinned_ram_budget_bytes
             .saturating_sub(self.used_pinned_ram_bytes())
+    }
+
+    /// Unified memory only: physical RAM (minus the OS reserve) that neither Tier 1 nor Tier 2 has
+    /// booked. `None` on discrete GPUs, or when physical memory could not be read.
+    pub fn physical_pool_free_bytes(&self) -> Option<u64> {
+        let caps = self.capabilities.read();
+        if caps.topology != MemoryTopology::UnifiedMemory || caps.physical_memory_bytes == 0 {
+            return None;
+        }
+        Some(
+            caps.physical_memory_bytes
+                .saturating_sub(UMA_OS_RESERVE_BYTES)
+                .saturating_sub(self.used_vram_bytes())
+                .saturating_sub(self.used_pinned_ram_bytes()),
+        )
     }
 
     /// Returns a clone of the model's static configuration and current placement.
@@ -251,9 +314,23 @@ impl TieredMemoryManager {
         let prev_plan = entry.placement.clone();
         let prev_tier = prev_plan.primary_tier;
 
-        // Reconcile Tier 1 VRAM delta
         let old_vram = prev_plan.total_vram_bytes();
         let new_vram = new_plan.total_vram_bytes();
+
+        // Unified memory: both tiers are carved from the same RAM, so the combined growth must fit.
+        if let Some(pool_free) = self.physical_pool_free_bytes() {
+            let old_total = old_vram.saturating_add(prev_plan.pinned_ram_bytes);
+            let new_total = new_vram.saturating_add(new_plan.pinned_ram_bytes);
+            if new_total > old_total && new_total - old_total > pool_free {
+                return Err(HypnosError::InsufficientMemory {
+                    model: model_id.to_string(),
+                    required_bytes: new_total - old_total,
+                    available_bytes: pool_free,
+                });
+            }
+        }
+
+        // Reconcile Tier 1 VRAM delta
         if new_vram > old_vram {
             let delta = new_vram - old_vram;
             let free = self.free_vram_bytes();
@@ -459,7 +536,7 @@ impl TieredMemoryManager {
 
         let has_real = self.has_real_reading.load(Ordering::SeqCst);
         MemoryHierarchyStatus {
-            capabilities: self.capabilities.clone(),
+            capabilities: self.capabilities(),
             tier1_vram_used_bytes: self.used_vram_bytes(),
             tier1_vram_free_bytes: self.free_vram_bytes(),
             tier1_vram_real_free_bytes: has_real
@@ -470,6 +547,7 @@ impl TieredMemoryManager {
             tier1_vram_effective_free_bytes: self.effective_free_vram_bytes(),
             tier2_pinned_ram_used_bytes: self.used_pinned_ram_bytes(),
             tier2_pinned_ram_free_bytes: self.free_pinned_ram_bytes(),
+            physical_pool_free_bytes: self.physical_pool_free_bytes(),
             models,
         }
     }

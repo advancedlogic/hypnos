@@ -110,7 +110,7 @@ fn hardware(vram_gb: u64) -> HardwareConfig {
         vram_budget_bytes: vram_gb * GB,
         vram_safety_margin_bytes: 256 * 1024 * 1024,
         pinned_ram_budget_bytes: 64 * GB,
-        lock_host_memory: false,
+        lock_host_memory: Some(false),
     }
 }
 

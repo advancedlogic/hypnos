@@ -83,6 +83,28 @@ Notes:
 - First build compiles all engines (10–20 minutes). `backend/scripts/smoke_test.sh` exercises every
   endpoint against a running server.
 
+### macOS (Apple Silicon)
+
+M1 or later, macOS 14+. llama.cpp and stable-diffusion.cpp run on the GPU through Metal; there is
+no CUDA and no Python involved. Design notes and open items: [docs/apple-silicon.md](docs/apple-silicon.md).
+
+```bash
+xcode-select --install          # clang, Metal compiler, frameworks
+brew install cmake ninja
+./backend/scripts/vendor.sh
+./run.sh build backend          # = cargo build --release -p hypnos-server --no-default-features --features metal
+./run.sh start backend          # uses backend/hypnos.macos.example.toml
+```
+
+- A plain `cargo build` selects the default `cuda` feature and fails on a Mac; always pass
+  `--no-default-features --features metal` (`run.sh` does this on Darwin/arm64).
+- CPU and GPU share one pool of RAM. Tier 1 is the Metal working set (about 2/3 to 3/4 of RAM),
+  Tier 2 is limited to what Tier 1 leaves free, and models are placed fully on the GPU or not at
+  all. `sudo sysctl iogpu.wired_limit_mb=<MiB>` raises the GPU ceiling until the next reboot.
+- What fits at once: 16 GB, `gemma4:e4b-q4` plus the small models; 32 GB, one of `gemma4:26b-q4`
+  or `moss-image` plus the small models; 48 GB, both Gemma 4 models; 64 GB and up, the whole lineup.
+- For manual debugging, use `brew install llama.cpp` instead of the Windows binaries in `backend/tools/`.
+
 ---
 
 ## Running Backend & Frontend

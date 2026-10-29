@@ -38,6 +38,13 @@ case "$(uname -s)" in
     *) IS_WINDOWS=0 ;;
 esac
 
+# Apple Silicon: Metal instead of the default CUDA engines, and the unified-memory profile.
+CARGO_FEATURE_FLAGS=()
+if [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ]; then
+    CARGO_FEATURE_FLAGS=(--no-default-features --features metal)
+    [ -f "$ROOT_DIR/backend/hypnos.macos.example.toml" ] && BACKEND_CONFIG="hypnos.macos.example.toml"
+fi
+
 # Cargo profile for the backend binary: release (default) or debug (`cargo build` dev profile).
 HYPNOS_PROFILE="${HYPNOS_PROFILE:-release}"
 [ "$HYPNOS_PROFILE" = dev ] && HYPNOS_PROFILE=debug
@@ -201,7 +208,7 @@ stop_one() {
 build_backend() {
     echo "[Hypnos] Building backend ($HYPNOS_PROFILE profile) -> $BACKEND_BIN"
     echo "         The first build compiles the native engines (llama.cpp, stable-diffusion.cpp, espeak-ng); this takes a while."
-    (cd "$ROOT_DIR/backend" && "${CARGO_CMD[@]}" build "${CARGO_PROFILE_FLAGS[@]}" --bin hypnos)
+    (cd "$ROOT_DIR/backend" && "${CARGO_CMD[@]}" build ${CARGO_PROFILE_FLAGS[@]+"${CARGO_PROFILE_FLAGS[@]}"} -p hypnos-server --bin hypnos ${CARGO_FEATURE_FLAGS[@]+"${CARGO_FEATURE_FLAGS[@]}"})
     local rc=$?
     if [ "$rc" != 0 ]; then
         echo "[Hypnos] backend build FAILED (cargo exit code $rc)."

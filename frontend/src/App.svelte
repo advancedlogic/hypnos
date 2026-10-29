@@ -98,6 +98,18 @@
     Math.min(100, (pinnedRamUsedBytes / pinnedRamTotalBytes) * 100)
   );
 
+  // Unified memory (Apple Silicon): Tier 1 and Tier 2 are one pool of physical RAM.
+  let isUnifiedMemory = $derived(
+    memoryStatus?.capabilities?.topology === 'unified_memory' &&
+      (memoryStatus?.capabilities?.physical_memory_bytes || 0) > 0
+  );
+  let umaPhysicalBytes = $derived(memoryStatus?.capabilities?.physical_memory_bytes || 1);
+  let umaResidentPct = $derived(Math.min(100, (vramUsedBytes / umaPhysicalBytes) * 100));
+  let umaWarmPct = $derived(
+    Math.min(100 - umaResidentPct, (pinnedRamUsedBytes / umaPhysicalBytes) * 100)
+  );
+  let umaGpuLimitPct = $derived(Math.min(100, (vramTotalBytes / umaPhysicalBytes) * 100));
+
   let cosineMatrix = $derived.by(() => {
     if (!embedResult?.data || embedResult.data.length < 2) return [];
     const vecs = embedResult.data.map((d) => d.embedding);
@@ -137,8 +149,8 @@
   }
 
   function tierLabel(tier) {
-    if (tier === 'tier1_gpu_vram') return 'Tier 1 • GPU VRAM';
-    if (tier === 'tier2_pinned_ram') return 'Tier 2 • Pinned RAM';
+    if (tier === 'tier1_gpu_vram') return isUnifiedMemory ? 'Tier 1 • GPU resident' : 'Tier 1 • GPU VRAM';
+    if (tier === 'tier2_pinned_ram') return isUnifiedMemory ? 'Tier 2 • Warm (page cache)' : 'Tier 2 • Pinned RAM';
     return 'Tier 3 • NVMe SSD';
   }
 
@@ -662,13 +674,40 @@
       <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-4 space-y-4">
         <div class="flex items-center justify-between">
           <h2 class="text-sm font-semibold text-slate-200">Hardware Memory Pools</h2>
-          {#if memoryStatus}
+          {#if memoryStatus && !isUnifiedMemory}
             <span class="text-xs text-slate-400">
               DMA Speed: ~{memoryStatus.capabilities.tier2_to_tier1_bandwidth_gbps} GB/s
             </span>
           {/if}
         </div>
 
+        {#if isUnifiedMemory}
+        <!-- Unified memory: one physical pool; the marker is the GPU working-set limit -->
+        <div class="space-y-1.5">
+          <div class="flex justify-between text-xs">
+            <span class="font-medium text-slate-200">Unified Memory (CPU + GPU share one pool)</span>
+            <span class="text-slate-300 font-mono">
+              {formatBytes(vramUsedBytes + pinnedRamUsedBytes)} / {formatBytes(umaPhysicalBytes)}
+            </span>
+          </div>
+          <div class="relative w-full h-3 rounded-full bg-slate-950 overflow-hidden border border-slate-800 flex">
+            <div
+              class="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300"
+              style="width: {umaResidentPct}%"
+            ></div>
+            <div
+              class="h-full bg-gradient-to-r from-amber-500 to-orange-400 transition-all duration-300"
+              style="width: {umaWarmPct}%"
+            ></div>
+            <div class="absolute top-0 h-full w-0.5 bg-slate-300/70" style="left: {umaGpuLimitPct}%"></div>
+          </div>
+          <div class="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400">
+            <span><span class="text-emerald-300">■</span> GPU resident {formatBytes(vramUsedBytes)} / {formatBytes(vramTotalBytes)}</span>
+            <span><span class="text-amber-300">■</span> Warm {formatBytes(pinnedRamUsedBytes)} / {formatBytes(pinnedRamTotalBytes)}</span>
+            <span>│ GPU working-set limit</span>
+          </div>
+        </div>
+        {:else}
         <!-- Tier 1 GPU VRAM Bar -->
         <div class="space-y-1.5">
           <div class="flex justify-between text-xs">
@@ -700,6 +739,7 @@
             ></div>
           </div>
         </div>
+        {/if}
       </div>
 
       <!-- 5-Model Residency Cards -->

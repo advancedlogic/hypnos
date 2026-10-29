@@ -11,12 +11,19 @@ pub struct MmapWeightBuffer {
     /// Fallback or synthetic byte length when testing without physical multi-GB weight files on disk
     len_bytes: usize,
     is_locked_in_ram: bool,
+    /// Whether unpinning also tells the OS it may drop the pages (`MADV_DONTNEED`). Off on unified
+    /// memory, where the GPU backend may still have a no-copy Metal buffer over the same file pages.
+    release_pages_on_unpin: bool,
 }
 
 impl MmapWeightBuffer {
     /// Opens a weight file on NVMe SSD using `memmap2` (Tier 3 Cold state).
     /// If the file does not exist on disk yet, initializes a metadata-backed virtual handle.
-    pub fn open_or_virtual(path: &Path, configured_bytes: u64) -> Result<Self> {
+    pub fn open_or_virtual(
+        path: &Path,
+        configured_bytes: u64,
+        release_pages_on_unpin: bool,
+    ) -> Result<Self> {
         if path.exists() {
             let file = File::open(path)?;
             let metadata_len = file.metadata()?.len() as usize;
@@ -30,6 +37,7 @@ impl MmapWeightBuffer {
                 mmap: Some(mmap),
                 len_bytes: metadata_len,
                 is_locked_in_ram: false,
+                release_pages_on_unpin,
             })
         } else {
             debug!(
@@ -41,6 +49,7 @@ impl MmapWeightBuffer {
                 mmap: None,
                 len_bytes: configured_bytes as usize,
                 is_locked_in_ram: false,
+                release_pages_on_unpin,
             })
         }
     }
@@ -95,7 +104,7 @@ impl MmapWeightBuffer {
         if let Some(ref mmap) = self.mmap {
             let slice = mmap.as_ref();
             if !slice.is_empty() {
-                Self::os_unlock_memory(slice.as_ptr(), slice.len());
+                Self::os_unlock_memory(slice.as_ptr(), slice.len(), self.release_pages_on_unpin);
             }
         }
 
@@ -116,7 +125,7 @@ impl MmapWeightBuffer {
     }
 
     #[cfg(windows)]
-    fn os_unlock_memory(ptr: *const u8, len: usize) {
+    fn os_unlock_memory(ptr: *const u8, len: usize, _release_pages: bool) {
         use windows_sys::Win32::System::Memory::VirtualUnlock;
         unsafe {
             let _ = VirtualUnlock(ptr as *const _, len);
@@ -137,10 +146,12 @@ impl MmapWeightBuffer {
     }
 
     #[cfg(unix)]
-    fn os_unlock_memory(ptr: *const u8, len: usize) {
+    fn os_unlock_memory(ptr: *const u8, len: usize, release_pages: bool) {
         unsafe {
             let _ = libc::munlock(ptr as *const _, len);
-            let _ = libc::madvise(ptr as *mut _, len, libc::MADV_DONTNEED);
+            if release_pages {
+                let _ = libc::madvise(ptr as *mut _, len, libc::MADV_DONTNEED);
+            }
         }
     }
 }

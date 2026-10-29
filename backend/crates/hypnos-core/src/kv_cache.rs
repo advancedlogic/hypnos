@@ -115,6 +115,10 @@ impl KvCacheEstimator {
 
     /// Plans the optimal layer split across Tier 1 (GPU VRAM) and Tier 2 (Pinned Host RAM)
     /// given `available_vram_bytes` and `available_pinned_ram_bytes`.
+    ///
+    /// On unified memory only a full GPU placement is considered: CPU and GPU read the same RAM at
+    /// the same bandwidth, so a partial split saves no memory and only adds CPU compute. If the full
+    /// model does not fit, `None` lets the scheduler evict or reject instead.
     pub fn compute_optimal_placement(
         model: &ModelConfig,
         requested_context_len: Option<u32>,
@@ -130,7 +134,11 @@ impl KvCacheEstimator {
         let total_layers = model.arch.num_layers.max(1);
         let min_gpu_layers =
             ((total_layers as f32) * model.min_gpu_layer_ratio.clamp(0.0, 1.0)).ceil() as u32;
-        let min_gpu_layers = min_gpu_layers.max(1).min(total_layers);
+        let min_gpu_layers = if is_unified_memory {
+            total_layers
+        } else {
+            min_gpu_layers.max(1).min(total_layers)
+        };
 
         let fixed_vram_weights = model
             .arch
@@ -258,5 +266,38 @@ mod tests {
         assert!(plan.gpu_layers >= 40 && plan.gpu_layers < 46);
         assert_eq!(plan.gpu_layers + plan.pinned_ram_layers, 46);
         assert!(plan.total_vram_bytes() <= avail_vram);
+    }
+
+    #[test]
+    fn unified_memory_never_returns_a_partial_split() {
+        let model = sample_gemma4_26b_config();
+        let avail_ram = 32 * 1024 * 1024 * 1024;
+
+        // The same budget that yields a partial split on a discrete GPU fails cleanly on UMA.
+        let tight = 15_500 * 1024 * 1024;
+        assert!(KvCacheEstimator::compute_optimal_placement(
+            &model,
+            Some(16384),
+            1,
+            tight,
+            avail_ram,
+            true
+        )
+        .is_none());
+
+        // With room for the whole model every layer lands on the GPU and nothing is booked in Tier 2.
+        let roomy = 24 * 1024 * 1024 * 1024;
+        let plan = KvCacheEstimator::compute_optimal_placement(
+            &model,
+            Some(16384),
+            1,
+            roomy,
+            avail_ram,
+            true,
+        )
+        .expect("fits on a 24 GB working set");
+        assert_eq!(plan.gpu_layers, 46);
+        assert_eq!(plan.pinned_ram_layers, 0);
+        assert_eq!(plan.pinned_ram_bytes, 0);
     }
 }

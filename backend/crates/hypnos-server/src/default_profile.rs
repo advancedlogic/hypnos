@@ -1,5 +1,5 @@
 use hypnos_core::config::{
-    AcceleratorKind, EngineKind, HardwareConfig, KvDataType, HypnosConfig, LimitsConfig,
+    AcceleratorKind, EngineKind, HardwareConfig, HypnosConfig, KvDataType, LimitsConfig,
     MemoryTier, Modality, ModelArchitectureParams, ModelConfig, ModelPriority, ServerConfig,
 };
 use std::path::PathBuf;
@@ -29,7 +29,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             vram_budget_bytes: 0, // auto-detect (nvidia-smi / rocm-smi / sysctl)
             vram_safety_margin_bytes: gb,
             pinned_ram_budget_bytes: 32 * gb,
-            lock_host_memory: true,
+            lock_host_memory: None, // on for discrete GPUs, off on unified memory
         },
         models: vec![
             // 1. Gemma 4 26B-A4B Q4_0 — Text Generation + Vision
@@ -179,5 +179,30 @@ pub fn default_six_model_config() -> HypnosConfig {
                 },
             },
         ],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hypnos_core::config::{AcceleratorKind, HypnosConfig};
+
+    fn load(name: &str) -> HypnosConfig {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(name);
+        let raw = std::fs::read_to_string(&path).expect("example config readable");
+        HypnosConfig::from_toml_str(&raw).unwrap_or_else(|e| panic!("{name}: {e}"))
+    }
+
+    #[test]
+    fn example_profiles_parse_with_the_same_lineup() {
+        let cuda = load("hypnos.example.toml");
+        let macos = load("hypnos.macos.example.toml");
+        let ids = |c: &HypnosConfig| c.models.iter().map(|m| m.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&cuda), ids(&macos));
+
+        assert_eq!(macos.hardware.accelerator, AcceleratorKind::AppleMetalUma);
+        assert_eq!(macos.hardware.lock_host_memory, Some(false));
+        assert!(macos.models.iter().all(|m| m.min_gpu_layer_ratio == 1.0));
     }
 }
