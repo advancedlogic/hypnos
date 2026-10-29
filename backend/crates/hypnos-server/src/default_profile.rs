@@ -19,6 +19,8 @@ pub fn default_six_model_config() -> HypnosConfig {
             host: "127.0.0.1".to_string(),
             port: 8080,
             kv_idle_timeout_secs: 300,
+            request_log_level: "info".to_string(),
+            request_log_capacity: 200,
             allowed_origins: Vec::new(),
             log_format: "pretty".to_string(),
         },

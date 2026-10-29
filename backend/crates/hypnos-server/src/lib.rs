@@ -1,9 +1,10 @@
 pub mod default_profile;
 pub mod metrics;
+pub mod request_log;
 
 use axum::{
     body::Body,
-    extract::{DefaultBodyLimit, Multipart, Request, State},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, Request, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{
@@ -11,7 +12,7 @@ use axum::{
         IntoResponse, Response,
     },
     routing::{get, post},
-    Json, Router,
+    Extension, Json, Router,
 };
 use bytes::Bytes;
 use chrono::Utc;
@@ -31,6 +32,7 @@ use hypnos_core::{
 use hypnos_memory::TieredMemoryManager;
 use hypnos_scheduler::{ActiveModelLease, ModelScheduler};
 use metrics::Metrics;
+use request_log::{LogDetails, LogFilter, LogLevel, RequestId, RequestLog, RequestRecord};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -55,6 +57,8 @@ pub struct AppState {
     pub scheduler: Arc<ModelScheduler>,
     pub limits: LimitsConfig,
     pub metrics: Arc<Metrics>,
+    /// Bounded ring of recent API calls (`GET /v1/logs`).
+    pub request_log: Arc<RequestLog>,
     /// Flipped once startup tier initialization has finished (`/ready`).
     pub ready: Arc<AtomicBool>,
     pub started_at: Instant,
@@ -74,10 +78,15 @@ impl AppState {
             .collect();
         let memory = Arc::new(TieredMemoryManager::new(&config.hardware, config.models)?);
         let scheduler = Arc::new(ModelScheduler::new(memory, backends, &config.limits));
+        let log_level = LogLevel::parse(&config.server.request_log_level).unwrap_or(LogLevel::Info);
         Ok(Self {
             scheduler,
             limits: config.limits,
             metrics: Arc::new(Metrics::default()),
+            request_log: Arc::new(RequestLog::new(
+                log_level,
+                config.server.request_log_capacity,
+            )),
             ready: Arc::new(AtomicBool::new(false)),
             started_at: Instant::now(),
             version: env!("CARGO_PKG_VERSION"),
@@ -177,6 +186,10 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
         // Hypnos 3-Tier Memory Observability & Control Endpoints
         .route("/v1/memory/status", get(memory_status))
         .route("/v1/memory/tier", post(set_model_tier))
+        // Request log (playground "Request Logs" tab)
+        .route("/v1/logs", get(list_logs).delete(clear_logs))
+        .route("/v1/logs/level", post(set_log_level))
+        .route("/v1/logs/:id", get(get_log))
         .route("/health", get(health_check))
         .route("/ready", get(ready_check))
         .route("/metrics", get(metrics_endpoint))
@@ -190,11 +203,24 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
         .with_state(state)
 }
 
-/// Adds a request id, records latency and status per route.
-async fn observe_request(State(state): State<AppState>, req: Request, next: Next) -> Response {
+/// Routes whose calls go into the request log (inference and manual tier changes; not the
+/// polling and log endpoints themselves).
+fn is_logged_route(route: &str) -> bool {
+    route.starts_with("/v1/")
+        && !route.starts_with("/v1/logs")
+        && route != "/v1/memory/status"
+        && route != "/v1/models"
+}
+
+/// Adds a request id, records latency and status per route, and files the call in the request
+/// log together with whatever details the handler attached to its response.
+async fn observe_request(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     let route = req.uri().path().to_string();
+    let method = req.method().to_string();
+    let started_at = Utc::now().to_rfc3339();
     let start = Instant::now();
     let request_id = format!("req-{}", Uuid::new_v4().simple());
+    req.extensions_mut().insert(RequestId(request_id.clone()));
     let mut resp = next.run(req).await;
     let status = resp.status();
     state
@@ -202,6 +228,20 @@ async fn observe_request(State(state): State<AppState>, req: Request, next: Next
         .record(&route, status.as_u16(), start.elapsed());
     if let Ok(v) = HeaderValue::from_str(&request_id) {
         resp.headers_mut().insert("x-request-id", v);
+    }
+    let details = resp.extensions_mut().remove::<LogDetails>();
+    if is_logged_route(&route) {
+        state.request_log.record(
+            RequestRecord::new(
+                request_id.clone(),
+                route.clone(),
+                method,
+                status.as_u16(),
+                started_at,
+                start.elapsed().as_secs_f64() * 1000.0,
+            ),
+            details,
+        );
     }
     if status.is_server_error() {
         warn!(route = %route, status = status.as_u16(), elapsed_ms = start.elapsed().as_millis() as u64, request_id = %request_id, "request failed");
@@ -312,12 +352,43 @@ fn finish_telemetry(
     lease.build_telemetry(infer_ms).with_engine(engine)
 }
 
+/// Attaches the handler's view of the call to the response for the request log.
+fn with_log(mut resp: Response, details: LogDetails) -> Response {
+    resp.extensions_mut().insert(details);
+    resp
+}
+
+/// The conversation as "role: text" lines, media replaced by markers (for the request log).
+fn chat_input_text(messages: &[hypnos_core::openai::ChatMessage]) -> String {
+    messages
+        .iter()
+        .map(|m| {
+            let mut text = m.content.extract_text();
+            let images = m.content.image_urls().len();
+            if images > 0 {
+                text.push_str(&format!(" [{images} image(s)]"));
+            }
+            if m.content.contains_audio() {
+                text.push_str(" [audio]");
+            }
+            format!("{}: {}", m.role, text.trim())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// State carried through the SSE stream; owning the lease keeps the model pinned in VRAM until the
 /// client has received the final chunk, and dropping the guard cancels generation on disconnect.
 struct ChatSseState {
     rx: mpsc::Receiver<ChatStreamEvent>,
     lease: ActiveModelLease,
     metrics: Arc<Metrics>,
+    request_log: Arc<RequestLog>,
+    request_id: String,
+    /// The completion text accumulates only when the log level asks for it.
+    capture_text: bool,
+    capture_payloads: bool,
+    text: String,
     _cancel_guard: CancelOnDrop,
     id: String,
     model: String,
@@ -348,7 +419,36 @@ fn sse_chunk(
 
 async fn chat_completions(
     State(state): State<AppState>,
+    Extension(rid): Extension<RequestId>,
     Json(req): Json<ChatCompletionRequest>,
+) -> Response {
+    let mut details = LogDetails {
+        model: Some(req.model.clone()),
+        stream: req.stream.unwrap_or(false),
+        input: state
+            .request_log
+            .capture_text()
+            .then(|| chat_input_text(&req.messages)),
+        request_payload: state
+            .request_log
+            .capture_payloads()
+            .then(|| serde_json::to_value(&req).unwrap_or(serde_json::Value::Null)),
+        ..Default::default()
+    };
+    match chat_completions_inner(&state, &rid.0, &req, &mut details).await {
+        Ok(resp) => with_log(resp, details),
+        Err(e) => {
+            let message = e.0.to_string();
+            with_log(e.into_response(), details.with_error(message))
+        }
+    }
+}
+
+async fn chat_completions_inner(
+    state: &AppState,
+    request_id: &str,
+    req: &ChatCompletionRequest,
+    details: &mut LogDetails,
 ) -> std::result::Result<Response, ApiError> {
     if req.messages.is_empty() {
         return Err(HypnosError::InvalidRequest("messages must not be empty".into()).into());
@@ -403,6 +503,11 @@ async fn chat_completions(
             infer_start,
             lease,
             metrics: state.metrics.clone(),
+            request_log: state.request_log.clone(),
+            request_id: request_id.to_string(),
+            capture_text: state.request_log.capture_text(),
+            capture_payloads: state.request_log.capture_payloads(),
+            text: String::new(),
             _cancel_guard: guard,
             queued: VecDeque::new(),
             finished: false,
@@ -425,6 +530,9 @@ async fn chat_completions(
             }
             match st.rx.recv().await {
                 Some(ChatStreamEvent::Delta(text)) => {
+                    if st.capture_text {
+                        st.text.push_str(&text);
+                    }
                     let ev = sse_chunk(
                         &st,
                         json!({"content": text}),
@@ -442,6 +550,22 @@ async fn chat_completions(
                     st.metrics.record_chat(&st.model, &timing);
                     let infer_ms = st.infer_start.elapsed().as_secs_f64() * 1000.0;
                     let telemetry = st.lease.build_telemetry(infer_ms).with_engine(timing);
+                    let log_details = LogDetails {
+                        usage: Some(usage.clone()),
+                        telemetry: Some(telemetry.clone()),
+                        output: st.capture_text.then(|| std::mem::take(&mut st.text)),
+                        response_payload: st.capture_payloads.then(|| {
+                            json!({
+                                "finish_reason": finish_reason,
+                                "usage": usage,
+                                "hypnos_telemetry": telemetry,
+                            })
+                        }),
+                        ..Default::default()
+                    };
+                    st.request_log.update(&st.request_id, |r, level| {
+                        r.apply_details(log_details, level)
+                    });
                     let mut extra = serde_json::Map::new();
                     extra.insert(
                         "usage".into(),
@@ -457,6 +581,8 @@ async fn chat_completions(
                 }
                 Some(ChatStreamEvent::Error(message)) => {
                     st.finished = true;
+                    st.request_log
+                        .update(&st.request_id, |r, _| r.error = Some(message.clone()));
                     let mut extra = serde_json::Map::new();
                     extra.insert(
                         "error".into(),
@@ -477,17 +603,46 @@ async fn chat_completions(
             .into_response());
     }
 
-    let mut resp = lease.backend.chat_completion(&req, &ctx).await?;
+    let mut resp = lease.backend.chat_completion(req, &ctx).await?;
     let telemetry = finish_telemetry(&lease, infer_start, resp.hypnos_telemetry.take());
     state.metrics.record_chat(&req.model, &telemetry.engine);
     resp.hypnos_telemetry = Some(telemetry);
     guard.disarm();
+    details.usage = Some(resp.usage.clone());
+    details.telemetry = resp.hypnos_telemetry.clone();
+    if state.request_log.capture_text() {
+        details.output = resp.choices.first().map(|c| c.message.content.clone());
+    }
+    if state.request_log.capture_payloads() {
+        details.response_payload = serde_json::to_value(&resp).ok();
+    }
     Ok(Json(resp).into_response())
 }
 
-async fn embeddings(
-    State(state): State<AppState>,
-    Json(req): Json<EmbeddingRequest>,
+async fn embeddings(State(state): State<AppState>, Json(req): Json<EmbeddingRequest>) -> Response {
+    let inputs = req.input.clone().into_vec();
+    let mut details = LogDetails {
+        model: Some(req.model.clone()),
+        input: state.request_log.capture_text().then(|| inputs.join("\n")),
+        request_payload: state
+            .request_log
+            .capture_payloads()
+            .then(|| serde_json::to_value(&req).unwrap_or(serde_json::Value::Null)),
+        ..Default::default()
+    };
+    match embeddings_inner(&state, &req, &mut details).await {
+        Ok(resp) => with_log(resp.into_response(), details),
+        Err(e) => {
+            let message = e.0.to_string();
+            with_log(e.into_response(), details.with_error(message))
+        }
+    }
+}
+
+async fn embeddings_inner(
+    state: &AppState,
+    req: &EmbeddingRequest,
+    details: &mut LogDetails,
 ) -> std::result::Result<Json<hypnos_core::openai::EmbeddingResponse>, ApiError> {
     let batch_size = match &req.input {
         hypnos_core::openai::EmbeddingInput::Single(_) => 1,
@@ -502,13 +657,34 @@ async fn embeddings(
         .await?;
 
     let infer_start = Instant::now();
-    let mut resp = lease.backend.embeddings(&req, &ctx).await?;
+    let mut resp = lease.backend.embeddings(req, &ctx).await?;
     resp.hypnos_telemetry = Some(finish_telemetry(
         &lease,
         infer_start,
         resp.hypnos_telemetry.take(),
     ));
     guard.disarm();
+    details.telemetry = resp.hypnos_telemetry.clone();
+    details.usage = Some(hypnos_core::openai::TokenUsage {
+        prompt_tokens: resp.usage.prompt_tokens,
+        completion_tokens: 0,
+        total_tokens: resp.usage.total_tokens,
+        prompt_tokens_details: None,
+    });
+    let dims = resp.data.first().map(|d| d.embedding.len()).unwrap_or(0);
+    if state.request_log.capture_text() {
+        details.output = Some(format!("{} vectors x {dims} dims", resp.data.len()));
+    }
+    if state.request_log.capture_payloads() {
+        details.response_payload = Some(json!({
+            "object": resp.object,
+            "model": resp.model,
+            "vectors": resp.data.len(),
+            "dims": dims,
+            "usage": resp.usage,
+            "hypnos_telemetry": resp.hypnos_telemetry,
+        }));
+    }
     Ok(Json(resp))
 }
 
@@ -516,6 +692,22 @@ async fn audio_transcriptions(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Body,
+) -> Response {
+    let mut details = LogDetails::default();
+    match audio_transcriptions_inner(&state, &headers, body, &mut details).await {
+        Ok(resp) => with_log(resp.into_response(), details),
+        Err(e) => {
+            let message = e.0.to_string();
+            with_log(e.into_response(), details.with_error(message))
+        }
+    }
+}
+
+async fn audio_transcriptions_inner(
+    state: &AppState,
+    headers: &HeaderMap,
+    body: Body,
+    details: &mut LogDetails,
 ) -> std::result::Result<Json<hypnos_core::openai::AudioTranscriptionResponse>, ApiError> {
     let content_type = headers
         .get(header::CONTENT_TYPE)
@@ -530,7 +722,7 @@ async fn audio_transcriptions(
             .body(body)
             .map_err(|e| HypnosError::InvalidRequest(e.to_string()))?;
         use axum::extract::FromRequest;
-        let mut multipart = Multipart::from_request(req_reconstruct, &state)
+        let mut multipart = Multipart::from_request(req_reconstruct, state)
             .await
             .map_err(|e| HypnosError::InvalidRequest(e.to_string()))?;
 
@@ -610,6 +802,31 @@ async fn audio_transcriptions(
             .map_err(|e| HypnosError::InvalidRequest(e.to_string()))?
     };
 
+    details.model = Some(req.model.clone());
+    if state.request_log.capture_text() {
+        details.input = Some(format!(
+            "{} ({} bytes){}{}",
+            req.filename.as_deref().unwrap_or("audio"),
+            req.audio_bytes.len(),
+            req.language
+                .as_deref()
+                .map(|l| format!(", language {l}"))
+                .unwrap_or_default(),
+            req.prompt
+                .as_deref()
+                .map(|p| format!(", prompt: {p}"))
+                .unwrap_or_default()
+        ));
+    }
+    if state.request_log.capture_payloads() {
+        details.request_payload = Some(json!({
+            "model": req.model,
+            "filename": req.filename,
+            "audio_bytes": req.audio_bytes.len(),
+            "language": req.language,
+            "prompt": req.prompt,
+        }));
+    }
     let ctx = state.new_request();
     let guard = ctx.cancel_on_drop();
     let lease = state
@@ -623,6 +840,13 @@ async fn audio_transcriptions(
     state.metrics.record_stt(&req.model, &telemetry.engine);
     resp.hypnos_telemetry = Some(telemetry);
     guard.disarm();
+    details.telemetry = resp.hypnos_telemetry.clone();
+    if state.request_log.capture_text() {
+        details.output = Some(resp.text.clone());
+    }
+    if state.request_log.capture_payloads() {
+        details.response_payload = serde_json::to_value(&resp).ok();
+    }
     Ok(Json(resp))
 }
 
@@ -633,6 +857,8 @@ struct AudioStreamState {
     rx: mpsc::Receiver<AudioStreamEvent>,
     lease: ActiveModelLease,
     metrics: Arc<Metrics>,
+    request_log: Arc<RequestLog>,
+    request_id: String,
     _cancel_guard: CancelOnDrop,
     model: String,
     /// A live WAV header still has to go out in front of the first chunk.
@@ -655,7 +881,33 @@ fn speech_telemetry_headers(headers: &mut HeaderMap, telemetry: &ExecutionTeleme
 
 async fn audio_speech(
     State(state): State<AppState>,
+    Extension(rid): Extension<RequestId>,
     Json(req): Json<AudioSpeechRequest>,
+) -> Response {
+    let mut details = LogDetails {
+        model: Some(req.model.clone()),
+        stream: req.stream.unwrap_or(false),
+        input: state.request_log.capture_text().then(|| req.input.clone()),
+        request_payload: state
+            .request_log
+            .capture_payloads()
+            .then(|| serde_json::to_value(&req).unwrap_or(serde_json::Value::Null)),
+        ..Default::default()
+    };
+    match audio_speech_inner(&state, &rid.0, &req, &mut details).await {
+        Ok(resp) => with_log(resp, details),
+        Err(e) => {
+            let message = e.0.to_string();
+            with_log(e.into_response(), details.with_error(message))
+        }
+    }
+}
+
+async fn audio_speech_inner(
+    state: &AppState,
+    request_id: &str,
+    req: &AudioSpeechRequest,
+    details: &mut LogDetails,
 ) -> std::result::Result<Response, ApiError> {
     let ctx = state.new_request();
     let guard = ctx.cancel_on_drop();
@@ -691,6 +943,8 @@ async fn audio_speech(
             model: req.model.clone(),
             lease,
             metrics: state.metrics.clone(),
+            request_log: state.request_log.clone(),
+            request_id: request_id.to_string(),
             _cancel_guard: guard,
             header_pending: wav,
             infer_start,
@@ -715,6 +969,22 @@ async fn audio_speech(
                         timing.ttfa_ms = st.first_audio_ms.or(timing.ttfa_ms);
                         st.metrics.record_tts(&st.model, &timing);
                         let infer_ms = st.infer_start.elapsed().as_secs_f64() * 1000.0;
+                        let telemetry = st
+                            .lease
+                            .build_telemetry(infer_ms)
+                            .with_engine(timing.clone());
+                        let log_details = LogDetails {
+                            telemetry: Some(telemetry.clone()),
+                            output: Some(format!(
+                                "{:.2} s of streamed audio",
+                                timing.audio_secs.unwrap_or(0.0)
+                            )),
+                            response_payload: Some(json!({ "hypnos_telemetry": telemetry })),
+                            ..Default::default()
+                        };
+                        st.request_log.update(&st.request_id, |r, level| {
+                            r.apply_details(log_details, level)
+                        });
                         tracing::debug!(model = %st.model, infer_ms = format!("{infer_ms:.0}"), ttfa_ms = timing.ttfa_ms.map(|v| format!("{v:.0}")), lease_tier = ?st.lease.previous_tier, "speech stream complete");
                         return None;
                     }
@@ -729,10 +999,26 @@ async fn audio_speech(
         return Ok((headers, Body::from_stream(body)).into_response());
     }
 
-    let out = lease.backend.synthesize_speech(&req, &ctx).await?;
+    let out = lease.backend.synthesize_speech(req, &ctx).await?;
     let telemetry = finish_telemetry(&lease, infer_start, Some(out.telemetry.clone()));
     state.metrics.record_tts(&req.model, &telemetry.engine);
     guard.disarm();
+    details.telemetry = Some(telemetry.clone());
+    if state.request_log.capture_text() {
+        details.output = Some(format!(
+            "{} bytes of {} ({:.2} s)",
+            out.audio_bytes.len(),
+            out.content_type,
+            telemetry.engine.audio_secs.unwrap_or(0.0)
+        ));
+    }
+    if state.request_log.capture_payloads() {
+        details.response_payload = Some(json!({
+            "content_type": out.content_type,
+            "bytes": out.audio_bytes.len(),
+            "hypnos_telemetry": telemetry,
+        }));
+    }
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -773,6 +1059,29 @@ async fn audio_speech(
 async fn image_generations(
     State(state): State<AppState>,
     Json(req): Json<ImageGenerationRequest>,
+) -> Response {
+    let mut details = LogDetails {
+        model: Some(req.model.clone()),
+        input: state.request_log.capture_text().then(|| req.prompt.clone()),
+        request_payload: state
+            .request_log
+            .capture_payloads()
+            .then(|| serde_json::to_value(&req).unwrap_or(serde_json::Value::Null)),
+        ..Default::default()
+    };
+    match image_generations_inner(&state, &req, &mut details).await {
+        Ok(resp) => with_log(resp.into_response(), details),
+        Err(e) => {
+            let message = e.0.to_string();
+            with_log(e.into_response(), details.with_error(message))
+        }
+    }
+}
+
+async fn image_generations_inner(
+    state: &AppState,
+    req: &ImageGenerationRequest,
+    details: &mut LogDetails,
 ) -> std::result::Result<Json<hypnos_core::openai::ImageGenerationResponse>, ApiError> {
     if req.n > state.limits.max_images_per_request {
         return Err(HypnosError::InvalidRequest(format!(
@@ -789,7 +1098,7 @@ async fn image_generations(
         .await?;
 
     let infer_start = Instant::now();
-    let mut resp = lease.backend.generate_image(&req, &ctx).await?;
+    let mut resp = lease.backend.generate_image(req, &ctx).await?;
     state
         .metrics
         .record_image(&req.model, infer_start.elapsed());
@@ -799,7 +1108,80 @@ async fn image_generations(
         resp.hypnos_telemetry.take(),
     ));
     guard.disarm();
+    details.telemetry = resp.hypnos_telemetry.clone();
+    let png_bytes: usize = resp
+        .data
+        .iter()
+        .map(|d| d.b64_json.as_ref().map(|b| b.len() / 4 * 3).unwrap_or(0))
+        .sum();
+    if state.request_log.capture_text() {
+        details.output = Some(format!(
+            "{} image(s), {} x {}, about {} KiB of PNG",
+            resp.data.len(),
+            req.size,
+            req.steps.map(|s| format!("{s} steps")).unwrap_or_default(),
+            png_bytes / 1024
+        ));
+    }
+    if state.request_log.capture_payloads() {
+        details.response_payload = serde_json::to_value(&resp).ok();
+    }
     Ok(Json(resp))
+}
+
+// ============================================================================
+// Request log endpoints
+// ============================================================================
+
+async fn list_logs(
+    State(state): State<AppState>,
+    Query(filter): Query<LogFilter>,
+) -> Json<serde_json::Value> {
+    let records = state.request_log.list(&filter);
+    Json(json!({
+        "level": state.request_log.level().as_str(),
+        "capacity": state.request_log.capacity(),
+        "stored": state.request_log.len(),
+        "records": records,
+    }))
+}
+
+async fn get_log(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    match state.request_log.get(&id) {
+        Some(record) => Json(record).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": { "message": format!("no request record '{id}'"), "type": "not_found" }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SetLogLevelRequest {
+    level: String,
+}
+
+async fn set_log_level(
+    State(state): State<AppState>,
+    Json(req): Json<SetLogLevelRequest>,
+) -> std::result::Result<Json<serde_json::Value>, ApiError> {
+    let level = LogLevel::parse(&req.level).ok_or_else(|| {
+        HypnosError::InvalidRequest(format!(
+            "unknown log level '{}' (off, error, warn, info, debug, trace)",
+            req.level
+        ))
+    })?;
+    state.request_log.set_level(level);
+    info!(level = level.as_str(), "request log level changed");
+    Ok(Json(json!({ "level": level.as_str() })))
+}
+
+async fn clear_logs(State(state): State<AppState>) -> Json<serde_json::Value> {
+    state.request_log.clear();
+    Json(json!({ "cleared": true }))
 }
 
 // ============================================================================

@@ -335,6 +335,15 @@ pub struct ServerConfig {
     /// Log output format: "pretty" (human, ANSI) or "json" (one JSON object per line).
     #[serde(default = "default_log_format")]
     pub log_format: String,
+    /// In-memory request log served on `GET /v1/logs`: "off", "error" (failed calls only),
+    /// "warn" (4xx and 5xx), "info" (metadata of every call), "debug" (adds prompt and completion
+    /// text) or "trace" (adds request and response payloads, media replaced by placeholders).
+    /// Changeable at runtime through `POST /v1/logs/level`.
+    #[serde(default = "default_request_log_level")]
+    pub request_log_level: String,
+    /// How many request records the ring keeps (oldest dropped first).
+    #[serde(default = "default_request_log_capacity")]
+    pub request_log_capacity: usize,
 }
 
 fn default_host() -> String {
@@ -349,6 +358,15 @@ fn default_idle_timeout() -> u64 {
 fn default_log_format() -> String {
     "pretty".to_string()
 }
+fn default_request_log_level() -> String {
+    "info".to_string()
+}
+fn default_request_log_capacity() -> usize {
+    200
+}
+
+/// Accepted values of `server.request_log_level`, least to most verbose.
+pub const REQUEST_LOG_LEVELS: &[&str] = &["off", "error", "warn", "info", "debug", "trace"];
 
 impl Default for ServerConfig {
     fn default() -> Self {
@@ -358,6 +376,8 @@ impl Default for ServerConfig {
             kv_idle_timeout_secs: default_idle_timeout(),
             allowed_origins: Vec::new(),
             log_format: default_log_format(),
+            request_log_level: default_request_log_level(),
+            request_log_capacity: default_request_log_capacity(),
         }
     }
 }
@@ -609,6 +629,19 @@ impl HypnosConfig {
                 "server.log_format must be \"pretty\" or \"json\", got \"{}\"",
                 self.server.log_format
             ));
+        }
+        if !REQUEST_LOG_LEVELS
+            .contains(&self.server.request_log_level.to_ascii_lowercase().as_str())
+        {
+            r.errors.push(format!(
+                "server.request_log_level must be one of {}, got \"{}\"",
+                REQUEST_LOG_LEVELS.join(", "),
+                self.server.request_log_level
+            ));
+        }
+        if self.server.request_log_capacity == 0 {
+            r.warnings
+                .push("server.request_log_capacity is 0; the request log keeps nothing".into());
         }
         if self.limits.max_queue_per_model == 0 {
             r.errors

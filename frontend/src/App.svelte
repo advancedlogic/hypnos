@@ -82,6 +82,21 @@
   let imageResult = $state(null);
 
   // -------------------------------------------------------------------------
+  // 6. Request Logs (GET /v1/logs): every API call the server recorded
+  // -------------------------------------------------------------------------
+  const LOG_LEVELS = ['off', 'error', 'warn', 'info', 'debug', 'trace'];
+  let logRecords = $state([]);
+  let logLevel = $state('info');
+  let logCapacity = $state(0);
+  let logStored = $state(0);
+  let logFilterModel = $state('');
+  let logFilterRoute = $state('');
+  let logFilterStatus = $state('');
+  let logAutoRefresh = $state(true);
+  let logSelected = $state(null);
+  let logError = $state('');
+
+  // -------------------------------------------------------------------------
   // Derived Computed Metrics
   // -------------------------------------------------------------------------
   let vramTotalBytes = $derived(
@@ -171,6 +186,93 @@
   $effect(() => {
     fetchMemoryStatus();
     const timer = setInterval(fetchMemoryStatus, 2000);
+    return () => clearInterval(timer);
+  });
+
+  // ---- Request log -------------------------------------------------------
+  async function fetchLogs() {
+    try {
+      const params = new URLSearchParams({ limit: '200' });
+      if (logFilterModel) params.set('model', logFilterModel);
+      if (logFilterRoute) params.set('route', logFilterRoute);
+      if (logFilterStatus) params.set('status', logFilterStatus);
+      const res = await fetch(`${backendUrl}/v1/logs?${params}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      logRecords = data.records;
+      logLevel = data.level;
+      logCapacity = data.capacity;
+      logStored = data.stored;
+      logError = '';
+    } catch (err) {
+      logError = err.message;
+    }
+  }
+
+  async function openLog(id) {
+    try {
+      const res = await fetch(`${backendUrl}/v1/logs/${id}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      logSelected = await res.json();
+    } catch (err) {
+      logError = err.message;
+    }
+  }
+
+  async function setLogLevel(level) {
+    try {
+      const res = await fetch(`${backendUrl}/v1/logs/level`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      logLevel = (await res.json()).level;
+    } catch (err) {
+      logError = err.message;
+    }
+  }
+
+  async function clearLogs() {
+    try {
+      const res = await fetch(`${backendUrl}/v1/logs`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      logSelected = null;
+      await fetchLogs();
+    } catch (err) {
+      logError = err.message;
+    }
+  }
+
+  function logStatusClass(status) {
+    if (status >= 500) return 'bg-rose-500/20 text-rose-300';
+    if (status >= 400) return 'bg-amber-500/20 text-amber-300';
+    return 'bg-emerald-500/20 text-emerald-300';
+  }
+
+  function logTime(iso) {
+    const d = new Date(iso);
+    return isNaN(d) ? iso : d.toLocaleTimeString();
+  }
+
+  function logNum(v, digits = 0) {
+    return v === null || v === undefined ? '–' : Number(v).toFixed(digits);
+  }
+
+  function logPretty(value) {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+
+  // Refresh the log while its tab is open (and the filters are part of the request).
+  $effect(() => {
+    if (activeTab !== 'logs') return;
+    fetchLogs();
+    if (!logAutoRefresh) return;
+    const timer = setInterval(fetchLogs, 3000);
     return () => clearInterval(timer);
   });
 
@@ -844,6 +946,12 @@
           >
             5. Image Gen (moss-image)
           </button>
+          <button
+            onclick={() => (activeTab = 'logs')}
+            class="px-3.5 py-2 rounded-lg text-xs font-semibold transition {activeTab === 'logs' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/25' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'}"
+          >
+            6. Request Logs
+          </button>
         </div>
 
         <!-- TAB 1: TEXT & VISION CHAT -->
@@ -1240,6 +1348,200 @@
               {/if}
             </div>
           {/if}
+
+        <!-- TAB 6: REQUEST LOGS (GET /v1/logs) -->
+        {:else if activeTab === 'logs'}
+          <div class="space-y-3 text-xs">
+            <div class="flex flex-wrap items-end gap-2">
+              <div>
+                <label class="block text-slate-400 mb-1" for="log-model">Model</label>
+                <input
+                  id="log-model"
+                  bind:value={logFilterModel}
+                  placeholder="gemma4"
+                  class="w-32 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-white font-mono"
+                />
+              </div>
+              <div>
+                <label class="block text-slate-400 mb-1" for="log-route">Route</label>
+                <input
+                  id="log-route"
+                  bind:value={logFilterRoute}
+                  placeholder="chat"
+                  class="w-32 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-white font-mono"
+                />
+              </div>
+              <div>
+                <label class="block text-slate-400 mb-1" for="log-status">Status</label>
+                <select
+                  id="log-status"
+                  bind:value={logFilterStatus}
+                  class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-white"
+                >
+                  <option value="">all</option>
+                  <option value="ok">ok</option>
+                  <option value="error">errors</option>
+                  <option value="4xx">4xx</option>
+                  <option value="5xx">5xx</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-slate-400 mb-1" for="log-level">Capture level</label>
+                <select
+                  id="log-level"
+                  value={logLevel}
+                  onchange={(e) => setLogLevel(e.currentTarget.value)}
+                  class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-white"
+                >
+                  {#each LOG_LEVELS as lvl}
+                    <option value={lvl}>{lvl}</option>
+                  {/each}
+                </select>
+              </div>
+              <label class="flex items-center gap-1.5 text-slate-300 pb-2">
+                <input type="checkbox" bind:checked={logAutoRefresh} />
+                auto-refresh
+              </label>
+              <button
+                onclick={fetchLogs}
+                class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold"
+              >
+                Refresh
+              </button>
+              <button
+                onclick={clearLogs}
+                class="px-3 py-1.5 rounded-lg bg-rose-900/60 hover:bg-rose-800/60 text-rose-200 font-semibold"
+              >
+                Clear
+              </button>
+              <span class="text-slate-500 pb-2 ml-auto">
+                {logStored} / {logCapacity} stored
+                {#if logLevel === 'off'}
+                  · capture is off
+                {:else if logLevel === 'error' || logLevel === 'warn'}
+                  · failed calls only
+                {:else if logLevel === 'info'}
+                  · metadata only (debug adds text, trace adds payloads)
+                {:else if logLevel === 'debug'}
+                  · with prompt and completion text
+                {:else}
+                  · with full payloads
+                {/if}
+              </span>
+            </div>
+
+            {#if logError}
+              <div class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-rose-200">
+                {logError}
+              </div>
+            {/if}
+
+            <div class="overflow-x-auto rounded-lg border border-slate-800 bg-slate-950">
+              <table class="w-full text-left border-collapse font-mono text-[11px]">
+                <thead>
+                  <tr class="border-b border-slate-800 text-slate-400">
+                    <th class="py-1.5 px-2">time</th>
+                    <th class="py-1.5 px-2">route</th>
+                    <th class="py-1.5 px-2">model</th>
+                    <th class="py-1.5 px-2">status</th>
+                    <th class="py-1.5 px-2 text-right">ms</th>
+                    <th class="py-1.5 px-2 text-right">in</th>
+                    <th class="py-1.5 px-2 text-right">out</th>
+                    <th class="py-1.5 px-2 text-right">cached</th>
+                    <th class="py-1.5 px-2 text-right">tok/s</th>
+                    <th class="py-1.5 px-2 text-right">switch ms</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each logRecords as r (r.id)}
+                    <tr
+                      onclick={() => openLog(r.id)}
+                      class="border-b border-slate-900 cursor-pointer hover:bg-slate-900 {logSelected?.id === r.id ? 'bg-indigo-950/60' : ''}"
+                    >
+                      <td class="py-1 px-2 text-slate-400 whitespace-nowrap">{logTime(r.started_at)}</td>
+                      <td class="py-1 px-2 text-slate-200 whitespace-nowrap">
+                        {r.route.replace('/v1/', '')}{r.stream ? ' ⇢' : ''}
+                      </td>
+                      <td class="py-1 px-2 text-slate-300 whitespace-nowrap">{r.model ?? '–'}</td>
+                      <td class="py-1 px-2">
+                        <span class="px-1.5 py-0.5 rounded {logStatusClass(r.status)}">{r.status}</span>
+                      </td>
+                      <td class="py-1 px-2 text-right text-slate-300">{logNum(r.duration_ms)}</td>
+                      <td class="py-1 px-2 text-right text-slate-300">{logNum(r.tokens_in)}</td>
+                      <td class="py-1 px-2 text-right text-slate-300">{logNum(r.tokens_out)}</td>
+                      <td class="py-1 px-2 text-right text-slate-300">{logNum(r.cached_tokens)}</td>
+                      <td class="py-1 px-2 text-right text-emerald-300">{logNum(r.tokens_per_s, 1)}</td>
+                      <td class="py-1 px-2 text-right text-sky-300">{logNum(r.tier_switch_ms)}</td>
+                    </tr>
+                  {:else}
+                    <tr>
+                      <td colspan="10" class="py-4 text-center text-slate-500">
+                        No calls recorded yet. Use another tab, then come back.
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+
+            {#if logSelected}
+              <div class="rounded-lg border border-slate-800 bg-slate-950 p-3.5 space-y-3">
+                <div class="flex items-center justify-between">
+                  <div class="font-mono text-slate-300">
+                    <span class="text-slate-500">{logSelected.id}</span>
+                    · {logSelected.method} {logSelected.route}
+                    · <span class="px-1.5 py-0.5 rounded {logStatusClass(logSelected.status)}">{logSelected.status}</span>
+                    {#if logSelected.error}
+                      <span class="text-rose-300 ml-2">{logSelected.error}</span>
+                    {/if}
+                  </div>
+                  <button onclick={() => (logSelected = null)} class="text-slate-400 hover:text-white">Close</button>
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-2 font-mono text-[11px] text-slate-300">
+                  <span>model: <strong class="text-white">{logSelected.model ?? '–'}</strong></span>
+                  <span>duration: <strong class="text-white">{logNum(logSelected.duration_ms)} ms</strong></span>
+                  <span>inference: <strong class="text-white">{logNum(logSelected.inference_ms)} ms</strong></span>
+                  <span>tier switch: <strong class="text-white">{logNum(logSelected.tier_switch_ms)} ms</strong></span>
+                  <span>tokens in / out: <strong class="text-white">{logNum(logSelected.tokens_in)} / {logNum(logSelected.tokens_out)}</strong></span>
+                  <span>cached: <strong class="text-white">{logNum(logSelected.cached_tokens)}</strong></span>
+                  <span>tok/s: <strong class="text-white">{logNum(logSelected.tokens_per_s, 1)}</strong></span>
+                  <span>previous tier: <strong class="text-white">{logSelected.previous_tier ?? '–'}</strong></span>
+                </div>
+                {#if logSelected.input !== undefined || logSelected.output !== undefined}
+                  <div class="grid md:grid-cols-2 gap-3">
+                    <div>
+                      <div class="text-slate-400 mb-1">Input</div>
+                      <pre class="whitespace-pre-wrap break-words bg-slate-900 rounded-lg p-2 max-h-72 overflow-auto text-slate-200">{logSelected.input ?? ''}</pre>
+                    </div>
+                    <div>
+                      <div class="text-slate-400 mb-1">Output</div>
+                      <pre class="whitespace-pre-wrap break-words bg-slate-900 rounded-lg p-2 max-h-72 overflow-auto text-slate-200">{logSelected.output ?? ''}</pre>
+                    </div>
+                  </div>
+                {:else}
+                  <div class="text-slate-500">
+                    Captured at level <strong>{logSelected.level}</strong>: no text. Set the capture level to
+                    <strong>debug</strong> for prompt and completion text, <strong>trace</strong> for payloads.
+                  </div>
+                {/if}
+                {#if logSelected.request_payload !== undefined || logSelected.response_payload !== undefined}
+                  <div class="grid md:grid-cols-2 gap-3">
+                    <div>
+                      <div class="text-slate-400 mb-1">Request payload</div>
+                      <pre class="whitespace-pre-wrap break-words bg-slate-900 rounded-lg p-2 max-h-72 overflow-auto text-slate-300">{logPretty(logSelected.request_payload)}</pre>
+                    </div>
+                    <div>
+                      <div class="text-slate-400 mb-1">Response payload</div>
+                      <pre class="whitespace-pre-wrap break-words bg-slate-900 rounded-lg p-2 max-h-72 overflow-auto text-slate-300">{logPretty(logSelected.response_payload)}</pre>
+                    </div>
+                  </div>
+                {/if}
+                {#if logSelected.truncated}
+                  <div class="text-amber-300">Some captured text or payload was shortened.</div>
+                {/if}
+              </div>
+            {/if}
+          </div>
 
         <!-- TAB 5: IMAGE GENERATION (moss-image) -->
         {:else if activeTab === 'image'}

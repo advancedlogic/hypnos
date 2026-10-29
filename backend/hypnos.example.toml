@@ -22,6 +22,12 @@ kv_idle_timeout_secs = 300
 allowed_origins = []
 # "pretty" for terminals, "json" (one object per line) for log shippers. Env HYPNOS_LOG_FORMAT overrides.
 log_format = "pretty"
+# In-memory request log (GET /v1/logs, playground "Request Logs" tab). Levels: off, error (failed
+# calls only), warn (4xx/5xx), info (metadata of every call), debug (+ prompt and completion text),
+# trace (+ request/response payloads with media replaced by placeholders). POST /v1/logs/level
+# changes it at runtime; request_log_capacity bounds the ring.
+request_log_level = "info"
+request_log_capacity = 200
 
 [limits]
 request_timeout_secs = 900          # wall-clock budget per request (streaming: until headers are sent)
