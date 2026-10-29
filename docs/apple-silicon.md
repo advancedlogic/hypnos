@@ -111,11 +111,13 @@ root; line numbers refer to the current tree.
   sets `use_metal = true` whenever the target triple contains `apple` and Vulkan is not requested
   (line 101), then defines `SD_METAL=ON` and links `Metal` and `MetalKit` (lines 162 to 171).
   sd.cpp's own CMake maps `SD_METAL` to `GGML_METAL` (`stable-diffusion.cpp/CMakeLists.txt` line 113).
-- **ONNX Runtime (Kokoro)**: the session sets no execution provider
-  (`backend/crates/hypnos-backends/src/kokoro.rs`, session built around line 246), and on macOS
-  ort's default `AutoDevicePolicy::MaxEfficiency` registers CoreML. CoreML takes only 71 of the
-  graph's 2273 nodes (24 partitions), yet it is faster on an M5 Max: 0.79 s per sentence against
-  1.15 s with `PreferCPU`. Keep the default.
+- **ONNX Runtime (Kokoro)**: use the fp32 graph `model.onnx` on Apple Silicon. The fp16 graph
+  returns an all-NaN waveform (played as silence) for 16 of 110 voice/text pairs on both the CPU and
+  CoreML providers; the fp32 graph returns audio for all 110. Likely cause: ONNX Runtime's native
+  fp16 kernels on ARM64 compute in half precision where x86 upcasts (not verified on Windows).
+  The session pins `AutoDevicePolicy::PreferCPU`, since ort's default registers CoreML on macOS
+  (24 partitions, 71 of 2273 nodes). Per sentence on an M5 Max: fp32 CPU 0.70 s, fp16 CoreML
+  0.79 s, fp16 CPU 1.15 s. A non-finite waveform is now an error rather than a silent WAV.
 
 ### 3.2 Memory layer
 

@@ -18,6 +18,7 @@ use hypnos_core::openai::{AudioSpeechOutput, AudioSpeechRequest, ExecutionTeleme
 use hypnos_core::request::RequestContext;
 use hypnos_core::ModelBackend;
 use ort::environment::Environment;
+use ort::session::builder::AutoDevicePolicy;
 use ort::session::Session;
 use ort::value::Tensor;
 use parking_lot::RwLock;
@@ -251,6 +252,10 @@ fn load_kokoro(cfg: &ModelConfig, n_threads: i32) -> Result<LoadedKokoro> {
         .map_err(|e| HypnosError::BackendError(format!("ONNX session builder: {e}")))?
         .with_intra_threads(n_threads.clamp(1, 8) as usize)
         .map_err(|e| HypnosError::BackendError(format!("ONNX session options: {e}")))?
+        // CPU only: ort's default policy registers CoreML on macOS, which splits the graph into 24
+        // partitions. The CPU provider is the fastest measured on Apple Silicon with the fp32 graph.
+        .with_auto_device(AutoDevicePolicy::PreferCPU)
+        .map_err(|e| HypnosError::BackendError(format!("ONNX session options: {e}")))?
         .commit_from_file(&cfg.weights_path)
         .map_err(|e| {
             HypnosError::BackendError(format!(
@@ -372,6 +377,15 @@ fn synthesize(
         let (_shape, data) = outputs[0]
             .try_extract_tensor::<f32>()
             .map_err(|e| HypnosError::BackendError(format!("waveform output: {e}")))?;
+        // NaN would be written as zero samples: a valid WAV of pure silence with HTTP 200.
+        let non_finite = data.iter().filter(|x| !x.is_finite()).count();
+        if non_finite > 0 {
+            return Err(HypnosError::BackendError(format!(
+                "Kokoro returned {non_finite} non-finite samples of {} for voice '{voice}'; \
+                 the fp16 graph overflows on some inputs, use the fp32 model.onnx",
+                data.len()
+            )));
+        }
         if i > 0 {
             audio.extend_from_slice(&silence);
         }

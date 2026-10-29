@@ -57,7 +57,7 @@ Download sources (all public Hugging Face repositories):
 | `gemma-4-26B-A4B-it-Q4_0.gguf`, `mmproj-gemma-4-26B-A4B-it-BF16.gguf` | `ggml-org/gemma-4-26B-A4B-it-GGUF` |
 | `gemma-4-E4B-it-Q4_0.gguf`, `mmproj-gemma-4-E4B-it-BF16.gguf` | `ggml-org/gemma-4-E4B-it-GGUF` |
 | `embeddinggemma-2-Q8_0.gguf` | `ggml-org/embeddinggemma-2-GGUF` |
-| `kokoro/model_fp16.onnx`, `kokoro/voices/*.bin` | `onnx-community/Kokoro-82M-v1.0-ONNX` (`onnx/` and `voices/` folders) |
+| `kokoro/model_fp16.onnx` (macOS: `kokoro/model.onnx`), `kokoro/voices/*.bin` | `onnx-community/Kokoro-82M-v1.0-ONNX` (`onnx/` and `voices/` folders) |
 | `MOSS-Image-SFT-Q4_K.gguf` | `leejet/MOSS-Image-SFT-GGUF` |
 | `Qwen3.5-9B-Q4_K_M.gguf` | `unsloth/Qwen3.5-9B-GGUF` |
 | `flux2-vae.safetensors` | `Comfy-Org/MOSS-Image` (`vae/`) |
@@ -66,6 +66,8 @@ Download sources (all public Hugging Face repositories):
 Notes:
 - Kokoro's quantized exports (`model_q8f16.onnx`, `model_q4.onnx`) crash the statically linked
   ONNX Runtime CPU provider at session creation on Windows; use the fp16 graph.
+- On Apple Silicon use the fp32 graph (`onnx/model.onnx`): the fp16 one overflows to a silent
+  (all-NaN) waveform for some voice/text pairs there. Hypnos now rejects such output with an error.
 - `kv_dtype = "q8_0"` and the sliding-window KV cache keep the Gemma 4 context budgets small; all
   budgets live in `backend/hypnos.example.toml`.
 

@@ -132,7 +132,9 @@ activation_workspace_bytes = 536870912
 id = "kokoro-82m-q4"
 modality = "text_to_speech"
 engine = "onnx_runtime"
-weights_path = "models/kokoro/model_fp16.onnx"
+# fp32 graph (onnx-community/Kokoro-82M-v1.0-ONNX, onnx/model.onnx). The fp16 graph overflows to an
+# all-NaN waveform for some voice/text pairs on Apple Silicon (16 of 110 in a scan) and is slower.
+weights_path = "models/kokoro/model.onnx"
 voices_path = "models/kokoro/voices"
 total_weight_bytes = 0                  # auto-detected from the file (~82 MiB)
 min_gpu_layer_ratio = 1.0
