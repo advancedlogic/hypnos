@@ -21,7 +21,8 @@ use hypnos_core::{
     error::HypnosError,
     openai::{
         AudioSpeechRequest, AudioTranscriptionRequest, ChatCompletionRequest, ChatStreamEvent,
-        EmbeddingRequest, ImageGenerationRequest, OpenAiModelInfo, OpenAiModelList,
+        EmbeddingRequest, ExecutionTelemetry, ImageGenerationRequest, OpenAiModelInfo,
+        OpenAiModelList,
     },
     request::{CancelOnDrop, RequestContext},
 };
@@ -120,6 +121,8 @@ pub fn cors_layer(allowed_origins: &[String]) -> CorsLayer {
                 HeaderValue::from_static("x-hypnos-gpu-layers"),
                 HeaderValue::from_static("x-hypnos-switch-ms"),
                 HeaderValue::from_static("x-hypnos-inference-ms"),
+                HeaderValue::from_static("x-hypnos-audio-secs"),
+                HeaderValue::from_static("x-hypnos-rtf"),
             ]
             .into_iter()
             .map(|v| header::HeaderName::from_bytes(v.as_bytes()).expect("static header name"))
@@ -292,11 +295,24 @@ async fn set_model_tier(
     })))
 }
 
+/// Lease telemetry (tiers, switch time) plus whatever engine timings the backend attached to its
+/// response. The server owns the overall inference clock; the backend owns the phase split.
+fn finish_telemetry(
+    lease: &ActiveModelLease,
+    infer_start: Instant,
+    from_backend: Option<ExecutionTelemetry>,
+) -> ExecutionTelemetry {
+    let infer_ms = infer_start.elapsed().as_secs_f64() * 1000.0;
+    let engine = from_backend.map(|t| t.engine).unwrap_or_default();
+    lease.build_telemetry(infer_ms).with_engine(engine)
+}
+
 /// State carried through the SSE stream; owning the lease keeps the model pinned in VRAM until the
 /// client has received the final chunk, and dropping the guard cancels generation on disconnect.
 struct ChatSseState {
     rx: mpsc::Receiver<ChatStreamEvent>,
     lease: ActiveModelLease,
+    metrics: Arc<Metrics>,
     _cancel_guard: CancelOnDrop,
     id: String,
     model: String,
@@ -381,6 +397,7 @@ async fn chat_completions(
             created: Utc::now().timestamp(),
             infer_start,
             lease,
+            metrics: state.metrics.clone(),
             _cancel_guard: guard,
             queued: VecDeque::new(),
             finished: false,
@@ -414,9 +431,12 @@ async fn chat_completions(
                 Some(ChatStreamEvent::Done {
                     usage,
                     finish_reason,
+                    timing,
                 }) => {
                     st.finished = true;
+                    st.metrics.record_chat(&st.model, &timing);
                     let infer_ms = st.infer_start.elapsed().as_secs_f64() * 1000.0;
+                    let telemetry = st.lease.build_telemetry(infer_ms).with_engine(timing);
                     let mut extra = serde_json::Map::new();
                     extra.insert(
                         "usage".into(),
@@ -424,8 +444,7 @@ async fn chat_completions(
                     );
                     extra.insert(
                         "hypnos_telemetry".into(),
-                        serde_json::to_value(st.lease.build_telemetry(infer_ms))
-                            .unwrap_or(serde_json::Value::Null),
+                        serde_json::to_value(telemetry).unwrap_or(serde_json::Value::Null),
                     );
                     let ev = sse_chunk(&st, json!({}), json!(finish_reason), extra);
                     st.queued.push_back(Event::default().data("[DONE]"));
@@ -454,8 +473,9 @@ async fn chat_completions(
     }
 
     let mut resp = lease.backend.chat_completion(&req, &ctx).await?;
-    let infer_ms = infer_start.elapsed().as_secs_f64() * 1000.0;
-    resp.hypnos_telemetry = Some(lease.build_telemetry(infer_ms));
+    let telemetry = finish_telemetry(&lease, infer_start, resp.hypnos_telemetry.take());
+    state.metrics.record_chat(&req.model, &telemetry.engine);
+    resp.hypnos_telemetry = Some(telemetry);
     guard.disarm();
     Ok(Json(resp).into_response())
 }
@@ -478,8 +498,11 @@ async fn embeddings(
 
     let infer_start = Instant::now();
     let mut resp = lease.backend.embeddings(&req, &ctx).await?;
-    let infer_ms = infer_start.elapsed().as_secs_f64() * 1000.0;
-    resp.hypnos_telemetry = Some(lease.build_telemetry(infer_ms));
+    resp.hypnos_telemetry = Some(finish_telemetry(
+        &lease,
+        infer_start,
+        resp.hypnos_telemetry.take(),
+    ));
     guard.disarm();
     Ok(Json(resp))
 }
@@ -591,8 +614,9 @@ async fn audio_transcriptions(
 
     let infer_start = Instant::now();
     let mut resp = lease.backend.transcribe(&req, &ctx).await?;
-    let infer_ms = infer_start.elapsed().as_secs_f64() * 1000.0;
-    resp.hypnos_telemetry = Some(lease.build_telemetry(infer_ms));
+    let telemetry = finish_telemetry(&lease, infer_start, resp.hypnos_telemetry.take());
+    state.metrics.record_stt(&req.model, &telemetry.engine);
+    resp.hypnos_telemetry = Some(telemetry);
     guard.disarm();
     Ok(Json(resp))
 }
@@ -610,8 +634,8 @@ async fn audio_speech(
 
     let infer_start = Instant::now();
     let out = lease.backend.synthesize_speech(&req, &ctx).await?;
-    let infer_ms = infer_start.elapsed().as_secs_f64() * 1000.0;
-    let telemetry = lease.build_telemetry(infer_ms);
+    let telemetry = finish_telemetry(&lease, infer_start, Some(out.telemetry.clone()));
+    state.metrics.record_tts(&req.model, &telemetry.engine);
     guard.disarm();
 
     let mut headers = HeaderMap::new();
@@ -631,6 +655,20 @@ async fn audio_speech(
     }
     if let Ok(v) = HeaderValue::from_str(&format!("{:.1}", telemetry.inference_latency_ms)) {
         headers.insert("x-hypnos-inference-ms", v);
+    }
+    if let Some(v) = telemetry
+        .engine
+        .audio_secs
+        .and_then(|s| HeaderValue::from_str(&format!("{s:.3}")).ok())
+    {
+        headers.insert("x-hypnos-audio-secs", v);
+    }
+    if let Some(v) = telemetry
+        .engine
+        .rtf
+        .and_then(|r| HeaderValue::from_str(&format!("{r:.4}")).ok())
+    {
+        headers.insert("x-hypnos-rtf", v);
     }
 
     Ok((headers, out.audio_bytes).into_response())
@@ -656,8 +694,14 @@ async fn image_generations(
 
     let infer_start = Instant::now();
     let mut resp = lease.backend.generate_image(&req, &ctx).await?;
-    let infer_ms = infer_start.elapsed().as_secs_f64() * 1000.0;
-    resp.hypnos_telemetry = Some(lease.build_telemetry(infer_ms));
+    state
+        .metrics
+        .record_image(&req.model, infer_start.elapsed());
+    resp.hypnos_telemetry = Some(finish_telemetry(
+        &lease,
+        infer_start,
+        resp.hypnos_telemetry.take(),
+    ));
     guard.disarm();
     Ok(Json(resp))
 }

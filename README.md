@@ -140,7 +140,7 @@ builds (no CUDA toolkit, e.g. CI) use `cargo build --workspace --no-default-feat
 | :--- | :--- |
 | `GET /health` | liveness: version and uptime |
 | `GET /ready` | readiness: 503 until startup tier initialization has finished |
-| `GET /metrics` | Prometheus text: per-route counters and latency, scheduler promotions/evictions/load failures/rejections, VRAM bookkeeping vs. real device memory, per-model tier and leases |
+| `GET /metrics` | Prometheus text: per-route counters and latency, scheduler promotions/evictions/load failures/rejections, VRAM bookkeeping vs. real device memory, per-model tier and leases, and per-model execution histograms (`hypnos_chat_ttft_ms`, `hypnos_chat_queue_ms`, `hypnos_chat_context_ms`, `hypnos_chat_prefill_tokens_per_s`, `hypnos_chat_decode_tokens_per_s`, `hypnos_tts_rtf`, `hypnos_tts_ttfa_ms`, `hypnos_stt_rtf`, `hypnos_image_jct_s`; each also exposes a `_last` gauge) |
 | `GET /v1/memory/status` | full 3-tier snapshot, including `tier1_vram_real_free_bytes` and `tier1_vram_unaccounted_bytes` |
 | `POST /v1/memory/tier` | manual promote / demote (`{"model": "...", "target_tier": "tier2_pinned_ram"}`); refused with 429 while the model is leased |
 
@@ -165,6 +165,15 @@ Behaviour that matters in production:
   `cargo test -- --ignored` runs the GPU lifecycle test against the real weights;
   `backend/scripts/smoke_test.sh` exercises every endpoint of a running server. CI
   (`.github/workflows/ci.yml`) builds and tests CPU-only on Ubuntu and Windows.
+- **Telemetry**: every response's `hypnos_telemetry` carries the tier placement plus an `engine`
+  object with the request's timing split (`queue_ms`, `context_ms`, `prefill_ms`, `decode_ms`,
+  `ttft_ms`, `prefill_tokens_per_s`, `decode_tokens_per_s`; `audio_secs` and `rtf` for speech).
+  `/v1/audio/speech` reports the same in `x-hypnos-inference-ms`, `x-hypnos-audio-secs` and
+  `x-hypnos-rtf` headers.
+- **Benchmark**: `backend/scripts/bench.sh [--host URL] [--out docs/bench/<name>.md]` runs the
+  fixed execution scenarios from `docs/execution-efficiency-plan.md` (cold chat, five-turn chat,
+  vision chat, concurrent clients, TTS, voice round trip) against a running server and prints a
+  Markdown report; the current baseline is `docs/bench/baseline-2026-10-29.md`.
 
 ### Manual Launch
 #### 1. Start the Rust Backend (`http://localhost:8080`)

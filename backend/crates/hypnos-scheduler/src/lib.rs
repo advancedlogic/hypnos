@@ -8,7 +8,7 @@
 use hypnos_core::config::{LimitsConfig, MemoryTier};
 use hypnos_core::error::{HypnosError, Result};
 use hypnos_core::kv_cache::{KvCacheEstimator, LayerPlacementPlan};
-use hypnos_core::openai::ExecutionTelemetry;
+use hypnos_core::openai::{EngineTiming, ExecutionTelemetry};
 use hypnos_core::request::RequestContext;
 use hypnos_core::ModelBackend;
 use hypnos_memory::{MemoryHierarchyStatus, TieredMemoryManager};
@@ -44,6 +44,7 @@ impl ActiveModelLease {
             tier_switch_latency_ms: self.tier_switch_latency_ms,
             inference_latency_ms,
             evicted_models: self.evicted_models.clone(),
+            engine: EngineTiming::default(),
         }
     }
 }

@@ -208,10 +208,11 @@ pub struct TokenUsage {
 pub enum ChatStreamEvent {
     /// A new piece of generated text.
     Delta(String),
-    /// Generation finished; carries final usage and finish reason.
+    /// Generation finished; carries final usage, finish reason and engine timings.
     Done {
         usage: TokenUsage,
         finish_reason: String,
+        timing: EngineTiming,
     },
     /// Generation failed after the stream started.
     Error(String),
@@ -396,6 +397,73 @@ pub struct ExecutionTelemetry {
     pub inference_latency_ms: f64,
     /// Models evicted/compacted to make room for this request
     pub evicted_models: Vec<String>,
+    /// Engine-side timings for this request (prefill/decode split, time to first token, real-time
+    /// factor for audio). Filled by the backend; absent fields were not measured.
+    #[serde(default)]
+    pub engine: EngineTiming,
+}
+
+/// What happened between the lease being granted and the response being produced. Every field is
+/// optional because each modality measures a different subset. Durations are milliseconds.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct EngineTiming {
+    /// Waiting for the model's execution lock (today) or worker slot (with the engine worker).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue_ms: Option<f64>,
+    /// Creating the llama.cpp context (KV cache + compute buffers); 0 once contexts persist.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_ms: Option<f64>,
+    /// Prompt (and media) evaluation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefill_ms: Option<f64>,
+    /// Token-by-token generation after prefill.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decode_ms: Option<f64>,
+    /// Lease granted to the first visible text piece (includes queueing, context and prefill).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefill_tokens_per_s: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decode_tokens_per_s: Option<f64>,
+    /// Duration of the audio consumed (speech-to-text) or produced (text-to-speech), in seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_secs: Option<f64>,
+    /// Real-time factor: processing seconds / audio seconds (lower is faster).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rtf: Option<f64>,
+    /// Text-to-speech: time to the first audio chunk (streaming synthesis only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttfa_ms: Option<f64>,
+}
+
+impl ExecutionTelemetry {
+    /// Telemetry carrying only engine timings; the scheduler fields are placeholders until the
+    /// server merges in the lease (`with_engine`).
+    pub fn for_engine(engine: EngineTiming) -> Self {
+        Self {
+            previous_tier: MemoryTier::Tier3NvmeSsd,
+            placement: LayerPlacementPlan {
+                primary_tier: MemoryTier::Tier3NvmeSsd,
+                gpu_layers: 0,
+                pinned_ram_layers: 0,
+                ssd_layers: 0,
+                vram_weight_bytes: 0,
+                vram_kv_and_workspace_bytes: 0,
+                pinned_ram_bytes: 0,
+                allocated_context_len: 0,
+            },
+            tier_switch_latency_ms: 0.0,
+            inference_latency_ms: 0.0,
+            evicted_models: Vec::new(),
+            engine,
+        }
+    }
+
+    pub fn with_engine(mut self, engine: EngineTiming) -> Self {
+        self.engine = engine;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

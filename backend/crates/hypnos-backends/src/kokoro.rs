@@ -14,7 +14,9 @@ use async_trait::async_trait;
 use hypnos_core::config::{MemoryTier, Modality, ModelConfig};
 use hypnos_core::error::{HypnosError, Result};
 use hypnos_core::kv_cache::LayerPlacementPlan;
-use hypnos_core::openai::{AudioSpeechOutput, AudioSpeechRequest, ExecutionTelemetry};
+use hypnos_core::openai::{
+    AudioSpeechOutput, AudioSpeechRequest, EngineTiming, ExecutionTelemetry,
+};
 use hypnos_core::request::RequestContext;
 use hypnos_core::ModelBackend;
 use ort::environment::Environment;
@@ -486,23 +488,35 @@ impl ModelBackend for OnnxRuntimeBackend {
         let loaded = self.loaded.clone();
         let vocab = self.vocab.clone();
 
-        let (samples, voice_used) = tokio::task::spawn_blocking(move || -> Result<(Vec<f32>, String)> {
-            let mut guard = loaded
-                .lock()
-                .map_err(|_| HypnosError::BackendError("kokoro mutex poisoned".into()))?;
-            let resident = guard.as_mut().ok_or_else(|| {
-                HypnosError::BackendError(format!("model '{}' is not loaded", cfg.id))
-            })?;
-            let voice = resolve_voice(&requested_voice, &resident.voices)
-                .ok_or_else(|| HypnosError::Config("no Kokoro voices available".into()))?
-                .to_string();
-            let started = Instant::now();
-            let samples = synthesize(resident, &vocab, &text, &voice, speed, &ctx)?;
-            info!(model = %cfg.id, voice = %voice, chars = text.len(), audio_secs = format!("{:.2}", samples.len() as f32 / KOKORO_SAMPLE_RATE as f32), synth_secs = format!("{:.2}", started.elapsed().as_secs_f32()), "speech synthesized");
-            Ok((samples, voice))
-        })
-        .await
-        .map_err(|e| HypnosError::BackendError(format!("tts task panicked: {e}")))??;
+        let requested_at = Instant::now();
+        let (samples, voice_used, queue_ms, synth_ms) =
+            tokio::task::spawn_blocking(move || -> Result<(Vec<f32>, String, f64, f64)> {
+                let mut guard = loaded
+                    .lock()
+                    .map_err(|_| HypnosError::BackendError("kokoro mutex poisoned".into()))?;
+                let queue_ms = requested_at.elapsed().as_secs_f64() * 1000.0;
+                let resident = guard.as_mut().ok_or_else(|| {
+                    HypnosError::BackendError(format!("model '{}' is not loaded", cfg.id))
+                })?;
+                let voice = resolve_voice(&requested_voice, &resident.voices)
+                    .ok_or_else(|| HypnosError::Config("no Kokoro voices available".into()))?
+                    .to_string();
+                let started = Instant::now();
+                let samples = synthesize(resident, &vocab, &text, &voice, speed, &ctx)?;
+                let synth_ms = started.elapsed().as_secs_f64() * 1000.0;
+                info!(model = %cfg.id, voice = %voice, chars = text.len(), audio_secs = format!("{:.2}", samples.len() as f32 / KOKORO_SAMPLE_RATE as f32), synth_secs = format!("{:.2}", synth_ms / 1000.0), "speech synthesized");
+                Ok((samples, voice, queue_ms, synth_ms))
+            })
+            .await
+            .map_err(|e| HypnosError::BackendError(format!("tts task panicked: {e}")))??;
+        let audio_secs = samples.len() as f64 / f64::from(KOKORO_SAMPLE_RATE);
+        let engine = EngineTiming {
+            queue_ms: Some(queue_ms),
+            decode_ms: Some(synth_ms),
+            audio_secs: Some(audio_secs),
+            rtf: (audio_secs > 0.0).then(|| synth_ms / 1000.0 / audio_secs),
+            ..EngineTiming::default()
+        };
 
         let (audio_bytes, content_type) = match format.as_str() {
             "pcm" => (encode_pcm16_raw(&samples), "audio/pcm".to_string()),
@@ -530,8 +544,9 @@ impl ModelBackend for OnnxRuntimeBackend {
                 previous_tier: plan.primary_tier,
                 placement: plan,
                 tier_switch_latency_ms: 0.0,
-                inference_latency_ms: 0.0,
+                inference_latency_ms: synth_ms,
                 evicted_models: Vec::new(),
+                engine,
             },
         })
     }

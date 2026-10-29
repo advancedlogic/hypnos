@@ -1,6 +1,8 @@
 //! Minimal Prometheus text exposition (no external metrics crate): per-route request counters and
-//! latency sums, scheduler counters, and memory-tier gauges.
+//! latency sums, scheduler counters, memory-tier gauges, and per-model execution histograms
+//! (time to first token, prefill / decode throughput, audio real-time factors, image job time).
 
+use hypnos_core::openai::EngineTiming;
 use hypnos_memory::MemoryHierarchyStatus;
 use hypnos_scheduler::SchedulerStats;
 use parking_lot::Mutex;
@@ -18,9 +20,129 @@ struct RouteStats {
     latency_ms_max: f64,
 }
 
+/// Fixed-bucket cumulative histogram plus the last observed value (handy for a single bench run).
+#[derive(Debug, Clone)]
+struct Histogram {
+    bounds: &'static [f64],
+    counts: Vec<u64>,
+    sum: f64,
+    count: u64,
+    last: f64,
+}
+
+impl Histogram {
+    fn new(bounds: &'static [f64]) -> Self {
+        Self {
+            bounds,
+            counts: vec![0; bounds.len()],
+            sum: 0.0,
+            count: 0,
+            last: 0.0,
+        }
+    }
+
+    fn observe(&mut self, v: f64) {
+        if !v.is_finite() {
+            return;
+        }
+        for (i, b) in self.bounds.iter().enumerate() {
+            if v <= *b {
+                self.counts[i] += 1;
+            }
+        }
+        self.sum += v;
+        self.count += 1;
+        self.last = v;
+    }
+
+    fn render(&self, out: &mut String, name: &str, model: &str) {
+        for (i, b) in self.bounds.iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "{name}_bucket{{model=\"{model}\",le=\"{b}\"}} {}",
+                self.counts[i]
+            );
+        }
+        let _ = writeln!(
+            out,
+            "{name}_bucket{{model=\"{model}\",le=\"+Inf\"}} {}",
+            self.count
+        );
+        let _ = writeln!(out, "{name}_sum{{model=\"{model}\"}} {:.3}", self.sum);
+        let _ = writeln!(out, "{name}_count{{model=\"{model}\"}} {}", self.count);
+        let _ = writeln!(out, "{name}_last{{model=\"{model}\"}} {:.3}", self.last);
+    }
+}
+
+struct EngineMetric {
+    name: &'static str,
+    help: &'static str,
+    bounds: &'static [f64],
+}
+
+const LATENCY_MS: &[f64] = &[
+    50.0, 100.0, 200.0, 300.0, 500.0, 1000.0, 2000.0, 3000.0, 5000.0, 10000.0, 30000.0,
+];
+const TOKENS_PER_S: &[f64] = &[
+    1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0,
+];
+const RTF: &[f64] = &[0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0];
+const SECONDS: &[f64] = &[1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0, 300.0, 600.0];
+
+/// Every execution histogram, in exposition order. Each is keyed by model id.
+const ENGINE_METRICS: &[EngineMetric] = &[
+    EngineMetric {
+        name: "hypnos_chat_ttft_ms",
+        help: "Chat: lease granted to first visible token (ms).",
+        bounds: LATENCY_MS,
+    },
+    EngineMetric {
+        name: "hypnos_chat_queue_ms",
+        help: "Chat: time waiting for the model's execution lock or slot (ms).",
+        bounds: LATENCY_MS,
+    },
+    EngineMetric {
+        name: "hypnos_chat_context_ms",
+        help: "Chat: llama.cpp context creation per request (ms); 0 once contexts persist.",
+        bounds: LATENCY_MS,
+    },
+    EngineMetric {
+        name: "hypnos_chat_prefill_tokens_per_s",
+        help: "Chat: prompt tokens / prefill wall time.",
+        bounds: TOKENS_PER_S,
+    },
+    EngineMetric {
+        name: "hypnos_chat_decode_tokens_per_s",
+        help: "Chat: completion tokens / decode wall time.",
+        bounds: TOKENS_PER_S,
+    },
+    EngineMetric {
+        name: "hypnos_tts_rtf",
+        help: "Text-to-speech: synthesis seconds / audio seconds.",
+        bounds: RTF,
+    },
+    EngineMetric {
+        name: "hypnos_tts_ttfa_ms",
+        help: "Text-to-speech: time to first audio chunk (ms, streaming only).",
+        bounds: LATENCY_MS,
+    },
+    EngineMetric {
+        name: "hypnos_stt_rtf",
+        help: "Speech-to-text: transcription seconds / audio seconds.",
+        bounds: RTF,
+    },
+    EngineMetric {
+        name: "hypnos_image_jct_s",
+        help: "Image generation: request to last image (s).",
+        bounds: SECONDS,
+    },
+];
+
 #[derive(Debug, Default)]
 pub struct Metrics {
     routes: Mutex<BTreeMap<String, RouteStats>>,
+    /// `(metric name, model id)` -> histogram.
+    engine: Mutex<BTreeMap<(&'static str, String), Histogram>>,
 }
 
 impl Metrics {
@@ -40,13 +162,56 @@ impl Metrics {
         }
     }
 
+    fn observe(&self, name: &'static str, model: &str, value: Option<f64>) {
+        let Some(v) = value else { return };
+        let bounds = ENGINE_METRICS
+            .iter()
+            .find(|m| m.name == name)
+            .map(|m| m.bounds)
+            .unwrap_or(LATENCY_MS);
+        self.engine
+            .lock()
+            .entry((name, model.to_string()))
+            .or_insert_with(|| Histogram::new(bounds))
+            .observe(v);
+    }
+
+    pub fn record_chat(&self, model: &str, t: &EngineTiming) {
+        self.observe("hypnos_chat_ttft_ms", model, t.ttft_ms);
+        self.observe("hypnos_chat_queue_ms", model, t.queue_ms);
+        self.observe("hypnos_chat_context_ms", model, t.context_ms);
+        self.observe(
+            "hypnos_chat_prefill_tokens_per_s",
+            model,
+            t.prefill_tokens_per_s,
+        );
+        self.observe(
+            "hypnos_chat_decode_tokens_per_s",
+            model,
+            t.decode_tokens_per_s,
+        );
+    }
+
+    pub fn record_tts(&self, model: &str, t: &EngineTiming) {
+        self.observe("hypnos_tts_rtf", model, t.rtf);
+        self.observe("hypnos_tts_ttfa_ms", model, t.ttfa_ms);
+    }
+
+    pub fn record_stt(&self, model: &str, t: &EngineTiming) {
+        self.observe("hypnos_stt_rtf", model, t.rtf);
+    }
+
+    pub fn record_image(&self, model: &str, jct: Duration) {
+        self.observe("hypnos_image_jct_s", model, Some(jct.as_secs_f64()));
+    }
+
     pub fn render(
         &self,
         status: &MemoryHierarchyStatus,
         sched: &SchedulerStats,
         uptime: Duration,
     ) -> String {
-        let mut out = String::with_capacity(4096);
+        let mut out = String::with_capacity(8192);
         let _ = writeln!(
             out,
             "# HELP hypnos_uptime_seconds Seconds since the server started."
@@ -204,6 +369,69 @@ impl Metrics {
                 m.total_requests_served
             );
         }
+
+        let engine = self.engine.lock();
+        for metric in ENGINE_METRICS {
+            let series: Vec<(&String, &Histogram)> = engine
+                .iter()
+                .filter(|((name, _), _)| *name == metric.name)
+                .map(|((_, model), h)| (model, h))
+                .collect();
+            if series.is_empty() {
+                continue;
+            }
+            let _ = writeln!(out, "# HELP {} {}", metric.name, metric.help);
+            let _ = writeln!(out, "# TYPE {} histogram", metric.name);
+            let _ = writeln!(out, "# TYPE {}_last gauge", metric.name);
+            for (model, h) in series {
+                h.render(&mut out, metric.name, &model.replace('"', ""));
+            }
+        }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn histogram_buckets_are_cumulative() {
+        let mut h = Histogram::new(&[1.0, 10.0, 100.0]);
+        h.observe(0.5);
+        h.observe(5.0);
+        h.observe(500.0);
+        h.observe(f64::NAN);
+        assert_eq!(h.counts, vec![1, 2, 2]);
+        assert_eq!(h.count, 3);
+        assert_eq!(h.last, 500.0);
+        let mut out = String::new();
+        h.render(&mut out, "m", "x");
+        assert!(out.contains("m_bucket{model=\"x\",le=\"+Inf\"} 3"));
+        assert!(out.contains("m_last{model=\"x\"} 500.000"));
+    }
+
+    #[test]
+    fn chat_timing_lands_in_per_model_series() {
+        let m = Metrics::default();
+        m.record_chat(
+            "gemma4:26b-q4",
+            &EngineTiming {
+                ttft_ms: Some(2300.0),
+                decode_tokens_per_s: Some(110.0),
+                ..EngineTiming::default()
+            },
+        );
+        let engine = m.engine.lock();
+        assert_eq!(
+            engine[&("hypnos_chat_ttft_ms", "gemma4:26b-q4".to_string())].count,
+            1
+        );
+        assert!(engine
+            .get(&(
+                "hypnos_chat_prefill_tokens_per_s",
+                "gemma4:26b-q4".to_string()
+            ))
+            .is_none());
     }
 }

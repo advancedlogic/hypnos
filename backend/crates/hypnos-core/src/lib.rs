@@ -86,6 +86,7 @@ pub trait ModelBackend: Send + Sync {
             .send(ChatStreamEvent::Done {
                 usage: resp.usage,
                 finish_reason,
+                timing: resp.hypnos_telemetry.map(|t| t.engine).unwrap_or_default(),
             })
             .await;
         Ok(())
