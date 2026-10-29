@@ -80,6 +80,6 @@ _No cards yet._
       longest-common-prefix KV reuse plus sliding-window checkpoints, multimodal chunks matched by
       id so an unchanged image is never re-encoded. Config: `slots` (default 1), `prefix_cache`
       (default true). Five-turn chat TTFT 300 ms -> 145 ms, vision follow-ups 300 ms -> 105 ms
-      (`docs/bench/after-B-2026-10-29.md`).
+      (`docs/bench/after-B-2026-10-29.md`). Commit `442c206`.
 - [x] 🟧 **PERF-1** `P1` Execution telemetry, per-model `/metrics` histograms, bench script and baseline
       Work item A of `docs/execution-efficiency-plan.md`. Commit `e209a56`.
