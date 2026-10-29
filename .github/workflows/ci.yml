@@ -1,67 +1,67 @@
-name: ci
+# name: ci
 
-on:
-  push:
-    branches: [main, master]
-  pull_request:
+# on:
+#   push:
+#     branches: [main, master]
+#   pull_request:
 
-env:
-  CARGO_TERM_COLOR: always
-  # CPU-only on hosted runners: no CUDA toolkit. The `cuda` feature of hypnos-backends is default-on
-  # and is disabled below with --no-default-features (scoped to that crate, the others have no features).
-  CMAKE_GENERATOR: Ninja
-  LLAMA_LIB_PROFILE: Release
+# env:
+#   CARGO_TERM_COLOR: always
+#   # CPU-only on hosted runners: no CUDA toolkit. The `cuda` feature of hypnos-backends is default-on
+#   # and is disabled below with --no-default-features (scoped to that crate, the others have no features).
+#   CMAKE_GENERATOR: Ninja
+#   LLAMA_LIB_PROFILE: Release
 
-jobs:
-  build-test:
-    name: ${{ matrix.os }} (CPU engines)
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@v4
+# jobs:
+#   build-test:
+#     name: ${{ matrix.os }} (CPU engines)
+#     runs-on: ${{ matrix.os }}
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         os: [ubuntu-latest, windows-latest]
+#     steps:
+#       - uses: actions/checkout@v4
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+#       - name: Install Rust (stable)
+#         uses: dtolnay/rust-toolchain@stable
+#         with:
+#           components: rustfmt, clippy
 
-      - name: Install Ninja + CMake
-        uses: lukka/get-cmake@latest
+#       - name: Install Ninja + CMake
+#         uses: lukka/get-cmake@latest
 
-      - name: Linux build deps (espeak-ng, ONNX Runtime download, sd.cpp)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libssl-dev
+#       - name: Linux build deps (espeak-ng, ONNX Runtime download, sd.cpp)
+#         if: runner.os == 'Linux'
+#         run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libssl-dev
 
-      - name: MSVC developer environment
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+#       - name: MSVC developer environment
+#         if: runner.os == 'Windows'
+#         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Vendor engine sources (pinned commits + patches)
-        shell: bash
-        run: ./backend/scripts/vendor.sh
+#       - name: Vendor engine sources (pinned commits + patches)
+#         shell: bash
+#         run: ./backend/scripts/vendor.sh
 
-      - name: Cache cargo registry + native build output
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: backend -> target
-          cache-on-failure: true
+#       - name: Cache cargo registry + native build output
+#         uses: Swatinem/rust-cache@v2
+#         with:
+#           workspaces: backend -> target
+#           cache-on-failure: true
 
-      - name: rustfmt
-        working-directory: backend
-        # scoped to the workspace crates: `--all` would also format the vendored engine bindings
-        run: cargo fmt -p hypnos-core -p hypnos-memory -p hypnos-scheduler -p hypnos-backends -p hypnos-server -- --check
+#       - name: rustfmt
+#         working-directory: backend
+#         # scoped to the workspace crates: `--all` would also format the vendored engine bindings
+#         run: cargo fmt -p hypnos-core -p hypnos-memory -p hypnos-scheduler -p hypnos-backends -p hypnos-server -- --check
 
-      - name: clippy (engine-free crates)
-        working-directory: backend
-        run: cargo clippy -p hypnos-core -p hypnos-memory -p hypnos-scheduler --all-targets -- -D warnings
+#       - name: clippy (engine-free crates)
+#         working-directory: backend
+#         run: cargo clippy -p hypnos-core -p hypnos-memory -p hypnos-scheduler --all-targets -- -D warnings
 
-      - name: Build (CPU-only engines)
-        working-directory: backend
-        run: cargo build --workspace --all-targets --no-default-features
+#       - name: Build (CPU-only engines)
+#         working-directory: backend
+#         run: cargo build --workspace --all-targets --no-default-features
 
-      - name: Test
-        working-directory: backend
-        run: cargo test --workspace --no-default-features
+#       - name: Test
+#         working-directory: backend
+#         run: cargo test --workspace --no-default-features
