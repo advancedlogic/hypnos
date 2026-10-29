@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod default_profile;
 pub mod metrics;
 pub mod request_log;
@@ -59,6 +60,8 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
     /// Bounded ring of recent API calls (`GET /v1/logs`).
     pub request_log: Arc<RequestLog>,
+    /// Bearer keys guarding `/v1/*` (`server.api_keys`); open when empty.
+    pub auth: Arc<auth::ApiAuth>,
     /// Flipped once startup tier initialization has finished (`/ready`).
     pub ready: Arc<AtomicBool>,
     pub started_at: Instant,
@@ -79,6 +82,10 @@ impl AppState {
         let memory = Arc::new(TieredMemoryManager::new(&config.hardware, config.models)?);
         let scheduler = Arc::new(ModelScheduler::new(memory, backends, &config.limits));
         let log_level = LogLevel::parse(&config.server.request_log_level).unwrap_or(LogLevel::Info);
+        let auth = Arc::new(auth::ApiAuth::new(
+            &config.server.api_keys,
+            config.server.metrics_require_auth,
+        ));
         Ok(Self {
             scheduler,
             limits: config.limits,
@@ -87,6 +94,7 @@ impl AppState {
                 log_level,
                 config.server.request_log_capacity,
             )),
+            auth,
             ready: Arc::new(AtomicBool::new(false)),
             started_at: Instant::now(),
             version: env!("CARGO_PKG_VERSION"),
@@ -193,6 +201,12 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
         .route("/health", get(health_check))
         .route("/ready", get(ready_check))
         .route("/metrics", get(metrics_endpoint))
+        // Inside observe_request (rejections get a request id, metrics and a log entry) and inside
+        // CORS (preflights are answered before it, and a 401 still carries CORS headers).
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_api_key,
+        ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             observe_request,

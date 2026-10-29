@@ -1,6 +1,36 @@
 <script>
   // Svelte 5 Runes State
   let backendUrl = $state('http://localhost:8080');
+  // API key (server.api_keys), kept in this browser only. Storage can be unavailable (private
+  // windows, blocked site data): the field then simply starts empty.
+  const API_KEY_STORAGE = 'hypnos.apiKey';
+  function loadApiKey() {
+    try {
+      return localStorage.getItem(API_KEY_STORAGE) || '';
+    } catch {
+      return '';
+    }
+  }
+  let apiKey = $state(loadApiKey());
+  $effect(() => {
+    try {
+      if (apiKey) localStorage.setItem(API_KEY_STORAGE, apiKey);
+      else localStorage.removeItem(API_KEY_STORAGE);
+    } catch {
+      // not persisted; the key still works for this page
+    }
+  });
+  // Set when the backend answers 401: the key is missing or wrong.
+  let authRejected = $state(false);
+
+  /** fetch() against the backend with `Authorization: Bearer <key>` when a key is set. */
+  async function apiFetch(path, init = {}) {
+    const headers = { ...(init.headers || {}) };
+    if (apiKey.trim()) headers.Authorization = `Bearer ${apiKey.trim()}`;
+    const res = await fetch(`${backendUrl}${path}`, { ...init, headers });
+    authRejected = res.status === 401;
+    return res;
+  }
   let isConnected = $state(false);
   let lastError = $state('');
   let isLoading = $state(false);
@@ -209,7 +239,7 @@
 
   async function fetchMemoryStatus() {
     try {
-      const res = await fetch(`${backendUrl}/v1/memory/status`);
+      const res = await apiFetch(`/v1/memory/status`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       memoryStatus = await res.json();
       isConnected = true;
@@ -232,7 +262,7 @@
       if (logFilterModel) params.set('model', logFilterModel);
       if (logFilterRoute) params.set('route', logFilterRoute);
       if (logFilterStatus) params.set('status', logFilterStatus);
-      const res = await fetch(`${backendUrl}/v1/logs?${params}`);
+      const res = await apiFetch(`/v1/logs?${params}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       logRecords = data.records;
@@ -247,7 +277,7 @@
 
   async function openLog(id) {
     try {
-      const res = await fetch(`${backendUrl}/v1/logs/${id}`);
+      const res = await apiFetch(`/v1/logs/${id}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       logSelected = await res.json();
     } catch (err) {
@@ -257,7 +287,7 @@
 
   async function setLogLevel(level) {
     try {
-      const res = await fetch(`${backendUrl}/v1/logs/level`, {
+      const res = await apiFetch(`/v1/logs/level`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ level }),
@@ -271,7 +301,7 @@
 
   async function clearLogs() {
     try {
-      const res = await fetch(`${backendUrl}/v1/logs`, { method: 'DELETE' });
+      const res = await apiFetch(`/v1/logs`, { method: 'DELETE' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       logSelected = null;
       await fetchLogs();
@@ -316,7 +346,7 @@
     isLoading = true;
     lastError = '';
     try {
-      const res = await fetch(`${backendUrl}/v1/memory/tier`, {
+      const res = await apiFetch(`/v1/memory/tier`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -418,7 +448,7 @@
     };
 
     try {
-      const res = await fetch(`${backendUrl}/v1/chat/completions`, {
+      const res = await apiFetch(`/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -625,7 +655,7 @@
         formData.append('file', sttRecordedBlob, 'recording.wav');
       }
 
-      const res = await fetch(`${backendUrl}/v1/audio/transcriptions`, {
+      const res = await apiFetch(`/v1/audio/transcriptions`, {
         method: 'POST',
         body: formData,
       });
@@ -647,7 +677,7 @@
     isLoading = true;
     lastError = '';
     try {
-      const res = await fetch(`${backendUrl}/v1/audio/speech`, {
+      const res = await apiFetch(`/v1/audio/speech`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -695,7 +725,7 @@
         .map((s) => s.trim())
         .filter(Boolean);
 
-      const res = await fetch(`${backendUrl}/v1/embeddings`, {
+      const res = await apiFetch(`/v1/embeddings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -721,7 +751,7 @@
     isLoading = true;
     lastError = '';
     try {
-      const res = await fetch(`${backendUrl}/v1/images/generations`, {
+      const res = await apiFetch(`/v1/images/generations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -778,6 +808,15 @@
           class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-indigo-500 w-52"
           placeholder="http://localhost:8080"
         />
+        <input
+          type="password"
+          bind:value={apiKey}
+          autocomplete="off"
+          aria-label="API key"
+          title="Sent as Authorization: Bearer on every request; stored in this browser only"
+          class="bg-slate-950 border rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none w-40 {authRejected ? 'border-rose-500 focus:border-rose-400' : 'border-slate-800 focus:border-indigo-500'}"
+          placeholder="API key (if required)"
+        />
         <button
           onclick={fetchMemoryStatus}
           class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 border border-slate-700 transition"
@@ -786,7 +825,7 @@
         </button>
         <div class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border {isConnected ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : 'bg-rose-500/10 text-rose-300 border-rose-500/30'}">
           <span class="w-2 h-2 rounded-full {isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}"></span>
-          {isConnected ? 'Backend Online' : 'Backend Offline'}
+          {isConnected ? 'Backend Online' : authRejected ? 'API Key Required' : 'Backend Offline'}
         </div>
       </div>
     </div>

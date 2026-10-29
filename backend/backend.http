@@ -3,13 +3,17 @@
 # Each request is separated by "###"; click "Send Request" above a block to run it.
 
 @host = http://localhost:8080
+# Only checked when the server has api_keys / HYPNOS_API_KEYS set.
+@apiKey = 
 
 ### 1. Inspect 3-Tier Memory Status
 GET {{host}}/v1/memory/status
+Authorization: Bearer {{apiKey}}
 
 
 ### 2. Text Generation (gemma4:26b-q4)
 POST {{host}}/v1/chat/completions
+Authorization: Bearer {{apiKey}}
 Content-Type: application/json
 
 {
@@ -23,6 +27,7 @@ Content-Type: application/json
 
 ### 2b. Vision Generation (gemma4:26b-q4 also accepts image_url content parts)
 POST {{host}}/v1/chat/completions
+Authorization: Bearer {{apiKey}}
 Content-Type: application/json
 
 {
@@ -43,6 +48,7 @@ Content-Type: application/json
 ### 3. Audio Transcription / STT (gemma4:e4b-q4)
 # Place a sample.wav next to this file (or change the path below).
 POST {{host}}/v1/audio/transcriptions
+Authorization: Bearer {{apiKey}}
 Content-Type: multipart/form-data; boundary=----HypnosBoundary
 
 ------HypnosBoundary
@@ -60,6 +66,7 @@ Content-Type: audio/wav
 ### 4. Text-to-Speech (kokoro-82m-q4 — pinned in Tier 1 VRAM)
 # Response body is audio; REST Client lets you save it via "Save Response Body".
 POST {{host}}/v1/audio/speech
+Authorization: Bearer {{apiKey}}
 Content-Type: application/json
 
 {
@@ -71,6 +78,7 @@ Content-Type: application/json
 
 ### 5. Embeddings (gemmaembedding2 — pinned in Tier 1 VRAM)
 POST {{host}}/v1/embeddings
+Authorization: Bearer {{apiKey}}
 Content-Type: application/json
 
 {
@@ -81,6 +89,7 @@ Content-Type: application/json
 
 ### 6. Image Generation (moss-image)
 POST {{host}}/v1/images/generations
+Authorization: Bearer {{apiKey}}
 Content-Type: application/json
 
 {

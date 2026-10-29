@@ -23,6 +23,9 @@ pub fn default_six_model_config() -> HypnosConfig {
             request_log_capacity: 200,
             allowed_origins: Vec::new(),
             log_format: "pretty".to_string(),
+            api_keys: Vec::new(), // HYPNOS_API_KEYS
+            metrics_require_auth: false,
+            tls: None,
         },
         limits: LimitsConfig::default(),
         hardware: HardwareConfig {

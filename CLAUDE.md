@@ -87,6 +87,10 @@ on them.
 
 ### Request lifecycle
 
+0. With `server.api_keys` (or `HYPNOS_API_KEYS`) set, `auth::require_api_key` answers 401 for any
+   `/v1/*` request without a matching `Authorization: Bearer` key (it runs inside CORS and
+   `observe_request`; `/health`, `/ready` and, by default, `/metrics` stay open). `[server.tls]`
+   makes `main.rs` serve HTTPS through axum-server + rustls (ring provider).
 1. A `hypnos-server` handler builds a `RequestContext` (limits, cancellation token tied to client
    disconnect via `CancelOnDrop`, request id).
 2. It calls `ModelScheduler::acquire_model(model_id, requested_ctx_len, batch, ctx)`:

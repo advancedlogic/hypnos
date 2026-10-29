@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use axum_server::tls_rustls::RustlsConfig;
 use hypnos_core::config::HypnosConfig;
 use hypnos_server::{build_router, default_profile::default_six_model_config, AppState};
 use std::path::Path;
@@ -47,7 +48,7 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|| "hypnos.toml".to_string());
 
     // Logging must exist before we can report configuration problems, so read the format first.
-    let (config, source) = if Path::new(&config_path).exists() {
+    let (mut config, source) = if Path::new(&config_path).exists() {
         let raw = std::fs::read_to_string(&config_path)
             .with_context(|| format!("reading {config_path}"))?;
         (
@@ -64,6 +65,11 @@ async fn main() -> Result<()> {
         std::env::var("HYPNOS_LOG_FORMAT").unwrap_or_else(|_| config.server.log_format.clone());
     init_logging(&log_format);
     info!(config = %source, version = env!("CARGO_PKG_VERSION"), "Hypnos starting");
+
+    // Keys from the environment replace the config list, so they can stay out of the file.
+    config
+        .server
+        .apply_env_api_keys(std::env::var("HYPNOS_API_KEYS").ok().as_deref());
 
     // Fail fast on a broken configuration instead of on the first request.
     let base_dir = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
@@ -84,7 +90,31 @@ async fn main() -> Result<()> {
 
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     let allowed_origins = config.server.allowed_origins.clone();
+    // Load the certificate now, so a bad PEM fails before the (slow) model startup.
+    let tls = match &config.server.tls {
+        Some(t) => {
+            // rustls needs a process-wide crypto provider; ring is the one already compiled in.
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            let cfg = RustlsConfig::from_pem_file(&t.cert_path, &t.key_path)
+                .await
+                .with_context(|| {
+                    format!(
+                        "loading server.tls ({} / {})",
+                        t.cert_path.display(),
+                        t.key_path.display()
+                    )
+                })?;
+            Some(cfg)
+        }
+        None => None,
+    };
     let state = AppState::from_config(config)?;
+    if state.auth.enabled() {
+        info!(
+            keys = state.auth.key_count(),
+            "API key authentication enabled for /v1/*"
+        );
+    }
 
     // Ground the planner in real device memory (no-op when no GPU backend is compiled in).
     state
@@ -112,11 +142,28 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind(&bind_addr)
         .await
         .with_context(|| format!("binding {bind_addr}"))?;
-    info!(address = %bind_addr, "OpenAI-compatible multi-modal server listening");
+    let scheme = if tls.is_some() { "https" } else { "http" };
+    info!(address = %bind_addr, scheme, "OpenAI-compatible multi-modal server listening");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    match tls {
+        None => {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal())
+                .await?
+        }
+        Some(tls) => {
+            let handle = axum_server::Handle::new();
+            let on_signal = handle.clone();
+            tokio::spawn(async move {
+                shutdown_signal().await;
+                on_signal.graceful_shutdown(None);
+            });
+            axum_server::from_tcp_rustls(listener.into_std()?, tls)
+                .handle(handle)
+                .serve(app.into_make_service())
+                .await?
+        }
+    }
 
     state.ready.store(false, Ordering::SeqCst);
     state.scheduler.shutdown().await;

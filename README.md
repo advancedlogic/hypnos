@@ -218,8 +218,18 @@ Behaviour that matters in production:
   clip already in the cache is not re-encoded; `usage.prompt_tokens_details.cached_tokens` reports
   the reused positions. Idle slot caches are cleared after `server.kv_idle_timeout_secs`.
 - **Exposure**: binds `127.0.0.1` by default; CORS allows loopback origins only unless
-  `server.allowed_origins` says otherwise. There is no authentication: put a reverse proxy in front
-  for anything beyond the local machine.
+  `server.allowed_origins` says otherwise. To serve beyond the local machine, set both:
+  - `server.api_keys` (or env `HYPNOS_API_KEYS`, comma-separated, which replaces the list): every
+    `/v1/*` route then needs `Authorization: Bearer <key>`, as OpenAI clients send it. A missing or
+    wrong key gets HTTP 401 in the OpenAI error shape (`code: invalid_api_key`); rejections are
+    logged with route and reason, never the key. Keys are held only as SHA-256 digests and compared
+    in constant time. `/health` and `/ready` stay open for probes; `/metrics` too unless
+    `server.metrics_require_auth = true`.
+  - `[server.tls]` with `cert_path` / `key_path` (PEM) to serve HTTPS in-process (rustls); plain
+    HTTP when absent. A bad certificate stops startup before any model loads.
+
+  Startup warns when a non-loopback `host` has no keys, or keys but no TLS. The playground has an
+  API-key field next to the backend URL; the key is stored in that browser only.
 - **Logs**: `server.log_format = "json"` (or env `HYPNOS_LOG_FORMAT=json`) for log shippers; every
   response carries an `x-request-id` header.
 - **Shutdown**: Ctrl+C / SIGTERM finishes in-flight requests, then releases every engine.

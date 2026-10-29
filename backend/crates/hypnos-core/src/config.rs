@@ -359,8 +359,8 @@ impl Default for HardwareConfig {
 /// HTTP Server configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
-    /// Bind address. Defaults to the loopback interface: the server has no authentication and is
-    /// meant for local applications. Use "0.0.0.0" only behind an authenticating reverse proxy.
+    /// Bind address. Defaults to the loopback interface. Before binding "0.0.0.0", set `api_keys`
+    /// and `tls` (or put an authenticating, TLS-terminating proxy in front).
     #[serde(default = "default_host")]
     pub host: String,
     #[serde(default = "default_port")]
@@ -384,6 +384,45 @@ pub struct ServerConfig {
     /// How many request records the ring keeps (oldest dropped first).
     #[serde(default = "default_request_log_capacity")]
     pub request_log_capacity: usize,
+    /// Keys accepted as `Authorization: Bearer <key>` on every `/v1/*` route. Empty = no
+    /// authentication. The `HYPNOS_API_KEYS` environment variable (comma-separated) replaces the
+    /// list, so keys can stay out of the config file.
+    #[serde(default)]
+    pub api_keys: Vec<String>,
+    /// Also require a key on `/metrics`. `/health` and `/ready` always stay open for probes.
+    #[serde(default)]
+    pub metrics_require_auth: bool,
+    /// HTTPS: serve TLS in-process with this PEM certificate chain and private key.
+    /// Plain HTTP when absent.
+    #[serde(default)]
+    pub tls: Option<TlsConfig>,
+}
+
+/// `[server.tls]`: PEM files, relative paths resolved from the working directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsConfig {
+    /// Certificate chain (leaf first), PEM.
+    pub cert_path: PathBuf,
+    /// Private key (PKCS#8, PKCS#1 or SEC1), PEM.
+    pub key_path: PathBuf,
+}
+
+impl ServerConfig {
+    /// Applies `HYPNOS_API_KEYS` (comma-separated; blanks ignored) over `api_keys` when it is set.
+    pub fn apply_env_api_keys(&mut self, env_value: Option<&str>) {
+        if let Some(value) = env_value {
+            self.api_keys = value
+                .split(',')
+                .map(str::trim)
+                .filter(|k| !k.is_empty())
+                .map(str::to_string)
+                .collect();
+        }
+    }
+
+    fn is_loopback_host(&self) -> bool {
+        matches!(self.host.as_str(), "127.0.0.1" | "localhost" | "::1")
+    }
 }
 
 fn default_host() -> String {
@@ -418,6 +457,9 @@ impl Default for ServerConfig {
             log_format: default_log_format(),
             request_log_level: default_request_log_level(),
             request_log_capacity: default_request_log_capacity(),
+            api_keys: Vec::new(),
+            metrics_require_auth: false,
+            tls: None,
         }
     }
 }
@@ -655,14 +697,36 @@ impl HypnosConfig {
                 "hardware.pinned_ram_budget_bytes is below 256 MiB; Tier 2 will be unusable".into(),
             );
         }
-        if self.server.host != "127.0.0.1"
-            && self.server.host != "localhost"
-            && self.server.host != "::1"
-        {
-            r.warnings.push(format!(
-                "server.host = \"{}\" exposes an unauthenticated API beyond this machine; put it behind an authenticating proxy",
-                self.server.host
-            ));
+        if self.server.api_keys.iter().any(|k| k.trim().is_empty()) {
+            r.errors
+                .push("server.api_keys contains an empty key".into());
+        }
+        if self.server.api_keys.iter().any(|k| k.trim().len() < 16) {
+            r.warnings.push(
+                "server.api_keys has a key shorter than 16 characters; use long random keys (e.g. `openssl rand -hex 32`)".into(),
+            );
+        }
+        if let Some(tls) = &self.server.tls {
+            for (label, path) in [("cert_path", &tls.cert_path), ("key_path", &tls.key_path)] {
+                let full = resolve(path);
+                if !full.is_file() {
+                    r.errors
+                        .push(format!("server.tls.{label} not found: {}", full.display()));
+                }
+            }
+        }
+        if !self.server.is_loopback_host() {
+            if self.server.api_keys.is_empty() {
+                r.warnings.push(format!(
+                    "server.host = \"{}\" exposes an unauthenticated API beyond this machine; set server.api_keys (or HYPNOS_API_KEYS) and server.tls",
+                    self.server.host
+                ));
+            } else if self.server.tls.is_none() {
+                r.warnings.push(format!(
+                    "server.host = \"{}\" without server.tls: API keys and data cross the network unencrypted",
+                    self.server.host
+                ));
+            }
         }
         if !matches!(self.server.log_format.as_str(), "pretty" | "json") {
             r.errors.push(format!(
@@ -758,6 +822,50 @@ num_layers = 4
         // Auto-detected Tier 1 is derived from the device and clamped, so nothing to report.
         hw.vram_budget_bytes = 0;
         assert!(hw.unified_memory_oversubscription(32 * gb).is_none());
+    }
+
+    #[test]
+    fn api_keys_env_override_replaces_the_list() {
+        let mut server = ServerConfig {
+            api_keys: vec!["from-file".into()],
+            ..ServerConfig::default()
+        };
+        server.apply_env_api_keys(None);
+        assert_eq!(server.api_keys, vec!["from-file"]);
+        server.apply_env_api_keys(Some(" key-a , ,key-b "));
+        assert_eq!(server.api_keys, vec!["key-a", "key-b"]);
+    }
+
+    #[test]
+    fn validate_checks_auth_and_tls_settings() {
+        let dir = std::env::temp_dir().join(format!("hypnos-tls-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("w.gguf"), b"GGUF").unwrap();
+        let mut cfg = HypnosConfig::from_toml_str(&minimal_toml("w.gguf")).unwrap();
+
+        // Public bind without keys: warned, not refused.
+        cfg.server.host = "0.0.0.0".into();
+        let r = cfg.validate(&dir);
+        assert!(r.is_ok());
+        assert!(r.warnings.iter().any(|w| w.contains("unauthenticated")));
+
+        // Keys but no TLS: a different warning.
+        cfg.server.api_keys = vec!["0123456789abcdef0123".into()];
+        let r = cfg.validate(&dir);
+        assert!(r.warnings.iter().any(|w| w.contains("unencrypted")));
+        assert!(!r.warnings.iter().any(|w| w.contains("unauthenticated")));
+
+        // Missing PEM files are errors; short and empty keys are flagged.
+        cfg.server.tls = Some(TlsConfig {
+            cert_path: "missing-cert.pem".into(),
+            key_path: "missing-key.pem".into(),
+        });
+        cfg.server.api_keys = vec!["short".into(), " ".into()];
+        let r = cfg.validate(&dir);
+        assert!(r.errors.iter().any(|e| e.contains("server.tls.cert_path")));
+        assert!(r.errors.iter().any(|e| e.contains("server.tls.key_path")));
+        assert!(r.errors.iter().any(|e| e.contains("empty key")));
+        assert!(r.warnings.iter().any(|w| w.contains("shorter than 16")));
     }
 
     #[test]

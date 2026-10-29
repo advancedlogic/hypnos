@@ -14,7 +14,7 @@
 # =============================================================================
 
 [server]
-# Loopback only: the API has no authentication. Use "0.0.0.0" solely behind an authenticating proxy.
+# Loopback by default. Before "0.0.0.0", set api_keys (or HYPNOS_API_KEYS) and [server.tls] below.
 host = "127.0.0.1"
 port = 8080
 kv_idle_timeout_secs = 300
@@ -28,6 +28,15 @@ log_format = "pretty"
 # changes it at runtime; request_log_capacity bounds the ring.
 request_log_level = "info"
 request_log_capacity = 200
+# API keys for every /v1/* route, sent as `Authorization: Bearer <key>`. Empty = no auth.
+# HYPNOS_API_KEYS (comma-separated) replaces the list, so keys can stay out of this file.
+# Generate one with: openssl rand -hex 32
+# api_keys = ["..."]
+# metrics_require_auth = false        # true: /metrics needs a key too (/health, /ready stay open)
+# HTTPS in-process (PEM files). Must stay the last part of [server]: keys below it would belong to it.
+# [server.tls]
+# cert_path = "certs/hypnos.crt"
+# key_path = "certs/hypnos.key"
 
 [limits]
 request_timeout_secs = 900          # wall-clock budget per request (streaming: until headers are sent)
