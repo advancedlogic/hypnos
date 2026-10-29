@@ -49,6 +49,9 @@ pub struct DeviceMemoryCapabilities {
     /// True when `physical_memory_bytes` and the budgets derived from it are a simulation.
     #[serde(default)]
     pub simulated: bool,
+    /// RAM actually installed (equal to `physical_memory_bytes` unless simulating; 0 if unknown).
+    #[serde(default)]
+    pub installed_memory_bytes: u64,
     /// Estimated Tier 2 -> Tier 1 transfer bandwidth in GB/s
     pub tier2_to_tier1_bandwidth_gbps: f64,
     /// Estimated Tier 3 -> Tier 2 NVMe read bandwidth in GB/s
@@ -212,6 +215,7 @@ impl DeviceMemoryCapabilities {
             pinned_ram_budget_bytes,
             physical_memory_bytes,
             simulated,
+            installed_memory_bytes: real_physical,
             tier2_to_tier1_bandwidth_gbps: t2_to_t1_bw,
             tier3_to_tier2_bandwidth_gbps: 5.5, // Typical PCIe 4.0 NVMe SSD sequential read
         };
@@ -354,6 +358,7 @@ mod tests {
             pinned_ram_budget_bytes: 12 * GIB,
             physical_memory_bytes: 64 * GIB,
             simulated: false,
+            installed_memory_bytes: 64 * GIB,
             tier2_to_tier1_bandwidth_gbps: 400.0,
             tier3_to_tier2_bandwidth_gbps: 5.5,
         };

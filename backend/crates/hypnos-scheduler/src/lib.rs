@@ -11,7 +11,7 @@ use hypnos_core::kv_cache::{KvCacheEstimator, LayerPlacementPlan};
 use hypnos_core::openai::ExecutionTelemetry;
 use hypnos_core::request::RequestContext;
 use hypnos_core::ModelBackend;
-use hypnos_memory::{MemoryHierarchyStatus, TieredMemoryManager};
+use hypnos_memory::{EvictionReason, MemoryHierarchyStatus, TieredMemoryManager};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -278,15 +278,14 @@ impl ModelScheduler {
         // with a partial GPU split, or would cross the process memory cap.
         let candidates = self.memory.idle_vram_eviction_candidates(model_id);
         for candidate_id in candidates {
-            let needs_eviction = match &target_plan {
-                None => true,
-                Some(plan) => {
-                    plan.gpu_layers < cfg.arch.num_layers || over_process_cap(plan).is_some()
+            let reason = match &target_plan {
+                None => EvictionReason::MemoryBudget,
+                Some(plan) if plan.gpu_layers < cfg.arch.num_layers => {
+                    EvictionReason::FullGpuPlacement
                 }
+                Some(plan) if over_process_cap(plan).is_some() => EvictionReason::ProcessMemoryCap,
+                Some(_) => break,
             };
-            if !needs_eviction {
-                break;
-            }
 
             let (cand_cfg, _) = self.memory.get_model_state(&candidate_id)?;
             let target_demote_tier = if cand_cfg.keep_warm_in_ram {
@@ -299,6 +298,7 @@ impl ModelScheduler {
                 evicting = %candidate_id,
                 for_model = %model_id,
                 to_tier = ?target_demote_tier,
+                reason = ?reason,
                 "Evicting idle model from Tier 1 VRAM to free space"
             );
 
@@ -309,6 +309,9 @@ impl ModelScheduler {
                 cand_backend.apply_placement(&demoted_plan, None).await?;
             }
             self.stats.evictions.fetch_add(1, Ordering::Relaxed);
+            // The demotion falls back to Tier 3 when Tier 2 has no room: record where it landed.
+            self.memory
+                .record_eviction(&candidate_id, model_id, reason, demoted_plan.primary_tier);
             evicted_models.push(candidate_id);
 
             self.memory.reconcile_vram();

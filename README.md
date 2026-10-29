@@ -129,7 +129,9 @@ estimate is caught only by `max_process_memory_bytes`, and only at the next load
 figure is the `phys_footprint` plus the model weights llama.cpp maps into Metal (file-backed, so the
 footprint leaves them out); on Linux the resident set; on Windows the working set. GPU memory on a
 discrete card is limited by `vram_budget_bytes` only. `/v1/memory/status` reports
-`process_memory_bytes` next to the budgets. Disk space is only consumed by `models` downloads, which
+`process_memory_bytes` next to the budgets, and `recent_evictions` lists the scheduler's last automatic
+evictions with their reason (`memory_budget`, `full_gpu_placement`, `process_memory_cap`). The
+playground's memory panel shows the process bar, a "Simulated" tag and those evictions. Disk space is only consumed by `models` downloads, which
 check free space first.
 
 ---

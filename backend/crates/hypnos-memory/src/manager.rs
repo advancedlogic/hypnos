@@ -6,7 +6,7 @@ use hypnos_core::kv_cache::LayerPlacementPlan;
 use hypnos_core::GpuMemoryProbe;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -55,8 +55,38 @@ pub struct MemoryHierarchyStatus {
     /// `hardware.max_process_memory_bytes`, when set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub process_memory_cap_bytes: Option<u64>,
+    /// The scheduler's most recent automatic evictions, newest first.
+    #[serde(default)]
+    pub recent_evictions: Vec<EvictionEvent>,
     pub models: Vec<ModelTierSnapshot>,
 }
+
+/// Why the scheduler evicted an idle model from Tier 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvictionReason {
+    /// The requested model did not fit in the memory budgets at all.
+    MemoryBudget,
+    /// It fit only with some layers left off the GPU.
+    FullGpuPlacement,
+    /// Loading it would have crossed `hardware.max_process_memory_bytes`.
+    ProcessMemoryCap,
+}
+
+/// One automatic eviction, as listed in [`MemoryHierarchyStatus::recent_evictions`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvictionEvent {
+    pub model: String,
+    /// The model whose request needed the memory.
+    pub for_model: String,
+    pub reason: EvictionReason,
+    pub to_tier: MemoryTier,
+    /// Milliseconds since the Unix epoch.
+    pub unix_ms: u64,
+}
+
+/// How many eviction events `/v1/memory/status` keeps.
+const EVICTION_LOG_LEN: usize = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelTierSnapshot {
@@ -86,6 +116,8 @@ pub struct TieredMemoryManager {
     simulating: bool,
     /// `hardware.max_process_memory_bytes` (0 = no cap).
     max_process_memory_bytes: u64,
+    /// Newest first, at most `EVICTION_LOG_LEN`.
+    evictions: parking_lot::Mutex<VecDeque<EvictionEvent>>,
     lock_host_memory: bool,
     models: RwLock<HashMap<String, ManagedModelMemory>>,
     vram_used_bytes: AtomicU64,
@@ -172,6 +204,7 @@ impl TieredMemoryManager {
             configured_pinned_ram_budget_bytes: hw_config.pinned_ram_budget_bytes,
             simulating: hw_config.simulate_physical_memory_bytes > 0,
             max_process_memory_bytes: hw_config.max_process_memory_bytes,
+            evictions: parking_lot::Mutex::new(VecDeque::with_capacity(EVICTION_LOG_LEN)),
             lock_host_memory,
             models: RwLock::new(models),
             vram_used_bytes: AtomicU64::new(0),
@@ -259,6 +292,29 @@ impl TieredMemoryManager {
             .map(|m| m.placement.vram_weight_bytes)
             .sum();
         Some(footprint.saturating_add(mapped_weights))
+    }
+
+    /// Records an automatic eviction for `/v1/memory/status`.
+    pub fn record_eviction(
+        &self,
+        model: &str,
+        for_model: &str,
+        reason: EvictionReason,
+        to_tier: MemoryTier,
+    ) {
+        let unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let mut log = self.evictions.lock();
+        log.push_front(EvictionEvent {
+            model: model.to_string(),
+            for_model: for_model.to_string(),
+            reason,
+            to_tier,
+            unix_ms,
+        });
+        log.truncate(EVICTION_LOG_LEN);
     }
 
     /// `hardware.max_process_memory_bytes` (0 = no cap).
@@ -652,6 +708,7 @@ impl TieredMemoryManager {
             process_memory_bytes,
             process_memory_cap_bytes: (self.max_process_memory_bytes > 0)
                 .then_some(self.max_process_memory_bytes),
+            recent_evictions: self.evictions.lock().iter().cloned().collect(),
             models,
         }
     }
