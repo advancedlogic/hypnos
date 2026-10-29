@@ -19,6 +19,15 @@ pub enum HypnosError {
         available_bytes: u64,
     },
 
+    /// Loading the model would push the process past `hardware.max_process_memory_bytes`.
+    #[error("Loading model '{model}' needs {required_bytes} bytes but only {available_bytes} bytes remain under the process memory cap of {cap_bytes} bytes (hardware.max_process_memory_bytes)")]
+    ProcessMemoryCap {
+        model: String,
+        required_bytes: u64,
+        available_bytes: u64,
+        cap_bytes: u64,
+    },
+
     /// Too many requests are already queued or running for this model.
     #[error(
         "Model '{model}' is busy: {in_flight} requests already queued (limit {limit}); retry later"

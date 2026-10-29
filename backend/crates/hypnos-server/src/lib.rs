@@ -684,6 +684,9 @@ impl IntoResponse for ApiError {
             HypnosError::InsufficientMemory { .. } => {
                 (StatusCode::INSUFFICIENT_STORAGE, "insufficient_vram_or_ram")
             }
+            HypnosError::ProcessMemoryCap { .. } => {
+                (StatusCode::INSUFFICIENT_STORAGE, "process_memory_cap")
+            }
             HypnosError::Busy { .. } => (StatusCode::TOO_MANY_REQUESTS, "model_busy"),
             HypnosError::Timeout(_) => (StatusCode::GATEWAY_TIMEOUT, "timeout"),
             HypnosError::Cancelled => (

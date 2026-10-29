@@ -3,6 +3,8 @@
   Downloads the model files listed in backend\models.manifest into backend\models\ with curl.exe.
   Existing files are kept; interrupted downloads resume from their .part file.
 
+  Before downloading, the missing files' sizes are checked against free disk space, keeping
+  HYPNOS_MODELS_MIN_FREE_GB (default 2) free; nothing is fetched when they do not fit.
   HYPNOS_MODELS_DIR overrides the target folder (the configs expect backend\models\).
   HF_TOKEN, when set, is sent to Hugging Face (higher rate limits); the repositories are public.
 
@@ -41,9 +43,28 @@ if ($Model -ne "all" -and $ids -notcontains $Model) {
 }
 
 $script:fetched = 0; $script:kept = 0; $script:failed = 0
+$queue = New-Object System.Collections.Generic.List[object]
+
+# Remember a file that is not downloaded yet.
+function Add-ModelFile([string]$repoName, [string]$remote, [string]$dest) {
+    if (Test-Path -LiteralPath $dest -PathType Leaf) { $script:kept++; return }
+    $queue.Add([pscustomobject]@{ Repo = $repoName; Remote = $remote; Dest = $dest })
+}
+
+# Byte size from a HEAD request (the last Content-Length after Hugging Face's redirect); $null if unknown.
+function Get-RemoteSize([string]$repoName, [string]$remote) {
+    # No `2>$null`: with $ErrorActionPreference = "Stop", Windows PowerShell 5.1 turns redirected
+    # native stderr into a terminating error. -s keeps curl quiet unless the request fails.
+    $headers = & $curl -fsSIL @auth "$hf/$repoName/resolve/main/$remote"
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $size = $null
+    foreach ($line in $headers) {
+        if ($line -match '^content-length:\s*(\d+)') { $size = [int64]$Matches[1] }
+    }
+    return $size
+}
 
 function Get-ModelFile([string]$repoName, [string]$remote, [string]$dest) {
-    if (Test-Path -LiteralPath $dest -PathType Leaf) { $script:kept++; return }
     New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
     Write-Host "[models] $repoName/$remote -> $dest"
     & $curl -fL --retry 3 -C - --progress-bar @auth -o "$dest.part" "$hf/$repoName/resolve/main/$remote"
@@ -66,12 +87,40 @@ foreach ($e in $entries) {
         foreach ($item in (($json -join "") | ConvertFrom-Json)) {
             if ($item.type -ne "file") { continue }
             $rel = $e.Local + $item.path.Substring($e.Remote.Length)
-            Get-ModelFile $e.Repo $item.path (Join-Path $modelsDir $rel)
+            Add-ModelFile $e.Repo $item.path (Join-Path $modelsDir $rel)
         }
     } else {
-        Get-ModelFile $e.Repo $e.Remote (Join-Path $modelsDir $e.Local)
+        Add-ModelFile $e.Repo $e.Remote (Join-Path $modelsDir $e.Local)
     }
 }
+
+# Disk space: everything still missing (minus resumable .part data) has to fit, plus a margin.
+if ($queue.Count -gt 0) {
+    Write-Host "[models] checking the size of $($queue.Count) missing file(s)..."
+    [int64]$need = 0; $unknown = 0
+    foreach ($q in $queue) {
+        $size = Get-RemoteSize $q.Repo $q.Remote
+        if ($null -eq $size) { $unknown++; continue }
+        $part = "$($q.Dest).part"
+        $have = if (Test-Path -LiteralPath $part) { (Get-Item -LiteralPath $part).Length } else { 0 }
+        $need += $size - $have
+    }
+    New-Item -ItemType Directory -Force $modelsDir | Out-Null
+    $root = [System.IO.Path]::GetPathRoot((Resolve-Path $modelsDir).ProviderPath)
+    [int64]$free = (New-Object System.IO.DriveInfo $root).AvailableFreeSpace
+    $minFreeGb = if ($env:HYPNOS_MODELS_MIN_FREE_GB) { [int64]$env:HYPNOS_MODELS_MIN_FREE_GB } else { 2 }
+    [int64]$margin = $minFreeGb * 1000000000
+    $gb = { param($b) "{0:N1} GB" -f ($b / 1e9) }
+    $extra = if ($unknown -gt 0) { " (+$unknown of unknown size)" } else { "" }
+    Write-Host "[models] to download: $(& $gb $need)$extra, free: $(& $gb $free)"
+    if ($need + $margin -gt $free) {
+        Write-Host "[models] not enough disk space: need $(& $gb $need) plus $(& $gb $margin) kept free (HYPNOS_MODELS_MIN_FREE_GB)."
+        Write-Host "         Free some space, pick one model (run.bat models <id>) or set HYPNOS_MODELS_DIR."
+        exit 1
+    }
+}
+
+foreach ($q in $queue) { Get-ModelFile $q.Repo $q.Remote $q.Dest }
 
 Write-Host "[models] $($script:fetched) downloaded, $($script:kept) already present, $($script:failed) failed ($platform, $modelsDir)"
 if ($script:failed -gt 0) { exit 1 }

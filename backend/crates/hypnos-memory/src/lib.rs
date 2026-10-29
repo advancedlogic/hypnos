@@ -1,6 +1,7 @@
 pub mod hardware;
 pub mod manager;
 pub mod mmap_cache;
+pub mod process;
 
 pub use hardware::DeviceMemoryCapabilities;
 pub use manager::{MemoryHierarchyStatus, ModelTierSnapshot, TieredMemoryManager};

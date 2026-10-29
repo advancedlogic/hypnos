@@ -111,6 +111,8 @@ fn hardware(vram_gb: u64) -> HardwareConfig {
         vram_safety_margin_bytes: 256 * 1024 * 1024,
         pinned_ram_budget_bytes: 64 * GB,
         lock_host_memory: Some(false),
+        simulate_physical_memory_bytes: 0,
+        max_process_memory_bytes: 0,
     }
 }
 

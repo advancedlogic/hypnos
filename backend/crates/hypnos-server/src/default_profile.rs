@@ -30,6 +30,8 @@ pub fn default_six_model_config() -> HypnosConfig {
             vram_safety_margin_bytes: gb,
             pinned_ram_budget_bytes: 32 * gb,
             lock_host_memory: None, // on for discrete GPUs, off on unified memory
+            simulate_physical_memory_bytes: 0,
+            max_process_memory_bytes: 0,
         },
         models: vec![
             // 1. Gemma 4 26B-A4B Q4_0 — Text Generation + Vision

@@ -276,6 +276,16 @@ pub struct HardwareConfig {
     /// count against the same wired-memory limit (see [`HardwareConfig::lock_host_memory_for`]).
     #[serde(default)]
     pub lock_host_memory: Option<bool>,
+    /// Pretend the machine has this much physical RAM (0 = use the real amount; never above it).
+    /// All budgets are derived as on that machine; on unified memory this includes the GPU working
+    /// set. Meant for trying out smaller configurations, e.g. a 32 GB Mac on a 128 GB one.
+    #[serde(default)]
+    pub simulate_physical_memory_bytes: u64,
+    /// Soft cap on this process's real memory footprint as the OS reports it (0 = no cap). Checked
+    /// before every model load: idle models are evicted, or the request is refused, rather than
+    /// letting the load cross the cap. Memory a resident model grows into later is not prevented.
+    #[serde(default)]
+    pub max_process_memory_bytes: u64,
 }
 
 impl HardwareConfig {
@@ -323,6 +333,8 @@ impl Default for HardwareConfig {
             vram_safety_margin_bytes: default_vram_safety_margin(),
             pinned_ram_budget_bytes: default_pinned_ram_budget(),
             lock_host_memory: None,
+            simulate_physical_memory_bytes: 0,
+            max_process_memory_bytes: 0,
         }
     }
 }

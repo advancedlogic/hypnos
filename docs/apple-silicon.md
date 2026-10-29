@@ -26,6 +26,7 @@ Implementation status (M5 Max, 128 GB, macOS 27):
 | Full GPU offload | fixed for all platforms: a full placement now passes `n_gpu_layers > n_layer`, so llama.cpp also offloads the output layer (43/43 instead of 42/43; E4B decode about 36-47 to 53-57 tok/s) |
 | 2.1 one physical budget, 2.2 Metal working set, 2.3 all-or-nothing placement, 2.5 `mlock`/`MADV_DONTNEED` off on UMA | done; 2.2 verified live (estimate 96 GiB, Metal 107.5 GiB, Tier 2 re-derived to 16.5 GiB) |
 | 2.4 promotion cost model | not started (keep-loaded demotion is the follow-up) |
+| Memory limits | `simulate_physical_memory_bytes` derives all budgets as on a smaller Mac (Metal share estimated at 2/3 of RAM up to 36 GB, 3/4 above; the real M5 Max with 128 GB reports 84%, so the estimate errs low). Configured budgets are clamped to the hardware. `max_process_memory_bytes` caps the process (footprint plus Metal-mapped llama weights) at load time; verified to evict at 20 GiB and refuse at 8 GiB |
 | 2.6 status JSON | `physical_pool_free_bytes` and `capabilities.physical_memory_bytes` added; frontend not changed |
 | 3 macOS profile + README | done (`backend/hypnos.macos.example.toml`) |
 | 4 CI | macOS job added to the (still disabled) workflow; unit tests added |

@@ -62,6 +62,12 @@ vram_safety_margin_bytes = 2147483648   # 2 GiB: the window server and other app
 pinned_ram_budget_bytes = 34359738368
 # mlock and Metal share one wired-memory limit; keep pages warm via the page cache instead.
 lock_host_memory = false
+# Pretend this machine has less RAM, to try out a smaller configuration: every budget is derived
+# as on that machine (on a Mac including the GPU working set). 0 = the real amount.
+# simulate_physical_memory_bytes = 34359738368   # e.g. a 32 GB machine
+# Soft cap on what the hypnos process itself may hold (0 = none). Before each model load idle
+# models are evicted, or the request fails with HTTP 507, rather than crossing it.
+# max_process_memory_bytes = 21474836480         # e.g. 20 GiB
 
 # -----------------------------------------------------------------------------
 # 1. Gemma 4 26B-A4B (MoE, Q4_0) — Text Generation + Vision (/v1/chat/completions)

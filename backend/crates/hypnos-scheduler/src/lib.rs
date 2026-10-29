@@ -266,13 +266,23 @@ impl ModelScheduler {
             is_uma,
         );
 
-        // Evict idle lower-priority models from Tier 1 while the model does not fit, or only fits
-        // with a partial GPU split.
+        // `Some((growth, headroom))` when loading `plan` would push this process past
+        // `hardware.max_process_memory_bytes` (measured footprint, not bookings).
+        let over_process_cap = |plan: &LayerPlacementPlan| -> Option<(u64, u64)> {
+            let headroom = self.memory.process_memory_headroom()?;
+            let growth = self.memory.process_growth_bytes(&current_plan, plan);
+            (growth > headroom).then_some((growth, headroom))
+        };
+
+        // Evict idle lower-priority models from Tier 1 while the model does not fit, only fits
+        // with a partial GPU split, or would cross the process memory cap.
         let candidates = self.memory.idle_vram_eviction_candidates(model_id);
         for candidate_id in candidates {
             let needs_eviction = match &target_plan {
                 None => true,
-                Some(plan) => plan.gpu_layers < cfg.arch.num_layers,
+                Some(plan) => {
+                    plan.gpu_layers < cfg.arch.num_layers || over_process_cap(plan).is_some()
+                }
             };
             if !needs_eviction {
                 break;
@@ -328,6 +338,22 @@ impl ModelScheduler {
                 available_bytes: avail_vram,
             }
         })?;
+
+        if let Some((growth, headroom)) = over_process_cap(&final_plan) {
+            warn!(
+                model = %model_id,
+                needed_mb = growth / (1024 * 1024),
+                headroom_mb = headroom / (1024 * 1024),
+                footprint_mb = self.memory.process_footprint_bytes().unwrap_or(0) / (1024 * 1024),
+                "Loading would cross max_process_memory_bytes even after evicting idle models"
+            );
+            return Err(HypnosError::ProcessMemoryCap {
+                model: model_id.to_string(),
+                required_bytes: growth,
+                available_bytes: headroom,
+                cap_bytes: self.memory.process_memory_cap_bytes(),
+            });
+        }
 
         if !ctx.should_continue() {
             return Err(HypnosError::Cancelled);

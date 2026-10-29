@@ -5,6 +5,8 @@
 #   ./backend/scripts/fetch-models.sh            # every model for this platform
 #   ./backend/scripts/fetch-models.sh moss-image # one model id
 #
+# Before downloading, the missing files' sizes are checked against free disk space, keeping
+# HYPNOS_MODELS_MIN_FREE_GB (default 2) free; nothing is fetched when they do not fit.
 # HYPNOS_MODELS_DIR overrides the target folder (the configs expect backend/models/; symlink it).
 # HF_TOKEN, when set, is sent to Hugging Face (higher rate limits); the repositories are public.
 set -uo pipefail
@@ -31,14 +33,27 @@ if [ "$WANT" != all ] && ! printf '%s\n' "$ids" | grep -qx -- "$WANT"; then
 fi
 
 fetched=0; kept=0; failed=0
+Q_REPO=(); Q_REMOTE=(); Q_DEST=()
+
+# queue <repo> <remote path> <local path>: remember a file that is not downloaded yet.
+queue() {
+    if [ -f "$3" ]; then
+        kept=$((kept + 1))
+    else
+        Q_REPO+=("$1"); Q_REMOTE+=("$2"); Q_DEST+=("$3")
+    fi
+}
+
+# remote_size <repo> <remote path>: byte size from a HEAD request (the last Content-Length after
+# Hugging Face's redirect to the file store); empty when unknown.
+remote_size() {
+    curl -fsSIL ${AUTH[@]+"${AUTH[@]}"} "$HF/$1/resolve/main/$2" 2>/dev/null \
+        | tr -d '\r' | awk 'tolower($1) == "content-length:" { n = $2 } END { print n }'
+}
 
 # download <repo> <remote path> <local path>
 download() {
     local repo="$1" remote="$2" dest="$3"
-    if [ -f "$dest" ]; then
-        kept=$((kept + 1))
-        return 0
-    fi
     mkdir -p "$(dirname "$dest")"
     echo "[models] $repo/$remote -> ${dest#$ROOT/}"
     if curl -fL --retry 3 -C - "${PROGRESS[@]}" ${AUTH[@]+"${AUTH[@]}"} -o "$dest.part" "$HF/$repo/resolve/main/$remote"; then
@@ -60,12 +75,39 @@ while read -r model repo remote local platform _; do
             listing="$(curl -fsSL ${AUTH[@]+"${AUTH[@]}"} "$HF/api/models/$repo/tree/main/${remote%/}")" || {
                 echo "[models] FAILED: could not list $repo/$remote"; failed=$((failed + 1)); continue; }
             for path in $(printf '%s' "$listing" | grep -o '"path":"[^"]*"' | sed 's/"path":"//; s/"$//'); do
-                download "$repo" "$path" "$MODELS_DIR/$local${path#$remote}"
+                queue "$repo" "$path" "$MODELS_DIR/$local${path#$remote}"
             done
             ;;
-        *) download "$repo" "$remote" "$MODELS_DIR/$local" ;;
+        *) queue "$repo" "$remote" "$MODELS_DIR/$local" ;;
     esac
 done < "$MANIFEST"
+
+# Disk space: everything still missing (minus resumable .part data) has to fit, plus a margin.
+if [ "${#Q_DEST[@]}" -gt 0 ]; then
+    echo "[models] checking the size of ${#Q_DEST[@]} missing file(s)..."
+    need=0; unknown=0
+    for ((i = 0; i < ${#Q_DEST[@]}; i++)); do
+        size="$(remote_size "${Q_REPO[$i]}" "${Q_REMOTE[$i]}")"
+        if [ -z "$size" ]; then unknown=$((unknown + 1)); continue; fi
+        have=0
+        [ -f "${Q_DEST[$i]}.part" ] && have=$(wc -c < "${Q_DEST[$i]}.part" | tr -d ' ')
+        need=$((need + size - have))
+    done
+    mkdir -p "$MODELS_DIR"
+    free=$(( $(df -Pk "$MODELS_DIR" | awk 'NR == 2 { print $4 }') * 1024 ))
+    margin=$(( ${HYPNOS_MODELS_MIN_FREE_GB:-2} * 1000000000 ))
+    gb() { awk -v b="$1" 'BEGIN { printf "%.1f GB", b / 1e9 }'; }
+    echo "[models] to download: $(gb $need)$([ "$unknown" -gt 0 ] && echo " (+$unknown of unknown size)"), free: $(gb $free)"
+    if [ $((need + margin)) -gt "$free" ]; then
+        echo "[models] not enough disk space: need $(gb $need) plus $(gb $margin) kept free (HYPNOS_MODELS_MIN_FREE_GB)."
+        echo "         Free some space, pick one model (./run.sh models <id>) or set HYPNOS_MODELS_DIR."
+        exit 1
+    fi
+fi
+
+for ((i = 0; i < ${#Q_DEST[@]}; i++)); do
+    download "${Q_REPO[$i]}" "${Q_REMOTE[$i]}" "${Q_DEST[$i]}"
+done
 
 echo "[models] $fetched downloaded, $kept already present, $failed failed ($PLATFORM, ${MODELS_DIR#$ROOT/}/)"
 [ "$failed" = 0 ]

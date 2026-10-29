@@ -113,6 +113,25 @@ brew install cmake ninja
   or `moss-image` plus the small models; 48 GB, both Gemma 4 models; 64 GB and up, the whole lineup.
 - For manual debugging, use `brew install llama.cpp` instead of the Windows binaries in `backend/tools/`.
 
+### Limiting memory and simulating smaller machines
+
+All in `[hardware]` (bytes; 0 = off / auto):
+
+| Setting | Effect |
+| :--- | :--- |
+| `vram_budget_bytes` | Cap on Tier 1 (GPU memory). Clamped to what the device reports, so it can only lower the budget. |
+| `pinned_ram_budget_bytes` | Cap on Tier 2 (warm host RAM). Clamped to physical RAM minus a 4 GiB reserve. |
+| `simulate_physical_memory_bytes` | Behave like a machine with this much RAM (never more than installed): Tier 1 and Tier 2 are derived as there. On a Mac this includes Metal's GPU share, estimated at 2/3 of RAM up to 36 GB and 3/4 above. |
+| `max_process_memory_bytes` | Soft cap on memory the `hypnos` process holds, measured from the OS before every model load. Idle models are evicted to stay under it; if that is not enough the request fails with HTTP 507 (`process_memory_cap`). |
+
+The budgets steer the scheduler, they are not OS-enforced: memory an engine allocates beyond its
+estimate is caught only by `max_process_memory_bytes`, and only at the next load. On macOS the process
+figure is the `phys_footprint` plus the model weights llama.cpp maps into Metal (file-backed, so the
+footprint leaves them out); on Linux the resident set; on Windows the working set. GPU memory on a
+discrete card is limited by `vram_budget_bytes` only. `/v1/memory/status` reports
+`process_memory_bytes` next to the budgets. Disk space is only consumed by `models` downloads, which
+check free space first.
+
 ---
 
 ## Running Backend & Frontend
