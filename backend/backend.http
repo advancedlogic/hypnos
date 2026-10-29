@@ -1,0 +1,89 @@
+# Hypnos backend — example requests (from README.md)
+# Works with the VS Code "REST Client" extension and the JetBrains HTTP Client.
+# Each request is separated by "###"; click "Send Request" above a block to run it.
+
+@host = http://localhost:8080
+
+### 1. Inspect 3-Tier Memory Status
+GET {{host}}/v1/memory/status
+
+
+### 2. Text Generation (gemma4:26b-q4)
+POST {{host}}/v1/chat/completions
+Content-Type: application/json
+
+{
+  "model": "gemma4:26b-q4",
+  "messages": [
+    { "role": "user", "content": "Explain Gemma 4 hybrid sliding window attention." }
+  ],
+  "max_tokens": 256
+}
+
+
+### 2b. Vision Generation (gemma4:26b-q4 also accepts image_url content parts)
+POST {{host}}/v1/chat/completions
+Content-Type: application/json
+
+{
+  "model": "gemma4:26b-q4",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "What is in this image?" },
+        { "type": "image_url", "image_url": { "url": "https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg" } }
+      ]
+    }
+  ],
+  "max_tokens": 256
+}
+
+
+### 3. Audio Transcription / STT (gemma4:e4b-q4)
+# Place a sample.wav next to this file (or change the path below).
+POST {{host}}/v1/audio/transcriptions
+Content-Type: multipart/form-data; boundary=----HypnosBoundary
+
+------HypnosBoundary
+Content-Disposition: form-data; name="model"
+
+gemma4:e4b-q4
+------HypnosBoundary
+Content-Disposition: form-data; name="file"; filename="sample.wav"
+Content-Type: audio/wav
+
+< ./sample.wav
+------HypnosBoundary--
+
+
+### 4. Text-to-Speech (kokoro-82m-q4 — pinned in Tier 1 VRAM)
+# Response body is audio; REST Client lets you save it via "Save Response Body".
+POST {{host}}/v1/audio/speech
+Content-Type: application/json
+
+{
+  "model": "kokoro-82m-q4",
+  "input": "Hello from Hypnos!",
+  "voice": "alloy"
+}
+
+
+### 5. Embeddings (gemmaembedding2 — pinned in Tier 1 VRAM)
+POST {{host}}/v1/embeddings
+Content-Type: application/json
+
+{
+  "model": "gemmaembedding2",
+  "input": ["3-tier GPU memory management"]
+}
+
+
+### 6. Image Generation (moss-image)
+POST {{host}}/v1/images/generations
+Content-Type: application/json
+
+{
+  "model": "moss-image",
+  "prompt": "A futuristic Rust crab managing GPU memory tiers"
+}

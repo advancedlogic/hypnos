@@ -1,0 +1,31 @@
+[package]
+name = "hypnos-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "hypnos"
+path = "src/main.rs"
+
+[dependencies]
+hypnos-core.workspace = true
+hypnos-memory.workspace = true
+hypnos-scheduler.workspace = true
+hypnos-backends.workspace = true
+tokio.workspace = true
+parking_lot.workspace = true
+axum.workspace = true
+tower-http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+futures.workspace = true
+tokio-stream.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+anyhow.workspace = true
+

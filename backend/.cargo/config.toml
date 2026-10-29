@@ -1,0 +1,13 @@
+# Portable build settings for the native engines. Machine-specific values (GPU architecture, CUDA
+# host compiler, rustc pin) are NOT kept here: run `scripts/setup-build-env.ps1` (Windows) or
+# `scripts/setup-build-env.sh` (Linux/macOS) once, which writes them to the git-ignored
+# `<repo>/.cargo/config.toml` one directory up. Cargo merges both files; this one wins on conflicts,
+# so only keys that are valid everywhere live here.
+[env]
+# Ninja for all CMake builds: the Visual Studio generator ignores CUDAHOSTCXX and always uses the
+# IDE's own toolset, which breaks with CUDA 13 + MSVC 14.5x.
+CMAKE_GENERATOR = "Ninja"
+# Build the vendored llama.cpp in Release even for `cargo build` (dev profile).
+LLAMA_LIB_PROFILE = "Release"
+# Harmless when the host compiler is supported; required when it is one minor version too new.
+CUDAFLAGS = "-allow-unsupported-compiler"
