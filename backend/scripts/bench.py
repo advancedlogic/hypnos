@@ -95,14 +95,15 @@ class Client:
         except urllib.error.HTTPError as e:
             raise RuntimeError(f"HTTP {e.code} on {path}: {e.read()[:300].decode('utf-8', 'replace')}")
 
-    def post_binary(self, path, body):
-        """POST JSON, return (bytes, ttfb_ms, total_ms, headers)."""
+    def post_binary(self, path, body, skip=0):
+        """POST JSON, return (bytes, ttfb_ms, total_ms, headers). `ttfb` is measured at the first
+        byte after `skip` bytes (so a streamed WAV header does not count as audio)."""
         data = json.dumps(body).encode()
         req = self._req(path, data, {"Content-Type": "application/json"})
         t0 = time.perf_counter()
         try:
             with self._open(req) as r:
-                first = r.read(1)
+                first = r.read(skip + 1)
                 ttfb = (time.perf_counter() - t0) * 1000.0
                 rest = r.read()
                 total = (time.perf_counter() - t0) * 1000.0
@@ -425,20 +426,32 @@ def scenario_4(c, rep, model, clients=4):
 
 
 def scenario_5(c, rep, model, voice):
-    rep.h("5. TTS of a 600-character paragraph (time to first byte)")
+    rep.h("5. TTS of a 600-character paragraph (time to first audio)")
     print("-- scenario 5: tts ...")
     rows = []
-    for fmt_name in ("wav", "pcm"):
+    for fmt_name, streaming in (("wav", False), ("pcm", False), ("wav", True), ("pcm", True)):
         body = {"model": model, "input": PARAGRAPH_600, "voice": voice, "response_format": fmt_name}
-        data, ttfb, total, headers = c.post_binary("/v1/audio/speech", body)
-        audio_secs = wav_seconds(data) if fmt_name == "wav" else len(data) / 2 / 24000.0
+        if streaming:
+            body["stream"] = True
+        skip = 44 if (fmt_name == "wav" and streaming) else 0
+        try:
+            data, ttfa, total, headers = c.post_binary("/v1/audio/speech", body, skip=skip)
+        except Exception as e:  # noqa: BLE001
+            rows.append([fmt_name, "yes" if streaming else "no", len(PARAGRAPH_600), "error", str(e)[:60], "", "", "", ""])
+            print(f"     {fmt_name} stream={streaming}: {e}")
+            continue
+        if fmt_name == "wav" and not streaming:
+            audio_secs = wav_seconds(data)
+        else:
+            audio_secs = max(len(data) - skip, 0) / 2 / 24000.0
         infer_ms = headers.get("x-hypnos-inference-ms")
         synth_s = float(infer_ms) / 1000.0 if infer_ms else total / 1000.0
         rtf = synth_s / audio_secs if audio_secs else None
-        rows.append([fmt_name, len(PARAGRAPH_600), fmt(ttfb), fmt(total), fmt(audio_secs, 2), fmt(synth_s, 2), fmt(rtf, 3), len(data)])
-        print(f"     {fmt_name}: ttfb={fmt(ttfb)}ms total={fmt(total)}ms audio={fmt(audio_secs, 2)}s rtf={fmt(rtf, 3)}")
-    rep.table(["format", "chars", "TTFB ms", "total ms", "audio s", "synthesis s", "RTF", "bytes"], rows)
-    rep.p("Without streaming, time to first byte equals total synthesis time. RTF = synthesis seconds / audio seconds (lower is faster).")
+        label = "yes" if streaming else "no"
+        rows.append([fmt_name, label, len(PARAGRAPH_600), fmt(ttfa), fmt(total), fmt(audio_secs, 2), fmt(synth_s, 2), fmt(rtf, 3), len(data)])
+        print(f"     {fmt_name} stream={label}: ttfa={fmt(ttfa)}ms total={fmt(total)}ms audio={fmt(audio_secs, 2)}s rtf={fmt(rtf, 3)}")
+    rep.table(["format", "stream", "chars", "TTFA ms", "total ms", "audio s", "synthesis s", "RTF", "bytes"], rows)
+    rep.p("TTFA = time to the first audio byte (after the WAV header when streaming). Without streaming it equals the whole synthesis time. RTF = synthesis seconds / audio seconds (lower is faster).")
 
 
 def scenario_6(c, rep, stt_model, chat_model, tts_model, voice):

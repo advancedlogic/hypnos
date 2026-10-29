@@ -13,16 +13,18 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use bytes::Bytes;
 use chrono::Utc;
 use futures::stream;
+use hypnos_backends::media::{encode_pcm16_raw, wav_stream_header};
 use hypnos_backends::{create_backend_for_model, EngineOptions};
 use hypnos_core::{
     config::{HypnosConfig, LimitsConfig, MemoryTier},
     error::HypnosError,
     openai::{
-        AudioSpeechRequest, AudioTranscriptionRequest, ChatCompletionRequest, ChatStreamEvent,
-        EmbeddingRequest, ExecutionTelemetry, ImageGenerationRequest, OpenAiModelInfo,
-        OpenAiModelList,
+        AudioSpeechRequest, AudioStreamEvent, AudioTranscriptionRequest, ChatCompletionRequest,
+        ChatStreamEvent, EmbeddingRequest, ExecutionTelemetry, ImageGenerationRequest,
+        OpenAiModelInfo, OpenAiModelList,
     },
     request::{CancelOnDrop, RequestContext},
 };
@@ -624,6 +626,33 @@ async fn audio_transcriptions(
     Ok(Json(resp))
 }
 
+/// Streaming speech: the lease is held until the last chunk is sent, dropping the guard cancels
+/// synthesis when the client disconnects, and the first chunk is prefixed with a live WAV header
+/// when the client asked for `wav`.
+struct AudioStreamState {
+    rx: mpsc::Receiver<AudioStreamEvent>,
+    lease: ActiveModelLease,
+    metrics: Arc<Metrics>,
+    _cancel_guard: CancelOnDrop,
+    model: String,
+    /// A live WAV header still has to go out in front of the first chunk.
+    header_pending: bool,
+    infer_start: Instant,
+    first_audio_ms: Option<f64>,
+}
+
+fn speech_telemetry_headers(headers: &mut HeaderMap, telemetry: &ExecutionTelemetry) {
+    if let Ok(v) = HeaderValue::from_str(&format!("{:?}", telemetry.previous_tier)) {
+        headers.insert("x-hypnos-previous-tier", v);
+    }
+    if let Ok(v) = HeaderValue::from_str(&telemetry.placement.gpu_layers.to_string()) {
+        headers.insert("x-hypnos-gpu-layers", v);
+    }
+    if let Ok(v) = HeaderValue::from_str(&format!("{:.3}", telemetry.tier_switch_latency_ms)) {
+        headers.insert("x-hypnos-switch-ms", v);
+    }
+}
+
 async fn audio_speech(
     State(state): State<AppState>,
     Json(req): Json<AudioSpeechRequest>,
@@ -636,6 +665,70 @@ async fn audio_speech(
         .await?;
 
     let infer_start = Instant::now();
+
+    if req.stream.unwrap_or(false) {
+        let wav = !req.response_format.eq_ignore_ascii_case("pcm");
+        let (tx, rx) = mpsc::channel::<AudioStreamEvent>(64);
+        let backend = lease.backend.clone();
+        let req_for_task = req.clone();
+        let ctx_for_task = ctx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = backend
+                .synthesize_speech_stream(&req_for_task, &ctx_for_task, tx.clone())
+                .await
+            {
+                let _ = tx.send(AudioStreamEvent::Error(e.to_string())).await;
+            }
+        });
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static(if wav { "audio/wav" } else { "audio/pcm" }),
+        );
+        speech_telemetry_headers(&mut headers, &lease.build_telemetry(0.0));
+        let initial = AudioStreamState {
+            rx,
+            model: req.model.clone(),
+            lease,
+            metrics: state.metrics.clone(),
+            _cancel_guard: guard,
+            header_pending: wav,
+            infer_start,
+            first_audio_ms: None,
+        };
+        let body = stream::unfold(initial, |mut st| async move {
+            loop {
+                match st.rx.recv().await {
+                    Some(AudioStreamEvent::Chunk(chunk)) => {
+                        st.first_audio_ms
+                            .get_or_insert_with(|| st.infer_start.elapsed().as_secs_f64() * 1000.0);
+                        let mut bytes = Vec::with_capacity(chunk.pcm.len() * 2 + 44);
+                        if st.header_pending {
+                            st.header_pending = false;
+                            bytes.extend_from_slice(&wav_stream_header(chunk.sample_rate));
+                        }
+                        bytes.extend_from_slice(&encode_pcm16_raw(&chunk.pcm));
+                        return Some((Ok::<Bytes, Infallible>(Bytes::from(bytes)), st));
+                    }
+                    Some(AudioStreamEvent::Done { mut timing }) => {
+                        // The server's clock sees the lease wait and channel hop as well.
+                        timing.ttfa_ms = st.first_audio_ms.or(timing.ttfa_ms);
+                        st.metrics.record_tts(&st.model, &timing);
+                        let infer_ms = st.infer_start.elapsed().as_secs_f64() * 1000.0;
+                        tracing::debug!(model = %st.model, infer_ms = format!("{infer_ms:.0}"), ttfa_ms = timing.ttfa_ms.map(|v| format!("{v:.0}")), lease_tier = ?st.lease.previous_tier, "speech stream complete");
+                        return None;
+                    }
+                    Some(AudioStreamEvent::Error(message)) => {
+                        warn!(model = %st.model, error = %message, "speech stream failed after it started");
+                        return None;
+                    }
+                    None => return None,
+                }
+            }
+        });
+        return Ok((headers, Body::from_stream(body)).into_response());
+    }
+
     let out = lease.backend.synthesize_speech(&req, &ctx).await?;
     let telemetry = finish_telemetry(&lease, infer_start, Some(out.telemetry.clone()));
     state.metrics.record_tts(&req.model, &telemetry.engine);

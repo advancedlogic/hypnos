@@ -50,7 +50,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 1   | 1   | 1   | 3    | 1   | 1     | 1   | 1    |
+| 2  | 1   | 1   | 1   | 5    | 1   | 1     | 1   | 1    |
 
 ---
 
@@ -70,10 +70,22 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## In Progress
 
-_No cards yet._
+- [ ] 🟧 **PERF-4** `P1` Continuous batching across execution slots
+      Work item C of `docs/execution-efficiency-plan.md`: the engine worker admits jobs into free
+      slots and builds one `llama_batch` per step (chunked prefill for new slots, one token per
+      decoding slot), decodes once, samples per slot by batch index, streams per slot with
+      back-pressure that never stalls the other slots. Config knob stays `slots`. Done when bench
+      scenario 4 reaches at least 2.5x single-client aggregate decode tokens/s with single-client
+      TTFT within 10 percent.
 
 ## Done
 
+- [x] 🟧 **PERF-3** `P1` Streaming text-to-speech
+      Work item D of `docs/execution-efficiency-plan.md`: `synthesize_speech_stream` on the backend
+      trait, Kokoro emits each chunk (and the first clause early) as ONNX returns it,
+      `POST /v1/audio/speech` with `"stream": true` streams raw PCM or a live WAV (open-ended
+      header). `hypnos_tts_ttfa_ms` records time to first audio. Measured: time to first audio 5.4 s -> 385 ms, total synthesis unchanged
+      (`docs/bench/after-D-2026-10-29.md`).
 - [x] 🟧 **PERF-2** `P1` Engine worker: persistent llama.cpp context, slots, prefix reuse
       Work item B of `docs/execution-efficiency-plan.md`: one worker thread per resident llama.cpp
       model owning a single context (`n_seq_max = slots`), requests served through slots with

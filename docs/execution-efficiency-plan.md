@@ -9,8 +9,19 @@ per-model histograms on `/metrics`, `backend/scripts/bench.sh`, baseline in
 `docs/bench/baseline-2026-10-29.md`. B: one engine worker thread per resident llama.cpp model
 (`hypnos-backends/src/engine.rs`, `worker.rs`) owning a persistent context, execution slots
 (`slots`, default 1), prefix reuse with multimodal chunk ids (`prefix_cache`), results in
-`docs/bench/after-B-2026-10-29.md`. C to E are not started. The motivation and the comparison with
+`docs/bench/after-B-2026-10-29.md`. D: `synthesize_speech_stream` on the backend trait, Kokoro
+streams each chunk as ONNX Runtime returns it, `POST /v1/audio/speech` with `"stream": true`
+returns raw PCM or a live WAV. C and E are not started. The motivation and the comparison with
 vLLM-Omni are summarised in section 1; the rest is the work. Line numbers refer to the tree before A.
+
+What D measured (600-character paragraph, Kokoro on CPU): time to first audio 5.4 s without
+streaming, 385 ms with it (engine 364 ms), total synthesis unchanged at 5.5 s. Section 6 asked for
+300 ms; the first chunk is already down to 37 phonemes (about 4 words, 2.7 s of audio) and a
+shorter one gets choppy, so 385 ms is where this engine lands. Two details section 6 did not
+anticipate: espeak-ng's phoneme output carries no sentence or punctuation markers, so the chunk
+boundaries are decided on the text before phonemization (sentences, then the first clause or word
+boundary after 28 characters); and chunk sizes grow geometrically (48, 192, then 510 phonemes) so
+each chunk is synthesized before the audio already sent has finished playing.
 
 What B measured against the baseline (same machine, `slots = 1`):
 

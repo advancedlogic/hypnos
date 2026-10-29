@@ -8,9 +8,9 @@ use crate::config::{Modality, ModelConfig};
 use crate::error::Result;
 use crate::kv_cache::LayerPlacementPlan;
 use crate::openai::{
-    AudioSpeechOutput, AudioSpeechRequest, AudioTranscriptionRequest, AudioTranscriptionResponse,
-    ChatCompletionRequest, ChatCompletionResponse, ChatStreamEvent, EmbeddingRequest,
-    EmbeddingResponse, ImageGenerationRequest, ImageGenerationResponse,
+    AudioSpeechOutput, AudioSpeechRequest, AudioStreamEvent, AudioTranscriptionRequest,
+    AudioTranscriptionResponse, ChatCompletionRequest, ChatCompletionResponse, ChatStreamEvent,
+    EmbeddingRequest, EmbeddingResponse, ImageGenerationRequest, ImageGenerationResponse,
 };
 use crate::request::RequestContext;
 use async_trait::async_trait;
@@ -124,6 +124,21 @@ pub trait ModelBackend: Send + Sync {
         _req: &AudioSpeechRequest,
         _ctx: &RequestContext,
     ) -> Result<AudioSpeechOutput> {
+        Err(crate::error::HypnosError::ModalityMismatch {
+            model: self.config().id.clone(),
+            expected: self.modality(),
+            actual: Modality::TextToSpeech,
+        })
+    }
+
+    /// Streaming variant of [`synthesize_speech`](Self::synthesize_speech): pushes
+    /// [`AudioStreamEvent`]s into `tx` as audio is produced and finishes with `Done` or `Error`.
+    async fn synthesize_speech_stream(
+        &self,
+        _req: &AudioSpeechRequest,
+        _ctx: &RequestContext,
+        _tx: mpsc::Sender<AudioStreamEvent>,
+    ) -> Result<()> {
         Err(crate::error::HypnosError::ModalityMismatch {
             model: self.config().id.clone(),
             expected: self.modality(),

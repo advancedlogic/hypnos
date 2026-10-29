@@ -176,6 +176,11 @@ Behaviour that matters in production:
   `ttft_ms`, `prefill_tokens_per_s`, `decode_tokens_per_s`; `audio_secs` and `rtf` for speech).
   `/v1/audio/speech` reports the same in `x-hypnos-inference-ms`, `x-hypnos-audio-secs` and
   `x-hypnos-rtf` headers.
+- **Streaming speech**: `POST /v1/audio/speech` with `"stream": true` returns audio as it is
+  synthesized, chunk by chunk: raw 16-bit little-endian PCM at 24 kHz for `response_format: "pcm"`,
+  or a WAV whose header declares an open-ended length (players read to end of stream) for `wav`.
+  The first chunk is cut at the first clause boundary so playback starts after one short synthesis;
+  `hypnos_tts_ttfa_ms` on `/metrics` tracks the time to first audio.
 - **Benchmark**: `backend/scripts/bench.sh [--host URL] [--out docs/bench/<name>.md]` runs the
   fixed execution scenarios from `docs/execution-efficiency-plan.md` (cold chat, five-turn chat,
   vision chat, concurrent clients, TTS, voice round trip) against a running server and prints a

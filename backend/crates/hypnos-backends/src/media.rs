@@ -102,6 +102,26 @@ pub fn encode_wav_pcm16(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>> {
     Ok(cursor.into_inner())
 }
 
+/// RIFF/WAV header for a live mono 16-bit PCM stream whose length is not known in advance: both
+/// size fields are `0xFFFFFFFF`, which browsers and mainstream players accept and read to EOF.
+pub fn wav_stream_header(sample_rate: u32) -> [u8; 44] {
+    let mut h = [0u8; 44];
+    h[0..4].copy_from_slice(b"RIFF");
+    h[4..8].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+    h[8..12].copy_from_slice(b"WAVE");
+    h[12..16].copy_from_slice(b"fmt ");
+    h[16..20].copy_from_slice(&16u32.to_le_bytes());
+    h[20..22].copy_from_slice(&1u16.to_le_bytes()); // PCM
+    h[22..24].copy_from_slice(&1u16.to_le_bytes()); // mono
+    h[24..28].copy_from_slice(&sample_rate.to_le_bytes());
+    h[28..32].copy_from_slice(&(sample_rate * 2).to_le_bytes()); // byte rate
+    h[32..34].copy_from_slice(&2u16.to_le_bytes()); // block align
+    h[34..36].copy_from_slice(&16u16.to_le_bytes()); // bits per sample
+    h[36..40].copy_from_slice(b"data");
+    h[40..44].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+    h
+}
+
 /// Encodes mono f32 PCM samples as raw little-endian 16-bit PCM (no container).
 pub fn encode_pcm16_raw(samples: &[f32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(samples.len() * 2);

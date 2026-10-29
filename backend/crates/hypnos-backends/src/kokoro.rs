@@ -15,7 +15,8 @@ use hypnos_core::config::{MemoryTier, Modality, ModelConfig};
 use hypnos_core::error::{HypnosError, Result};
 use hypnos_core::kv_cache::LayerPlacementPlan;
 use hypnos_core::openai::{
-    AudioSpeechOutput, AudioSpeechRequest, EngineTiming, ExecutionTelemetry,
+    AudioChunk, AudioSpeechOutput, AudioSpeechRequest, AudioStreamEvent, EngineTiming,
+    ExecutionTelemetry,
 };
 use hypnos_core::request::RequestContext;
 use hypnos_core::ModelBackend;
@@ -23,6 +24,7 @@ use ort::environment::Environment;
 use ort::session::Session;
 use ort::value::Tensor;
 use parking_lot::RwLock;
+use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use crate::media::{encode_pcm16_raw, encode_wav_pcm16};
@@ -286,26 +288,157 @@ fn load_kokoro(cfg: &ModelConfig, n_threads: i32) -> Result<LoadedKokoro> {
     })
 }
 
-/// Text -> IPA phoneme chunks of at most `MAX_PHONEMES` vocabulary symbols each.
-fn phonemize_chunks(text: &str, vocab: &HashMap<char, i64>) -> Result<Vec<Vec<i64>>> {
-    let sentences = espeak_rs::text_to_phonemes(text, "en-us", None)
-        .map_err(|e| HypnosError::BackendError(format!("espeak-ng phonemization failed: {e}")))?;
-    let mut chunks: Vec<Vec<i64>> = Vec::new();
+/// Streaming: the first piece is cut after this many characters (at a clause boundary when one
+/// follows soon, else at the next word boundary) so the first audio arrives after one very short
+/// synthesis. Kokoro costs about 8 ms per phoneme on a CPU, so ~35 phonemes keep it under 300 ms.
+const FIRST_PIECE_MIN_CHARS: usize = 28;
+/// First sentences up to this length are left whole.
+const FIRST_PIECE_MAX_CHARS: usize = 40;
+/// A clause boundary is preferred over a word boundary when it lies within this many characters.
+const FIRST_PIECE_CLAUSE_MAX_CHARS: usize = 60;
+/// Phoneme budgets of successive chunks when streaming. Synthesis runs several times faster than
+/// real time, so each chunk may be a few times longer than everything already playing without
+/// the player running dry; after that the normal `MAX_PHONEMES` applies.
+const STREAM_CHUNK_BUDGETS: &[usize] = &[48, 192];
+
+/// A unit of text to synthesize and whether a pause belongs after it (sentence or clause end, as
+/// opposed to a cut in the middle of a phrase).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Piece {
+    text: String,
+    pause_after: bool,
+}
+
+/// Phoneme ids of one synthesis call.
+struct PhonemeChunk {
+    ids: Vec<i64>,
+    pause_after: bool,
+}
+
+/// Splits text into sentences at `. ! ? …` followed by whitespace (or the end), keeping the
+/// punctuation with its sentence. espeak-ng's phoneme output carries no sentence or punctuation
+/// markers, so chunk boundaries have to be decided on the text.
+fn split_sentences(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        current.push(c);
+        if matches!(c, '.' | '!' | '?' | '…') && chars.peek().is_none_or(|n| n.is_whitespace()) {
+            let s = current.trim();
+            if !s.is_empty() {
+                out.push(s.to_string());
+            }
+            current.clear();
+        }
+    }
+    let s = current.trim();
+    if !s.is_empty() {
+        out.push(s.to_string());
+    }
+    out
+}
+
+/// Sentences as pieces; with `short_first` the first sentence is cut so the opening piece is a
+/// few words long (see [`FIRST_PIECE_MIN_CHARS`]).
+fn split_pieces(text: &str, short_first: bool) -> Vec<Piece> {
+    let mut pieces: Vec<Piece> = split_sentences(text)
+        .into_iter()
+        .map(|text| Piece {
+            text,
+            pause_after: true,
+        })
+        .collect();
+    if short_first {
+        shorten_first_piece(&mut pieces);
+    }
+    pieces
+}
+
+fn shorten_first_piece(pieces: &mut Vec<Piece>) {
+    let Some(first) = pieces.first() else {
+        return;
+    };
+    let text = first.text.clone();
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    if chars.len() <= FIRST_PIECE_MAX_CHARS {
+        return;
+    }
+    let min_byte = chars[FIRST_PIECE_MIN_CHARS.min(chars.len() - 1)].0;
+    let clause_max_byte = chars[FIRST_PIECE_CLAUSE_MAX_CHARS.min(chars.len() - 1)].0;
+    let clause = chars
+        .iter()
+        .find(|(i, c)| *i >= min_byte && *i <= clause_max_byte && matches!(c, ',' | ';' | ':'))
+        .map(|(i, c)| (i + c.len_utf8(), true));
+    let word = chars
+        .iter()
+        .find(|(i, c)| *i >= min_byte && c.is_whitespace())
+        .map(|(i, _)| (*i, false));
+    let Some((cut, pause_after)) = clause.or(word) else {
+        return;
+    };
+    let head = text[..cut].trim().to_string();
+    let rest = text[cut..].trim().to_string();
+    if head.is_empty() || rest.is_empty() {
+        return;
+    }
+    pieces[0] = Piece {
+        text: head,
+        pause_after,
+    };
+    pieces.insert(
+        1,
+        Piece {
+            text: rest,
+            pause_after: true,
+        },
+    );
+}
+
+/// Text -> phoneme chunks of at most `MAX_PHONEMES` vocabulary symbols each, merging whole
+/// sentences. With `short_first` the chunks follow [`STREAM_CHUNK_BUDGETS`] (a few words first,
+/// then a sentence or two, then full chunks) so streaming playback starts almost at once.
+fn phonemize_chunks(
+    text: &str,
+    vocab: &HashMap<char, i64>,
+    short_first: bool,
+) -> Result<Vec<PhonemeChunk>> {
+    let pieces = split_pieces(text, short_first);
+    let budget = |k: usize| {
+        if short_first {
+            STREAM_CHUNK_BUDGETS.get(k).copied().unwrap_or(MAX_PHONEMES)
+        } else {
+            MAX_PHONEMES
+        }
+    };
+    let mut chunks: Vec<PhonemeChunk> = Vec::new();
     let mut current: Vec<i64> = Vec::new();
-    for sentence in sentences {
-        let ids: Vec<i64> = sentence
-            .chars()
+    let mut current_pause = true;
+    for piece in &pieces {
+        let phonemes = espeak_rs::text_to_phonemes(&piece.text, "en-us", None).map_err(|e| {
+            HypnosError::BackendError(format!("espeak-ng phonemization failed: {e}"))
+        })?;
+        let ids: Vec<i64> = phonemes
+            .iter()
+            .flat_map(|s| s.chars())
             .filter_map(|c| vocab.get(&c).copied())
             .collect();
         if ids.is_empty() {
             continue;
         }
-        if !current.is_empty() && current.len() + 1 + ids.len() > MAX_PHONEMES {
-            chunks.push(std::mem::take(&mut current));
+        if !current.is_empty() && current.len() + 1 + ids.len() > budget(chunks.len()) {
+            chunks.push(PhonemeChunk {
+                ids: std::mem::take(&mut current),
+                pause_after: current_pause,
+            });
         }
         if ids.len() > MAX_PHONEMES {
-            for piece in ids.chunks(MAX_PHONEMES) {
-                chunks.push(piece.to_vec());
+            let n = ids.len().div_ceil(MAX_PHONEMES);
+            for (i, part) in ids.chunks(MAX_PHONEMES).enumerate() {
+                chunks.push(PhonemeChunk {
+                    ids: part.to_vec(),
+                    pause_after: i + 1 == n && piece.pause_after,
+                });
             }
             continue;
         }
@@ -313,39 +446,50 @@ fn phonemize_chunks(text: &str, vocab: &HashMap<char, i64>) -> Result<Vec<Vec<i6
             current.push(16); // space between sentences
         }
         current.extend(ids);
+        current_pause = piece.pause_after;
     }
     if !current.is_empty() {
-        chunks.push(current);
+        chunks.push(PhonemeChunk {
+            ids: current,
+            pause_after: current_pause,
+        });
     }
     Ok(chunks)
 }
 
+/// Synthesizes `text` chunk by chunk, handing each chunk's samples (and the silence that
+/// precedes it) to `on_chunk` as soon as ONNX Runtime returns them. `on_chunk` returns `false`
+/// to stop (the client went away). Returns the number of samples produced.
+#[allow(clippy::too_many_arguments)]
 fn synthesize(
     loaded: &mut LoadedKokoro,
     vocab: &HashMap<char, i64>,
     text: &str,
     voice: &str,
     speed: f32,
+    short_first: bool,
     ctx: &RequestContext,
-) -> Result<Vec<f32>> {
+    on_chunk: &mut dyn FnMut(&[f32]) -> bool,
+) -> Result<usize> {
     let style_table = loaded
         .voices
         .get(voice)
         .ok_or_else(|| HypnosError::InvalidRequest(format!("unknown voice '{voice}'")))?
         .clone();
     let rows = style_table.len() / STYLE_DIM;
-    let chunks = phonemize_chunks(text, vocab)?;
+    let chunks = phonemize_chunks(text, vocab, short_first)?;
     if chunks.is_empty() {
         return Err(HypnosError::InvalidRequest(
             "input produced no speakable phonemes".to_string(),
         ));
     }
     let silence = vec![0.0f32; (KOKORO_SAMPLE_RATE as f32 * INTER_CHUNK_SILENCE_SECS) as usize];
-    let mut audio: Vec<f32> = Vec::new();
-    for (i, tokens) in chunks.iter().enumerate() {
+    let mut total = 0usize;
+    for (i, chunk) in chunks.iter().enumerate() {
         if !ctx.should_continue() {
             return Err(HypnosError::Cancelled);
         }
+        let tokens = &chunk.ids;
         let n = tokens.len();
         let mut ids: Vec<i64> = Vec::with_capacity(n + 2);
         ids.push(0);
@@ -374,10 +518,16 @@ fn synthesize(
         let (_shape, data) = outputs[0]
             .try_extract_tensor::<f32>()
             .map_err(|e| HypnosError::BackendError(format!("waveform output: {e}")))?;
-        if i > 0 {
-            audio.extend_from_slice(&silence);
+        if i > 0 && chunks[i - 1].pause_after {
+            if !on_chunk(&silence) {
+                return Err(HypnosError::Cancelled);
+            }
+            total += silence.len();
         }
-        audio.extend_from_slice(data);
+        if !on_chunk(data) {
+            return Err(HypnosError::Cancelled);
+        }
+        total += data.len();
         debug!(
             chunk = i,
             phonemes = n,
@@ -385,7 +535,7 @@ fn synthesize(
             "kokoro chunk synthesized"
         );
     }
-    Ok(audio)
+    Ok(total)
 }
 
 pub struct OnnxRuntimeBackend {
@@ -457,31 +607,8 @@ impl ModelBackend for OnnxRuntimeBackend {
         req: &AudioSpeechRequest,
         ctx: &RequestContext,
     ) -> Result<AudioSpeechOutput> {
-        if !self.config.supports_modality(Modality::TextToSpeech) {
-            return Err(HypnosError::ModalityMismatch {
-                model: self.config.id.clone(),
-                expected: self.config.modality,
-                actual: Modality::TextToSpeech,
-            });
-        }
-        if req.input.trim().is_empty() {
-            return Err(HypnosError::InvalidRequest(
-                "input text is empty".to_string(),
-            ));
-        }
-        if req.input.chars().count() > ctx.limits.max_prompt_chars {
-            return Err(HypnosError::InvalidRequest(format!(
-                "input text exceeds limits.max_prompt_chars ({})",
-                ctx.limits.max_prompt_chars
-            )));
-        }
+        let (text, speed) = self.check_request(req, ctx)?;
         let ctx = ctx.clone();
-        let speed = if req.speed.is_finite() {
-            req.speed.clamp(0.5, 2.0)
-        } else {
-            1.0
-        };
-        let text = req.input.clone();
         let requested_voice = req.voice.clone();
         let format = req.response_format.to_ascii_lowercase();
         let cfg = self.config.clone();
@@ -502,7 +629,11 @@ impl ModelBackend for OnnxRuntimeBackend {
                     .ok_or_else(|| HypnosError::Config("no Kokoro voices available".into()))?
                     .to_string();
                 let started = Instant::now();
-                let samples = synthesize(resident, &vocab, &text, &voice, speed, &ctx)?;
+                let mut samples: Vec<f32> = Vec::new();
+                synthesize(resident, &vocab, &text, &voice, speed, false, &ctx, &mut |c| {
+                    samples.extend_from_slice(c);
+                    true
+                })?;
                 let synth_ms = started.elapsed().as_secs_f64() * 1000.0;
                 info!(model = %cfg.id, voice = %voice, chars = text.len(), audio_secs = format!("{:.2}", samples.len() as f32 / KOKORO_SAMPLE_RATE as f32), synth_secs = format!("{:.2}", synth_ms / 1000.0), "speech synthesized");
                 Ok((samples, voice, queue_ms, synth_ms))
@@ -549,5 +680,166 @@ impl ModelBackend for OnnxRuntimeBackend {
                 engine,
             },
         })
+    }
+
+    async fn synthesize_speech_stream(
+        &self,
+        req: &AudioSpeechRequest,
+        ctx: &RequestContext,
+        tx: mpsc::Sender<AudioStreamEvent>,
+    ) -> Result<()> {
+        let (text, speed) = self.check_request(req, ctx)?;
+        let ctx = ctx.clone();
+        let requested_voice = req.voice.clone();
+        let cfg = self.config.clone();
+        let loaded = self.loaded.clone();
+        let vocab = self.vocab.clone();
+        let requested_at = Instant::now();
+        let chunk_tx = tx.clone();
+
+        let outcome = tokio::task::spawn_blocking(move || -> Result<EngineTiming> {
+            let mut guard = loaded
+                .lock()
+                .map_err(|_| HypnosError::BackendError("kokoro mutex poisoned".into()))?;
+            let queue_ms = requested_at.elapsed().as_secs_f64() * 1000.0;
+            let resident = guard.as_mut().ok_or_else(|| {
+                HypnosError::BackendError(format!("model '{}' is not loaded", cfg.id))
+            })?;
+            let voice = resolve_voice(&requested_voice, &resident.voices)
+                .ok_or_else(|| HypnosError::Config("no Kokoro voices available".into()))?
+                .to_string();
+            let started = Instant::now();
+            let mut ttfa_ms: Option<f64> = None;
+            let total = synthesize(resident, &vocab, &text, &voice, speed, true, &ctx, &mut |c| {
+                ttfa_ms.get_or_insert_with(|| requested_at.elapsed().as_secs_f64() * 1000.0);
+                chunk_tx
+                    .blocking_send(AudioStreamEvent::Chunk(AudioChunk {
+                        pcm: c.to_vec(),
+                        sample_rate: KOKORO_SAMPLE_RATE,
+                    }))
+                    .is_ok()
+            })?;
+            let synth_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let audio_secs = total as f64 / f64::from(KOKORO_SAMPLE_RATE);
+            info!(model = %cfg.id, voice = %voice, chars = text.len(), audio_secs = format!("{audio_secs:.2}"), synth_secs = format!("{:.2}", synth_ms / 1000.0), ttfa_ms = ttfa_ms.map(|v| format!("{v:.0}")), "speech streamed");
+            Ok(EngineTiming {
+                queue_ms: Some(queue_ms),
+                decode_ms: Some(synth_ms),
+                ttfa_ms,
+                audio_secs: Some(audio_secs),
+                rtf: (audio_secs > 0.0).then(|| synth_ms / 1000.0 / audio_secs),
+                ..EngineTiming::default()
+            })
+        })
+        .await
+        .map_err(|e| HypnosError::BackendError(format!("tts task panicked: {e}")))?;
+
+        match outcome {
+            Ok(timing) => {
+                let _ = tx.send(AudioStreamEvent::Done { timing }).await;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = tx.send(AudioStreamEvent::Error(e.to_string())).await;
+                Err(e)
+            }
+        }
+    }
+}
+
+impl OnnxRuntimeBackend {
+    /// Shared request validation: returns the text to speak and the clamped speed.
+    fn check_request(
+        &self,
+        req: &AudioSpeechRequest,
+        ctx: &RequestContext,
+    ) -> Result<(String, f32)> {
+        if !self.config.supports_modality(Modality::TextToSpeech) {
+            return Err(HypnosError::ModalityMismatch {
+                model: self.config.id.clone(),
+                expected: self.config.modality,
+                actual: Modality::TextToSpeech,
+            });
+        }
+        if req.input.trim().is_empty() {
+            return Err(HypnosError::InvalidRequest(
+                "input text is empty".to_string(),
+            ));
+        }
+        if req.input.chars().count() > ctx.limits.max_prompt_chars {
+            return Err(HypnosError::InvalidRequest(format!(
+                "input text exceeds limits.max_prompt_chars ({})",
+                ctx.limits.max_prompt_chars
+            )));
+        }
+        let speed = if req.speed.is_finite() {
+            req.speed.clamp(0.5, 2.0)
+        } else {
+            1.0
+        };
+        Ok((req.input.clone(), speed))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sentences_split_at_terminal_punctuation() {
+        let s = split_sentences("Hello there. Is it working? Yes! Trailing text without a stop");
+        assert_eq!(
+            s,
+            vec![
+                "Hello there.",
+                "Is it working?",
+                "Yes!",
+                "Trailing text without a stop"
+            ]
+        );
+        assert_eq!(
+            split_sentences("Version 2.5 is out. Good."),
+            vec!["Version 2.5 is out.", "Good."]
+        );
+    }
+
+    #[test]
+    fn first_piece_is_cut_at_a_clause_or_word_boundary() {
+        // A clause boundary soon after the minimum: cut there, with a pause.
+        let clause =
+            "Hypnos keeps every model in one process, and moves weights between tiers as needed.";
+        let p = split_pieces(clause, true);
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].text, "Hypnos keeps every model in one process,");
+        assert!(p[0].pause_after);
+        assert_eq!(p[1].text, "and moves weights between tiers as needed.");
+        // No clause boundary in reach: cut at the next word boundary, without a pause.
+        let words = "The lighthouse keeper logged the weather twice a day in a ledger bound in green cloth.";
+        let p = split_pieces(words, true);
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].text, "The lighthouse keeper logged");
+        assert!(!p[0].pause_after);
+        assert!(p[1].pause_after);
+        // Short first sentences stay whole; nothing changes without `short_first`.
+        assert_eq!(
+            split_pieces("Short one, with a comma. Next.", true).len(),
+            2
+        );
+        assert_eq!(split_pieces(words, false).len(), 1);
+    }
+
+    #[test]
+    fn streaming_starts_with_a_few_words_then_grows() {
+        let vocab: HashMap<char, i64> = VOCAB.iter().copied().collect();
+        let text = "Hypnos keeps every model inside one process. The scheduler decides what stays \
+                    resident, and the execution path decides how fast a resident model answers. \
+                    This third sentence only makes the paragraph longer.";
+        let merged = phonemize_chunks(text, &vocab, false).unwrap();
+        let streamed = phonemize_chunks(text, &vocab, true).unwrap();
+        assert_eq!(merged.len(), 1, "short paragraphs merge into one chunk");
+        assert!(streamed.len() >= 2, "{}", streamed.len());
+        assert!(streamed[0].ids.len() <= STREAM_CHUNK_BUDGETS[0]);
+        assert!(streamed[1].ids.len() <= STREAM_CHUNK_BUDGETS[1]);
+        assert!(streamed.last().unwrap().pause_after);
     }
 }

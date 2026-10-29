@@ -321,6 +321,29 @@ pub struct AudioSpeechRequest {
     pub response_format: String,
     #[serde(default = "default_speed")]
     pub speed: f32,
+    /// Hypnos extension: stream audio as it is synthesized (raw PCM, or a WAV whose header declares
+    /// an open-ended length) instead of returning the whole file at the end.
+    #[serde(default)]
+    pub stream: Option<bool>,
+}
+
+/// A piece of synthesized audio: mono f32 samples in `[-1, 1]`.
+#[derive(Debug, Clone)]
+pub struct AudioChunk {
+    pub pcm: Vec<f32>,
+    pub sample_rate: u32,
+}
+
+/// Incremental events emitted by streaming speech synthesis.
+#[derive(Debug, Clone)]
+pub enum AudioStreamEvent {
+    Chunk(AudioChunk),
+    /// Synthesis finished; carries the engine timings (time to first audio, real-time factor).
+    Done {
+        timing: EngineTiming,
+    },
+    /// Synthesis failed after the stream started.
+    Error(String),
 }
 
 fn default_voice() -> String {

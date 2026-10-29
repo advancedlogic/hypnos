@@ -1,5 +1,5 @@
 use hypnos_core::config::{
-    AcceleratorKind, EngineKind, HardwareConfig, KvDataType, HypnosConfig, LimitsConfig,
+    AcceleratorKind, EngineKind, HardwareConfig, HypnosConfig, KvDataType, LimitsConfig,
     MemoryTier, Modality, ModelArchitectureParams, ModelConfig, ModelPriority, ServerConfig,
 };
 use std::path::PathBuf;
