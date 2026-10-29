@@ -9,10 +9,12 @@
 //! No external runtime (Ollama, LM Studio, Python sidecars) is involved.
 
 pub mod diffusion;
+mod engine;
 pub mod gguf_inspector;
 pub mod kokoro;
 pub mod llama;
 pub mod media;
+mod worker;
 
 use async_trait::async_trait;
 use gguf_inspector::GgufHeaderSummary;
@@ -89,10 +91,29 @@ pub(crate) fn default_threads() -> i32 {
         .clamp(1, 16) as i32
 }
 
+/// Server-wide settings the engines need beyond their own [`ModelConfig`].
+#[derive(Debug, Clone)]
+pub struct EngineOptions {
+    /// How long an execution slot keeps its KV cache after its last request before it is cleared
+    /// (`server.kv_idle_timeout_secs`).
+    pub kv_idle_timeout: std::time::Duration,
+}
+
+impl Default for EngineOptions {
+    fn default() -> Self {
+        Self {
+            kv_idle_timeout: std::time::Duration::from_secs(300),
+        }
+    }
+}
+
 /// Factory creating the appropriate native engine for a configured model.
-pub fn create_backend_for_model(config: ModelConfig) -> Arc<dyn ModelBackend> {
+pub fn create_backend_for_model(
+    config: ModelConfig,
+    opts: &EngineOptions,
+) -> Arc<dyn ModelBackend> {
     match config.engine {
-        EngineKind::GgmlLlama => Arc::new(llama::GgmlLlamaBackend::new(config)),
+        EngineKind::GgmlLlama => Arc::new(llama::GgmlLlamaBackend::new(config, opts.clone())),
         EngineKind::GgmlDiffusion => Arc::new(diffusion::GgmlDiffusionBackend::new(config)),
         EngineKind::OnnxRuntime => Arc::new(kokoro::OnnxRuntimeBackend::new(config)),
         EngineKind::GgmlWhisper => Arc::new(UnavailableEngineBackend {

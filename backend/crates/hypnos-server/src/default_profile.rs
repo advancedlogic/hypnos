@@ -48,6 +48,8 @@ pub fn default_six_model_config() -> HypnosConfig {
                 initial_tier: MemoryTier::Tier2PinnedRam,
                 keep_warm_in_ram: true,
                 priority: ModelPriority::High,
+                slots: 1,
+                prefix_cache: true,
                 arch: ModelArchitectureParams {
                     num_layers: 30,
                     num_kv_heads: 8,
@@ -77,6 +79,8 @@ pub fn default_six_model_config() -> HypnosConfig {
                 initial_tier: MemoryTier::Tier2PinnedRam,
                 keep_warm_in_ram: true,
                 priority: ModelPriority::High,
+                slots: 1,
+                prefix_cache: true,
                 arch: ModelArchitectureParams {
                     num_layers: 42,
                     num_kv_heads: 2,
@@ -107,6 +111,8 @@ pub fn default_six_model_config() -> HypnosConfig {
                 initial_tier: MemoryTier::Tier1GpuVram,
                 keep_warm_in_ram: true,
                 priority: ModelPriority::RealtimePinned,
+                slots: 1,
+                prefix_cache: true,
                 arch: ModelArchitectureParams {
                     num_layers: 12,
                     num_kv_heads: 0,
@@ -136,6 +142,8 @@ pub fn default_six_model_config() -> HypnosConfig {
                 initial_tier: MemoryTier::Tier1GpuVram,
                 keep_warm_in_ram: true,
                 priority: ModelPriority::RealtimePinned,
+                slots: 1,
+                prefix_cache: true,
                 arch: ModelArchitectureParams {
                     num_layers: 24,
                     num_kv_heads: 2,
@@ -165,6 +173,8 @@ pub fn default_six_model_config() -> HypnosConfig {
                 initial_tier: MemoryTier::Tier3NvmeSsd,
                 keep_warm_in_ram: true,
                 priority: ModelPriority::Low,
+                slots: 1,
+                prefix_cache: true,
                 arch: ModelArchitectureParams {
                     num_layers: 48,
                     num_kv_heads: 0,

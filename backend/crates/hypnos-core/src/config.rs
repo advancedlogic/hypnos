@@ -220,6 +220,17 @@ pub struct ModelConfig {
     /// Retention priority when competing for VRAM
     #[serde(default)]
     pub priority: ModelPriority,
+    /// Execution slots for llama.cpp models: sequences that share one persistent context. Each
+    /// slot owns a KV cache of `allocated_context_len` positions, so the KV booking scales with
+    /// `slots`. 1 (the default) serialises requests exactly as before while still keeping the
+    /// context and its prefix cache alive between them.
+    #[serde(default = "default_slots")]
+    pub slots: u32,
+    /// Reuse a slot's KV cache when the new prompt shares a prefix with what the slot last
+    /// processed: multi-turn chats prefill only the new turn and unchanged images or audio clips
+    /// are not re-encoded. Off means every request prefills from scratch.
+    #[serde(default = "default_prefix_cache")]
+    pub prefix_cache: bool,
     /// Architecture parameters for KV cache & layer-split math
     #[serde(default)]
     pub arch: ModelArchitectureParams,
@@ -250,6 +261,12 @@ fn default_initial_tier() -> MemoryTier {
     MemoryTier::Tier3NvmeSsd
 }
 fn default_keep_warm_in_ram() -> bool {
+    true
+}
+fn default_slots() -> u32 {
+    1
+}
+fn default_prefix_cache() -> bool {
     true
 }
 
@@ -541,6 +558,15 @@ impl HypnosConfig {
             if !(0.0..=1.0).contains(&m.min_gpu_layer_ratio) {
                 r.errors.push(format!(
                     "'{id}': min_gpu_layer_ratio must be within 0.0..=1.0"
+                ));
+            }
+            if m.slots == 0 {
+                r.errors.push(format!("'{id}': slots must be >= 1"));
+            }
+            if m.slots > 1 && m.min_gpu_layer_ratio < 1.0 {
+                r.warnings.push(format!(
+                    "'{id}': slots = {} with min_gpu_layer_ratio < 1.0; a partial GPU split decodes each slot on the CPU side too, so batching gains little",
+                    m.slots
                 ));
             }
             if m.total_weight_bytes > 0 {

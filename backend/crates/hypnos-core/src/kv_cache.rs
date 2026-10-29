@@ -83,7 +83,9 @@ impl KvCacheEstimator {
 
         let total_elements = elements_per_token_per_layer
             .saturating_mul(total_layer_tokens)
-            .saturating_mul(batch_size.max(1) as u64);
+            .saturating_mul(batch_size.max(1) as u64)
+            // Every execution slot keeps its own KV cache of `context_len` positions.
+            .saturating_mul(model.slots.max(1) as u64);
 
         ((total_elements as f64) * model.arch.kv_dtype.bytes_per_element()).ceil() as u64
     }
@@ -208,6 +210,8 @@ mod tests {
             initial_tier: MemoryTier::Tier2PinnedRam,
             keep_warm_in_ram: true,
             priority: ModelPriority::High,
+            slots: 1,
+            prefix_cache: true,
             arch: ModelArchitectureParams {
                 num_layers: 46,
                 num_kv_heads: 8,

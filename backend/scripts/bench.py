@@ -185,6 +185,7 @@ class Client:
             "ttft_ms": ttft_ms,
             "total_ms": total_ms,
             "prompt_tokens": usage.get("prompt_tokens"),
+            "cached_tokens": (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0),
             "completion_tokens": completion,
             "decode_tps": decode_tps,
             "finish_reason": finish,
@@ -285,6 +286,7 @@ def chat_row(label, r):
         fmt(r["ttft_ms"]),
         fmt(r["total_ms"]),
         fmt(r["prompt_tokens"]),
+        fmt(r["cached_tokens"]),
         fmt(r["completion_tokens"]),
         fmt(r["decode_tps"], 1),
         fmt(eng(tel, "ttft_ms"), 0),
@@ -299,7 +301,7 @@ def chat_row(label, r):
 
 
 CHAT_HEADER = [
-    "run", "TTFT ms", "total ms", "prompt tok", "completion tok", "decode tok/s (client)",
+    "run", "TTFT ms", "total ms", "prompt tok", "cached tok", "completion tok", "decode tok/s (client)",
     "engine TTFT ms", "queue ms", "context ms", "prefill ms",
     "prefill tok/s", "decode tok/s (engine)", "tier switch ms", "previous tier",
 ]
@@ -341,7 +343,7 @@ def scenario_2(c, rep, model, turns=5):
             {"role": "user", "content": follow_ups[(turn - 1) % len(follow_ups)]},
         ]
     rep.table(CHAT_HEADER, rows)
-    rep.p("With a persistent prefix cache, turn N should prefill only the new turn's tokens; today every turn re-prefills the whole history.")
+    rep.p("With the prefix cache, turn N prefills only the new turn (see `cached tok`); without it every turn re-prefills the whole history.")
 
 
 def scenario_3(c, rep, model, turns=3):
@@ -369,7 +371,7 @@ def scenario_3(c, rep, model, turns=3):
                 {"role": "user", "content": questions[turn]},
             ]
     rep.table(CHAT_HEADER, rows)
-    rep.p("The image is a 256x256 PNG (red disc, blue square). Without an encoder cache every turn re-runs the vision tower.")
+    rep.p("The image is a 256x256 PNG (red disc, blue square). A cached image counts in `cached tok`; without the cache every turn re-runs the vision tower.")
 
 
 def scenario_4(c, rep, model, clients=4):

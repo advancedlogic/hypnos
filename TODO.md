@@ -70,15 +70,16 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## In Progress
 
-- [ ] 🟧 **PERF-2** `P1` Engine worker: persistent llama.cpp context, slots, prefix reuse
-      Work item B of `docs/execution-efficiency-plan.md`: one long-lived worker thread per resident
-      llama.cpp model owning a single context (`n_seq_max = slots`), requests served through slots
-      with longest-common-prefix KV reuse (`kv_cache_seq_rm` of the divergent tail), multimodal
-      chunks matched by id so an unchanged image is never re-encoded. Config: `slots` (default 1),
-      `prefix_cache` (default true). Done when bench scenarios 2 and 3 show only the new turn
-      prefilled and one image encode across three turns.
+_No cards yet._
 
 ## Done
 
+- [x] 🟧 **PERF-2** `P1` Engine worker: persistent llama.cpp context, slots, prefix reuse
+      Work item B of `docs/execution-efficiency-plan.md`: one worker thread per resident llama.cpp
+      model owning a single context (`n_seq_max = slots`), requests served through slots with
+      longest-common-prefix KV reuse plus sliding-window checkpoints, multimodal chunks matched by
+      id so an unchanged image is never re-encoded. Config: `slots` (default 1), `prefix_cache`
+      (default true). Five-turn chat TTFT 300 ms -> 145 ms, vision follow-ups 300 ms -> 105 ms
+      (`docs/bench/after-B-2026-10-29.md`).
 - [x] 🟧 **PERF-1** `P1` Execution telemetry, per-model `/metrics` histograms, bench script and baseline
       Work item A of `docs/execution-efficiency-plan.md`. Commit `e209a56`.

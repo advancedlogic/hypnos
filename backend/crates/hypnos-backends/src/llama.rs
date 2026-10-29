@@ -7,42 +7,42 @@
 //!
 //! Weights are loaded when the scheduler promotes the model to Tier 1 (with `n_gpu_layers` taken from
 //! the placement plan) and released again when it is demoted, so VRAM accounting in `hypnos-memory`
-//! mirrors what the GPU actually holds.
+//! mirrors what the GPU actually holds. While resident, the model is owned by an engine worker
+//! thread ([`crate::engine`]) that keeps one `llama_context` alive and serves requests through
+//! execution slots with KV prefix reuse.
 
 use std::ffi::CString;
-use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use hypnos_core::config::{KvDataType, MemoryTier, Modality, ModelConfig};
+use hypnos_core::config::{MemoryTier, Modality, ModelConfig};
 use hypnos_core::error::{HypnosError, Result};
 use hypnos_core::kv_cache::LayerPlacementPlan;
 use hypnos_core::openai::{
     AudioTranscriptionRequest, AudioTranscriptionResponse, ChatChoice, ChatCompletionRequest,
     ChatCompletionResponse, ChatMessage, ChatResponseMessage, ChatStreamEvent, EmbeddingData,
-    EmbeddingRequest, EmbeddingResponse, EmbeddingUsage, EngineTiming, ExecutionTelemetry,
+    EmbeddingRequest, EmbeddingResponse, EmbeddingUsage, ExecutionTelemetry, PromptTokensDetails,
     TokenUsage,
 };
 use hypnos_core::request::RequestContext;
 use hypnos_core::ModelBackend;
-use llama_cpp_2::context::params::{KvCacheType, LlamaContextParams, LlamaPoolingType};
 use llama_cpp_2::llama_backend::LlamaBackend;
-use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{LlamaChatMessage, LlamaModel};
-use llama_cpp_2::mtmd::{
-    mtmd_default_marker, MtmdBitmap, MtmdContext, MtmdContextParams, MtmdInputText,
-};
-use llama_cpp_2::sampling::LlamaSampler;
+use llama_cpp_2::mtmd::{mtmd_default_marker, MtmdContext, MtmdContextParams};
 use parking_lot::RwLock;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+use crate::engine::{
+    spawn_worker, ChatJob, EmbedJob, GenParams, GenStats, LlamaJob, PromptSpec, WorkerSpec,
+};
 use crate::media::load_media;
-use crate::{default_threads, BackendContextState};
+use crate::worker::{FailJob, WorkerHandle};
+use crate::{default_threads, BackendContextState, EngineOptions};
 
 // ----------------------------------------------------------------------------
 // Process-global llama.cpp backend handle
@@ -62,25 +62,20 @@ pub(crate) fn llama_backend() -> Result<&'static LlamaBackend> {
     }
 }
 
-fn backend_err<E: std::fmt::Debug>(what: &str) -> impl FnOnce(E) -> HypnosError + '_ {
-    move |e| HypnosError::BackendError(format!("{what}: {e:?}"))
-}
-
 // ----------------------------------------------------------------------------
 // Resident model state
 // ----------------------------------------------------------------------------
 
 /// A model that is currently resident (weights loaded, optionally with a multimodal projector).
-struct LoadedLlama {
+/// Owned by the engine worker thread.
+pub(crate) struct LoadedLlama {
     /// Declared before `model` so the projector (which points into the text model) is torn down first.
-    mtmd: Option<MtmdContext>,
-    model: LlamaModel,
-    gpu_layers: u32,
-    n_ctx: u32,
-    arch: String,
+    pub mtmd: Option<MtmdContext>,
+    pub model: LlamaModel,
+    pub arch: String,
 }
 
-fn load_model(
+pub(crate) fn load_model(
     cfg: &ModelConfig,
     gpu_layers: u32,
     n_ctx: u32,
@@ -147,13 +142,7 @@ fn load_model(
         load_secs = format!("{:.1}", started.elapsed().as_secs_f32()),
         "llama.cpp model resident"
     );
-    Ok(LoadedLlama {
-        mtmd,
-        model,
-        gpu_layers,
-        n_ctx,
-        arch,
-    })
+    Ok(LoadedLlama { mtmd, model, arch })
 }
 
 // ----------------------------------------------------------------------------
@@ -198,16 +187,17 @@ fn gemma4_prompt(messages: &[ChatMessage], marker: &str, think: bool) -> String 
 }
 
 /// Generic fallback for non-Gemma models: the GGUF's own template through llama.cpp, else ChatML.
-fn build_prompt(
-    loaded: &LoadedLlama,
+pub(crate) fn build_prompt(
+    model: &LlamaModel,
+    arch: &str,
     messages: &[ChatMessage],
     marker: &str,
     think: bool,
 ) -> String {
-    if loaded.arch.starts_with("gemma4") || loaded.arch.starts_with("gemma-embedding") {
+    if arch.starts_with("gemma4") || arch.starts_with("gemma-embedding") {
         return gemma4_prompt(messages, marker, think);
     }
-    if let Ok(tmpl) = loaded.model.chat_template(None) {
+    if let Ok(tmpl) = model.chat_template(None) {
         let chat: Vec<LlamaChatMessage> = messages
             .iter()
             .filter_map(|m| {
@@ -215,7 +205,7 @@ fn build_prompt(
                     .ok()
             })
             .collect();
-        if let Ok(s) = loaded.model.apply_chat_template(&tmpl, &chat, true) {
+        if let Ok(s) = model.apply_chat_template(&tmpl, &chat, true) {
             return s;
         }
     }
@@ -231,320 +221,6 @@ fn build_prompt(
     out
 }
 
-// ----------------------------------------------------------------------------
-// Generation core (runs on a blocking thread, model mutex held)
-// ----------------------------------------------------------------------------
-
-struct GenParams {
-    max_tokens: u32,
-    temperature: f32,
-    top_p: f32,
-    top_k: i32,
-    seed: u32,
-    n_ctx_override: Option<u32>,
-}
-
-struct GenStats {
-    prompt_tokens: u32,
-    completion_tokens: u32,
-    finish_reason: &'static str,
-    /// Waiting for the model mutex, measured by the caller from `started`.
-    queue_ms: f64,
-    /// llama.cpp context creation (KV cache + compute buffers).
-    context_ms: f64,
-    prefill_ms: f64,
-    decode_ms: f64,
-    /// `started` to the first visible text piece; `None` when nothing visible was produced.
-    ttft_ms: Option<f64>,
-}
-
-impl GenStats {
-    fn timing(&self) -> EngineTiming {
-        let per_s =
-            |tokens: u32, ms: f64| (tokens > 0 && ms > 0.0).then(|| tokens as f64 / (ms / 1000.0));
-        EngineTiming {
-            queue_ms: Some(self.queue_ms),
-            context_ms: Some(self.context_ms),
-            prefill_ms: Some(self.prefill_ms),
-            decode_ms: Some(self.decode_ms),
-            ttft_ms: self.ttft_ms,
-            prefill_tokens_per_s: per_s(self.prompt_tokens, self.prefill_ms),
-            // The first token is sampled from the prefill logits; only the rest cost a decode step.
-            decode_tokens_per_s: per_s(self.completion_tokens.saturating_sub(1), self.decode_ms),
-            ..EngineTiming::default()
-        }
-    }
-}
-
-fn ms_since(t: Instant) -> f64 {
-    t.elapsed().as_secs_f64() * 1000.0
-}
-
-fn kv_types(dtype: KvDataType) -> (KvCacheType, KvCacheType) {
-    match dtype {
-        KvDataType::F16 | KvDataType::Bf16 => (KvCacheType::F16, KvCacheType::F16),
-        KvDataType::Q8_0 => (KvCacheType::Q8_0, KvCacheType::Q8_0),
-        KvDataType::Q4_0 => (KvCacheType::Q4_0, KvCacheType::Q4_0),
-    }
-}
-
-/// Prefill `prompt` (+ `media`) and sample up to `max_tokens` tokens, invoking `on_piece` for each
-/// decoded text fragment. `on_piece` returns `false` to stop early (e.g. the client went away).
-/// `started` is when the request reached the backend; time to first token is measured from it.
-#[allow(clippy::too_many_arguments)]
-fn run_generation(
-    loaded: &mut LoadedLlama,
-    cfg: &ModelConfig,
-    n_threads: i32,
-    prompt: &str,
-    media: &[Vec<u8>],
-    gp: &GenParams,
-    rctx: &RequestContext,
-    started: Instant,
-    mut on_piece: impl FnMut(&str) -> bool,
-) -> Result<GenStats> {
-    if !rctx.should_continue() {
-        return Err(HypnosError::Cancelled);
-    }
-    let queue_ms = ms_since(started);
-    let phase = Instant::now();
-    let backend = llama_backend()?;
-    let LoadedLlama {
-        mtmd,
-        model,
-        gpu_layers,
-        n_ctx: resident_ctx,
-        ..
-    } = loaded;
-
-    let n_ctx = gp
-        .n_ctx_override
-        .unwrap_or(*resident_ctx)
-        .clamp(512, model.n_ctx_train().max(512));
-    let n_batch = n_ctx.min(2048);
-    // Image embeddings are decoded by mtmd as ONE non-causal batch (676 tokens per Gemma 4 image
-    // slice), and llama.cpp asserts `n_ubatch >= n_tokens` for non-causal attention. Text-only
-    // requests keep the smaller micro-batch (smaller compute buffer); multimodal ones get the
-    // whole batch so an image slice always fits.
-    let n_ubatch = if media.is_empty() { n_batch.min(512) } else { n_batch };
-    let (type_k, type_v) = kv_types(cfg.arch.kv_dtype);
-    let cparams = LlamaContextParams::default()
-        .with_n_ctx(NonZeroU32::new(n_ctx))
-        .with_n_batch(n_batch)
-        .with_n_ubatch(n_ubatch)
-        .with_n_threads(n_threads)
-        .with_n_threads_batch(n_threads)
-        .with_offload_kqv(*gpu_layers > 0)
-        .with_swa_full(false)
-        .with_type_k(type_k)
-        .with_type_v(type_v);
-    let mut ctx = model
-        .new_context(backend, cparams)
-        .map_err(backend_err("llama.cpp context creation failed"))?;
-    let vocab = model.vocab();
-    let context_ms = ms_since(phase);
-    let phase = Instant::now();
-
-    // ---- prefill -------------------------------------------------------------------------
-    let (n_prompt, mut n_past): (usize, i32) = if !media.is_empty() {
-        let m = mtmd.as_mut().ok_or_else(|| {
-            HypnosError::InvalidRequest(format!(
-                "model '{}' has no multimodal projector configured; it cannot take images or audio",
-                cfg.id
-            ))
-        })?;
-        let mut bitmaps = Vec::with_capacity(media.len());
-        for bytes in media {
-            let bm = MtmdBitmap::from_buffer(m, bytes, false).map_err(|e| {
-                HypnosError::InvalidRequest(format!(
-                    "could not decode media attachment ({} bytes): {e:?}. Supported audio containers are WAV, MP3 and FLAC (browser recordings in WebM/Opus or M4A must be converted first); images may be PNG, JPEG, BMP or GIF",
-                    bytes.len()
-                ))
-            })?;
-            if bm.is_audio() && !m.support_audio() {
-                return Err(HypnosError::ModalityMismatch {
-                    model: cfg.id.clone(),
-                    expected: cfg.modality,
-                    actual: Modality::SpeechToText,
-                });
-            }
-            if !bm.is_audio() && !m.support_vision() {
-                return Err(HypnosError::ModalityMismatch {
-                    model: cfg.id.clone(),
-                    expected: cfg.modality,
-                    actual: Modality::Vision,
-                });
-            }
-            bitmaps.push(bm);
-        }
-        let refs: Vec<&MtmdBitmap> = bitmaps.iter().collect();
-        let chunks = m
-            .tokenize(
-                MtmdInputText {
-                    text: prompt.to_string(),
-                    add_special: true,
-                    parse_special: true,
-                },
-                &refs,
-            )
-            .map_err(backend_err("libmtmd tokenization failed"))?;
-        let n_tokens = chunks.total_tokens();
-        if n_tokens + 8 > n_ctx as usize {
-            return Err(HypnosError::InvalidRequest(format!(
-                "prompt + media need {n_tokens} tokens but the context window is {n_ctx}; raise num_ctx"
-            )));
-        }
-        let n_past = chunks
-            .eval_chunks(m, &mut ctx, 0, 0, n_batch as i32, true)
-            .map_err(backend_err("libmtmd prefill failed"))?;
-        (n_tokens, n_past)
-    } else {
-        let tokens = vocab.tokenize(prompt.as_bytes(), true, true);
-        if tokens.len() + 8 > n_ctx as usize {
-            return Err(HypnosError::InvalidRequest(format!(
-                "prompt needs {} tokens but the context window is {n_ctx}; raise num_ctx",
-                tokens.len()
-            )));
-        }
-        let last = tokens.len().saturating_sub(1);
-        let mut pos: i32 = 0;
-        for chunk in tokens.chunks(n_batch as usize) {
-            let mut batch = LlamaBatch::new(chunk.len(), 1);
-            for (i, t) in chunk.iter().enumerate() {
-                let abs = pos as usize + i;
-                batch
-                    .add(*t, pos + i as i32, &[0], abs == last)
-                    .map_err(backend_err("batch add failed"))?;
-            }
-            ctx.decode(&mut batch)
-                .map_err(backend_err("llama.cpp prefill decode failed"))?;
-            pos += chunk.len() as i32;
-        }
-        (tokens.len(), pos)
-    };
-    let prefill_ms = ms_since(phase);
-    let phase = Instant::now();
-    let mut ttft_ms: Option<f64> = None;
-
-    // ---- sampling ------------------------------------------------------------------------
-    let mut sampler = if gp.temperature <= 0.0 {
-        LlamaSampler::greedy()
-    } else {
-        LlamaSampler::chain_simple([
-            LlamaSampler::top_k(gp.top_k.max(1)),
-            LlamaSampler::top_p(gp.top_p.clamp(0.0, 1.0), 1),
-            LlamaSampler::temp(gp.temperature),
-            LlamaSampler::dist(gp.seed),
-        ])
-    };
-
-    let mut decoder = encoding_rs::UTF_8.new_decoder();
-    let mut batch = LlamaBatch::new(1, 1);
-    let mut completion: u32 = 0;
-    let mut finish_reason = "length";
-    let max_tokens = gp.max_tokens.max(1);
-    // Gemma 4 wraps reasoning in `<|channel>thought ... <channel|>`; even with thinking disabled the
-    // model may emit an empty channel. Everything inside it is swallowed, as are bare special tokens.
-    let mut in_channel = false;
-    let mut channel_header_pending = false;
-
-    while completion < max_tokens {
-        if !rctx.should_continue() {
-            finish_reason = "cancelled";
-            break;
-        }
-        let token = sampler.sample(&ctx, -1);
-        sampler.accept(token);
-        if vocab.is_eog(token) {
-            finish_reason = "stop";
-            break;
-        }
-        let piece = vocab.token_to_piece(token, true, None);
-        if piece.as_slice() == b"<turn|>" || piece.as_slice() == b"<end_of_turn>" {
-            finish_reason = "stop";
-            break;
-        }
-        completion += 1;
-        let is_marker = is_special_marker(&piece);
-        if piece.as_slice() == b"<|channel>" {
-            in_channel = true;
-            channel_header_pending = true;
-        } else if piece.as_slice() == b"<channel|>" {
-            in_channel = false;
-        } else if !vocab.is_control(token) && !is_marker && !in_channel {
-            let mut text = String::with_capacity(
-                decoder
-                    .max_utf8_buffer_length(piece.len())
-                    .unwrap_or(piece.len() * 3),
-            );
-            let _ = decoder.decode_to_string(&piece, &mut text, false);
-            // Right after a channel closes the model emits the leading newline(s) of the answer.
-            if channel_header_pending {
-                channel_header_pending = false;
-                let trimmed = text.trim_start_matches(['\n', '\r']).to_string();
-                if trimmed.is_empty() {
-                    text.clear();
-                } else {
-                    text = trimmed;
-                }
-            }
-            if !text.is_empty() {
-                ttft_ms.get_or_insert_with(|| ms_since(started));
-                if !on_piece(&text) {
-                    finish_reason = "stop";
-                    break;
-                }
-            }
-        }
-        if (n_past as u32).saturating_add(1) >= n_ctx {
-            finish_reason = "length";
-            break;
-        }
-        batch.clear();
-        batch
-            .add(token, n_past, &[0], true)
-            .map_err(backend_err("batch add failed"))?;
-        ctx.decode(&mut batch)
-            .map_err(backend_err("llama.cpp decode failed"))?;
-        n_past += 1;
-    }
-
-    let decode_ms = ms_since(phase);
-    debug!(
-        model = %cfg.id,
-        prompt_tokens = n_prompt,
-        completion_tokens = completion,
-        queue_ms = format!("{queue_ms:.0}"),
-        context_ms = format!("{context_ms:.0}"),
-        prefill_ms = format!("{prefill_ms:.0}"),
-        decode_ms = format!("{decode_ms:.0}"),
-        ttft_ms = ttft_ms.map(|v| format!("{v:.0}")),
-        "generation timings"
-    );
-    Ok(GenStats {
-        prompt_tokens: n_prompt as u32,
-        completion_tokens: completion,
-        finish_reason,
-        queue_ms,
-        context_ms,
-        prefill_ms,
-        decode_ms,
-        ttft_ms,
-    })
-}
-
-/// Single-token special markers such as `<|turn>`, `<|think|>`, `<|image|>`, `<channel|>`.
-fn is_special_marker(piece: &[u8]) -> bool {
-    let is_open = piece.starts_with(b"<|") && piece.ends_with(b">");
-    let is_close = piece.starts_with(b"<") && piece.ends_with(b"|>");
-    (is_open || is_close) && piece.len() <= 24 && !piece.contains(&b' ')
-}
-
-fn l2_normalize(v: &[f32]) -> Vec<f32> {
-    let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-12);
-    v.iter().map(|x| x / norm).collect()
-}
-
 /// Best-effort duration of a RIFF/WAV payload, for the transcription response.
 fn wav_duration_secs(bytes: &[u8]) -> Option<f32> {
     let reader = hound::WavReader::new(std::io::Cursor::new(bytes)).ok()?;
@@ -552,25 +228,46 @@ fn wav_duration_secs(bytes: &[u8]) -> Option<f32> {
     Some(reader.duration() as f32 / spec.sample_rate.max(1) as f32)
 }
 
+fn usage(stats: &GenStats) -> TokenUsage {
+    TokenUsage {
+        prompt_tokens: stats.prompt_tokens,
+        completion_tokens: stats.completion_tokens,
+        total_tokens: stats.prompt_tokens + stats.completion_tokens,
+        prompt_tokens_details: (stats.cached_tokens > 0).then_some(PromptTokensDetails {
+            cached_tokens: stats.cached_tokens,
+        }),
+    }
+}
+
 // ----------------------------------------------------------------------------
 // Backend
 // ----------------------------------------------------------------------------
 
+/// The running engine worker plus the placement it was built for.
+struct LlamaWorker {
+    handle: WorkerHandle<LlamaJob>,
+    gpu_layers: u32,
+    /// Context window per slot.
+    n_ctx: u32,
+}
+
 pub struct GgmlLlamaBackend {
     config: ModelConfig,
     state: RwLock<BackendContextState>,
-    loaded: Arc<StdMutex<Option<LoadedLlama>>>,
+    worker: Arc<StdMutex<Option<LlamaWorker>>>,
     n_threads: i32,
+    opts: EngineOptions,
 }
 
 impl GgmlLlamaBackend {
-    pub fn new(config: ModelConfig) -> Self {
+    pub fn new(config: ModelConfig, opts: EngineOptions) -> Self {
         let state = RwLock::new(BackendContextState::new(&config));
         Self {
             config,
             state,
-            loaded: Arc::new(StdMutex::new(None)),
+            worker: Arc::new(StdMutex::new(None)),
             n_threads: default_threads(),
+            opts,
         }
     }
 
@@ -583,6 +280,25 @@ impl GgmlLlamaBackend {
                 expected: self.config.modality,
                 actual: m,
             })
+        }
+    }
+
+    /// Hands `job` to the resident worker. The lock is held only for the send.
+    fn submit(&self, job: LlamaJob) -> Result<()> {
+        let guard = self
+            .worker
+            .lock()
+            .map_err(|_| HypnosError::BackendError("worker mutex poisoned".into()))?;
+        match guard.as_ref() {
+            Some(w) => w.handle.submit(job),
+            None => {
+                let err = HypnosError::BackendError(format!(
+                    "model '{}' is not resident in VRAM (scheduler must promote it first)",
+                    self.config.id
+                ));
+                job.fail(HypnosError::BackendError(err.to_string()));
+                Err(err)
+            }
         }
     }
 
@@ -616,7 +332,7 @@ impl GgmlLlamaBackend {
             self.require_modality(Modality::TextGeneration)?;
         }
 
-        // Resolve media payloads (data: URLs, http(s), base64 audio) before taking the model lock.
+        // Resolve media payloads (data: URLs, http(s), base64 audio) before queueing the job.
         let mut media: Vec<Vec<u8>> = Vec::new();
         for m in &req.messages {
             for r in m.content.media() {
@@ -624,7 +340,7 @@ impl GgmlLlamaBackend {
             }
         }
 
-        let gp = GenParams {
+        let params = GenParams {
             max_tokens: req
                 .max_tokens
                 .unwrap_or(512)
@@ -633,45 +349,23 @@ impl GgmlLlamaBackend {
             top_p: req.top_p.unwrap_or(0.95),
             top_k: req.top_k.unwrap_or(64),
             seed: req.seed.map(|s| s as u32).unwrap_or_else(rand::random),
-            n_ctx_override: req.num_ctx,
         };
-        let think = req.think.unwrap_or(false);
-        let messages = req.messages.clone();
-        let cfg = self.config.clone();
-        let loaded = self.loaded.clone();
-        let n_threads = self.n_threads;
-        let rctx = rctx.clone();
-        let started = Instant::now();
-
-        tokio::task::spawn_blocking(move || -> Result<(String, GenStats)> {
-            let mut guard = loaded
-                .lock()
-                .map_err(|_| HypnosError::BackendError("model mutex poisoned".into()))?;
-            let resident = guard.as_mut().ok_or_else(|| {
-                HypnosError::BackendError(format!(
-                    "model '{}' is not resident in VRAM (scheduler must promote it first)",
-                    cfg.id
-                ))
-            })?;
-            let prompt = build_prompt(resident, &messages, mtmd_default_marker(), think);
-            debug!(model = %cfg.id, prompt_chars = prompt.len(), media = media.len(), "chat prefill");
-            let mut text = String::new();
-            let stats = run_generation(
-                resident, &cfg, n_threads, &prompt, &media, &gp, &rctx, started,
-                |piece| {
-                    text.push_str(piece);
-                    match &tx {
-                        Some(tx) => tx
-                            .blocking_send(ChatStreamEvent::Delta(piece.to_string()))
-                            .is_ok(),
-                        None => true,
-                    }
-                },
-            )?;
-            Ok((text, stats))
-        })
-        .await
-        .map_err(|e| HypnosError::BackendError(format!("inference task panicked: {e}")))?
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.submit(LlamaJob::Chat(ChatJob {
+            prompt: PromptSpec::Messages {
+                messages: req.messages.clone(),
+                think: req.think.unwrap_or(false),
+            },
+            media,
+            params,
+            rctx: rctx.clone(),
+            started: Instant::now(),
+            stream: tx,
+            reply: reply_tx,
+        }))?;
+        reply_rx
+            .await
+            .map_err(|_| HypnosError::BackendError("engine worker dropped the request".into()))?
     }
 }
 
@@ -682,7 +376,7 @@ impl ModelBackend for GgmlLlamaBackend {
     }
 
     fn is_resident(&self) -> bool {
-        self.loaded.lock().map(|g| g.is_some()).unwrap_or(false)
+        self.worker.lock().map(|g| g.is_some()).unwrap_or(false)
     }
 
     async fn apply_placement(
@@ -698,14 +392,16 @@ impl ModelBackend for GgmlLlamaBackend {
         let want_resident = plan.primary_tier == MemoryTier::Tier1GpuVram;
         let cfg = self.config.clone();
         let plan = plan.clone();
-        let loaded = self.loaded.clone();
+        let worker = self.worker.clone();
         let n_threads = self.n_threads;
+        let opts = self.opts.clone();
 
         tokio::task::spawn_blocking(move || -> Result<()> {
-            let mut guard = loaded
+            let mut guard = worker
                 .lock()
-                .map_err(|_| HypnosError::BackendError("model mutex poisoned".into()))?;
+                .map_err(|_| HypnosError::BackendError("worker mutex poisoned".into()))?;
             if !want_resident {
+                // Dropping the handle stops the worker, which frees the context and the weights.
                 if guard.take().is_some() {
                     info!(model = %cfg.id, to_tier = ?plan.primary_tier, "Released llama.cpp model from VRAM");
                 }
@@ -717,15 +413,34 @@ impl ModelBackend for GgmlLlamaBackend {
                 cfg.arch.default_context_len
             };
             match guard.as_mut() {
-                Some(resident) if resident.gpu_layers == plan.gpu_layers => {
-                    resident.n_ctx = n_ctx;
-                    debug!(model = %cfg.id, n_ctx, "Context budget updated; weights already resident");
+                Some(w) if w.gpu_layers == plan.gpu_layers => {
+                    if w.n_ctx != n_ctx {
+                        let (tx, rx) = oneshot::channel();
+                        w.handle
+                            .submit(LlamaJob::Reconfigure { n_ctx, reply: tx })?;
+                        rx.blocking_recv().map_err(|_| {
+                            HypnosError::BackendError("engine worker dropped the reconfigure".into())
+                        })??;
+                        w.n_ctx = n_ctx;
+                        debug!(model = %cfg.id, n_ctx, "Context rebuilt for the new window; weights already resident");
+                    }
                     Ok(())
                 }
                 _ => {
-                    // Drop the previous residency first so VRAM is free before the new split loads.
+                    // Stop the previous residency first so VRAM is free before the new split loads.
                     *guard = None;
-                    *guard = Some(load_model(&cfg, plan.gpu_layers, n_ctx, n_threads)?);
+                    let handle = spawn_worker(WorkerSpec {
+                        cfg: cfg.clone(),
+                        gpu_layers: plan.gpu_layers,
+                        n_ctx,
+                        n_threads,
+                        opts,
+                    })?;
+                    *guard = Some(LlamaWorker {
+                        handle,
+                        gpu_layers: plan.gpu_layers,
+                        n_ctx,
+                    });
                     Ok(())
                 }
             }
@@ -753,11 +468,7 @@ impl ModelBackend for GgmlLlamaBackend {
                 },
                 finish_reason: stats.finish_reason.to_string(),
             }],
-            usage: TokenUsage {
-                prompt_tokens: stats.prompt_tokens,
-                completion_tokens: stats.completion_tokens,
-                total_tokens: stats.prompt_tokens + stats.completion_tokens,
-            },
+            usage: usage(&stats),
             hypnos_telemetry: Some(ExecutionTelemetry::for_engine(stats.timing())),
         })
     }
@@ -772,11 +483,7 @@ impl ModelBackend for GgmlLlamaBackend {
             Ok((_, stats)) => {
                 let _ = tx
                     .send(ChatStreamEvent::Done {
-                        usage: TokenUsage {
-                            prompt_tokens: stats.prompt_tokens,
-                            completion_tokens: stats.completion_tokens,
-                            total_tokens: stats.prompt_tokens + stats.completion_tokens,
-                        },
+                        usage: usage(&stats),
                         finish_reason: stats.finish_reason.to_string(),
                         timing: stats.timing(),
                     })
@@ -830,49 +537,27 @@ impl ModelBackend for GgmlLlamaBackend {
             marker,
             false,
         );
-        let media = vec![req.audio_bytes.clone()];
         let duration = wav_duration_secs(&req.audio_bytes);
-        let gp = GenParams {
-            max_tokens: 1024,
-            temperature: 0.0,
-            top_p: 1.0,
-            top_k: 1,
-            seed: 0,
-            n_ctx_override: None,
-        };
-        let cfg = self.config.clone();
-        let loaded = self.loaded.clone();
-        let n_threads = self.n_threads;
-        let language = req.language.clone();
-        let rctx = rctx.clone();
         let started = Instant::now();
-
-        let (text, stats) = tokio::task::spawn_blocking(move || -> Result<(String, GenStats)> {
-            let mut guard = loaded
-                .lock()
-                .map_err(|_| HypnosError::BackendError("model mutex poisoned".into()))?;
-            let resident = guard.as_mut().ok_or_else(|| {
-                HypnosError::BackendError(format!("model '{}' is not resident in VRAM", cfg.id))
-            })?;
-            let mut text = String::new();
-            let stats = run_generation(
-                resident,
-                &cfg,
-                n_threads,
-                &prompt,
-                &media,
-                &gp,
-                &rctx,
-                started,
-                |piece| {
-                    text.push_str(piece);
-                    true
-                },
-            )?;
-            Ok((text, stats))
-        })
-        .await
-        .map_err(|e| HypnosError::BackendError(format!("transcription task panicked: {e}")))??;
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.submit(LlamaJob::Chat(ChatJob {
+            prompt: PromptSpec::Raw(prompt),
+            media: vec![req.audio_bytes.clone()],
+            params: GenParams {
+                max_tokens: 1024,
+                temperature: 0.0,
+                top_p: 1.0,
+                top_k: 1,
+                seed: 0,
+            },
+            rctx: rctx.clone(),
+            started,
+            stream: None,
+            reply: reply_tx,
+        }))?;
+        let (text, stats) = reply_rx
+            .await
+            .map_err(|_| HypnosError::BackendError("engine worker dropped the request".into()))??;
 
         let mut timing = stats.timing();
         timing.audio_secs = duration.map(f64::from);
@@ -882,7 +567,7 @@ impl ModelBackend for GgmlLlamaBackend {
 
         Ok(AudioTranscriptionResponse {
             text: text.trim().to_string(),
-            language,
+            language: req.language.clone(),
             duration_secs: duration,
             hypnos_telemetry: Some(ExecutionTelemetry::for_engine(timing)),
         })
@@ -906,85 +591,16 @@ impl ModelBackend for GgmlLlamaBackend {
                 "embedding inputs contain {total_chars} characters, above limits.max_prompt_chars"
             )));
         }
-        let rctx = rctx.clone();
-        let cfg = self.config.clone();
-        let loaded = self.loaded.clone();
-        let n_threads = self.n_threads;
-        let started = Instant::now();
-
-        let (vectors, total_tokens, timing) =
-            tokio::task::spawn_blocking(move || -> Result<(Vec<Vec<f32>>, u32, EngineTiming)> {
-                let backend = llama_backend()?;
-                let mut guard = loaded
-                    .lock()
-                    .map_err(|_| HypnosError::BackendError("model mutex poisoned".into()))?;
-                let resident = guard.as_mut().ok_or_else(|| {
-                    HypnosError::BackendError(format!("model '{}' is not resident in VRAM", cfg.id))
-                })?;
-                let queue_ms = ms_since(started);
-                let phase = Instant::now();
-                let model = &resident.model;
-                let n_ctx = resident
-                    .n_ctx
-                    .clamp(512, cfg.arch.max_context_len.max(512))
-                    .min(model.n_ctx_train().max(512));
-                // Non-causal encoders need the whole sequence inside one micro-batch.
-                let cparams = LlamaContextParams::default()
-                    .with_n_ctx(NonZeroU32::new(n_ctx))
-                    .with_n_batch(n_ctx)
-                    .with_n_ubatch(n_ctx)
-                    .with_n_threads(n_threads)
-                    .with_n_threads_batch(n_threads)
-                    .with_embeddings(true)
-                    .with_pooling_type(LlamaPoolingType::Unspecified);
-                let mut ctx = model
-                    .new_context(backend, cparams)
-                    .map_err(backend_err("llama.cpp embedding context creation failed"))?;
-                let vocab = model.vocab();
-                let context_ms = ms_since(phase);
-                let phase = Instant::now();
-
-                let mut out = Vec::with_capacity(inputs.len());
-                let mut total: u32 = 0;
-                for text in &inputs {
-                    if !rctx.should_continue() {
-                        return Err(HypnosError::Cancelled);
-                    }
-                    let mut tokens = vocab.tokenize(text.as_bytes(), true, true);
-                    if tokens.is_empty() {
-                        tokens = vocab.tokenize(b" ", true, true);
-                    }
-                    tokens.truncate(n_ctx as usize);
-                    total += tokens.len() as u32;
-                    let mut batch = LlamaBatch::new(tokens.len(), 1);
-                    batch
-                        .add_sequence(&tokens, 0, true)
-                        .map_err(backend_err("batch add failed"))?;
-                    ctx.clear_kv_cache();
-                    ctx.decode(&mut batch)
-                        .map_err(backend_err("llama.cpp embedding decode failed"))?;
-                    let emb: Vec<f32> = match ctx.embeddings_seq_ith(0) {
-                        Ok(e) => e.to_vec(),
-                        Err(_) => ctx
-                            .embeddings_ith(tokens.len() as i32 - 1)
-                            .map_err(backend_err("no embeddings produced"))?
-                            .to_vec(),
-                    };
-                    out.push(l2_normalize(&emb));
-                }
-                let prefill_ms = ms_since(phase);
-                let timing = EngineTiming {
-                    queue_ms: Some(queue_ms),
-                    context_ms: Some(context_ms),
-                    prefill_ms: Some(prefill_ms),
-                    prefill_tokens_per_s: (total > 0 && prefill_ms > 0.0)
-                        .then(|| total as f64 / (prefill_ms / 1000.0)),
-                    ..EngineTiming::default()
-                };
-                Ok((out, total, timing))
-            })
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.submit(LlamaJob::Embed(EmbedJob {
+            inputs,
+            rctx: rctx.clone(),
+            started: Instant::now(),
+            reply: reply_tx,
+        }))?;
+        let (vectors, total_tokens, timing) = reply_rx
             .await
-            .map_err(|e| HypnosError::BackendError(format!("embedding task panicked: {e}")))??;
+            .map_err(|_| HypnosError::BackendError("engine worker dropped the request".into()))??;
 
         let data = vectors
             .into_iter()

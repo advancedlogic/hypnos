@@ -140,7 +140,7 @@ builds (no CUDA toolkit, e.g. CI) use `cargo build --workspace --no-default-feat
 | :--- | :--- |
 | `GET /health` | liveness: version and uptime |
 | `GET /ready` | readiness: 503 until startup tier initialization has finished |
-| `GET /metrics` | Prometheus text: per-route counters and latency, scheduler promotions/evictions/load failures/rejections, VRAM bookkeeping vs. real device memory, per-model tier and leases, and per-model execution histograms (`hypnos_chat_ttft_ms`, `hypnos_chat_queue_ms`, `hypnos_chat_context_ms`, `hypnos_chat_prefill_tokens_per_s`, `hypnos_chat_decode_tokens_per_s`, `hypnos_tts_rtf`, `hypnos_tts_ttfa_ms`, `hypnos_stt_rtf`, `hypnos_image_jct_s`; each also exposes a `_last` gauge) |
+| `GET /metrics` | Prometheus text: per-route counters and latency, scheduler promotions/evictions/load failures/rejections, VRAM bookkeeping vs. real device memory, per-model tier and leases, and per-model execution histograms (`hypnos_chat_ttft_ms`, `hypnos_chat_queue_ms`, `hypnos_chat_context_ms`, `hypnos_chat_prefill_tokens_per_s`, `hypnos_chat_decode_tokens_per_s`, `hypnos_tts_rtf`, `hypnos_tts_ttfa_ms`, `hypnos_stt_rtf`, `hypnos_image_jct_s`; each also exposes a `_last` gauge) and prefix-cache counters (`hypnos_prefix_cache_hits_total`, `_misses_total`, `_tokens_reused_total`) |
 | `GET /v1/memory/status` | full 3-tier snapshot, including `tier1_vram_real_free_bytes` and `tier1_vram_unaccounted_bytes` |
 | `POST /v1/memory/tier` | manual promote / demote (`{"model": "...", "target_tier": "tier2_pinned_ram"}`); refused with 429 while the model is leased |
 
@@ -154,6 +154,12 @@ Behaviour that matters in production:
   exceeded), request timeout (HTTP 504), body/audio/image/prompt size limits, `max_tokens` cap.
 - **Cancellation**: when a client disconnects, the generation is stopped at the next token
   (llama.cpp), chunk (Kokoro) or diffusion step (sd.cpp) and the lease is released.
+- **Persistent contexts and prefix reuse** (llama.cpp models): a resident model is served by one
+  worker thread that keeps a single `llama_context` for the whole residency and runs requests
+  through execution slots (`slots` per model, default 1). With `prefix_cache = true` (default) a
+  prompt that extends what a slot processed last prefills only the new part, and an image or audio
+  clip already in the cache is not re-encoded; `usage.prompt_tokens_details.cached_tokens` reports
+  the reused positions. Idle slot caches are cleared after `server.kv_idle_timeout_secs`.
 - **Exposure**: binds `127.0.0.1` by default; CORS allows loopback origins only unless
   `server.allowed_origins` says otherwise. There is no authentication: put a reverse proxy in front
   for anything beyond the local machine.

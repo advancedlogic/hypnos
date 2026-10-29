@@ -138,11 +138,29 @@ const ENGINE_METRICS: &[EngineMetric] = &[
     },
 ];
 
+/// Per-model counters, in exposition order.
+const ENGINE_COUNTERS: &[(&str, &str)] = &[
+    (
+        "hypnos_prefix_cache_hits_total",
+        "Chat requests whose prompt was partly served from a slot's KV cache.",
+    ),
+    (
+        "hypnos_prefix_cache_misses_total",
+        "Chat requests that prefilled their whole prompt.",
+    ),
+    (
+        "hypnos_prefix_cache_tokens_reused_total",
+        "Prompt positions served from the KV cache instead of being prefilled.",
+    ),
+];
+
 #[derive(Debug, Default)]
 pub struct Metrics {
     routes: Mutex<BTreeMap<String, RouteStats>>,
     /// `(metric name, model id)` -> histogram.
     engine: Mutex<BTreeMap<(&'static str, String), Histogram>>,
+    /// `(metric name, model id)` -> counter.
+    counters: Mutex<BTreeMap<(&'static str, String), u64>>,
 }
 
 impl Metrics {
@@ -176,7 +194,27 @@ impl Metrics {
             .observe(v);
     }
 
+    fn count(&self, name: &'static str, model: &str, by: u64) {
+        *self
+            .counters
+            .lock()
+            .entry((name, model.to_string()))
+            .or_insert(0) += by;
+    }
+
     pub fn record_chat(&self, model: &str, t: &EngineTiming) {
+        if let Some(cached) = t.cached_tokens {
+            if cached > 0 {
+                self.count("hypnos_prefix_cache_hits_total", model, 1);
+                self.count(
+                    "hypnos_prefix_cache_tokens_reused_total",
+                    model,
+                    u64::from(cached),
+                );
+            } else {
+                self.count("hypnos_prefix_cache_misses_total", model, 1);
+            }
+        }
         self.observe("hypnos_chat_ttft_ms", model, t.ttft_ms);
         self.observe("hypnos_chat_queue_ms", model, t.queue_ms);
         self.observe("hypnos_chat_context_ms", model, t.context_ms);
@@ -369,6 +407,24 @@ impl Metrics {
                 m.total_requests_served
             );
         }
+
+        let counters = self.counters.lock();
+        for (name, help) in ENGINE_COUNTERS {
+            let series: Vec<(&String, &u64)> = counters
+                .iter()
+                .filter(|((n, _), _)| n == name)
+                .map(|((_, model), v)| (model, v))
+                .collect();
+            if series.is_empty() {
+                continue;
+            }
+            let _ = writeln!(out, "# HELP {name} {help}");
+            let _ = writeln!(out, "# TYPE {name} counter");
+            for (model, v) in series {
+                let _ = writeln!(out, "{name}{{model=\"{}\"}} {v}", model.replace('"', ""));
+            }
+        }
+        drop(counters);
 
         let engine = self.engine.lock();
         for metric in ENGINE_METRICS {

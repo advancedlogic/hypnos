@@ -201,6 +201,15 @@ pub struct TokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+    /// OpenAI-style breakdown; present when part of the prompt was served from the KV cache.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens_details: Option<PromptTokensDetails>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PromptTokensDetails {
+    /// Prompt positions reused from a slot's KV cache instead of being prefilled again.
+    pub cached_tokens: u32,
 }
 
 /// Incremental events emitted by a streaming chat completion.
@@ -435,6 +444,9 @@ pub struct EngineTiming {
     /// Text-to-speech: time to the first audio chunk (streaming synthesis only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttfa_ms: Option<f64>,
+    /// Chat: prompt positions served from the slot's KV cache (prefix reuse); 0 on a miss.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<u32>,
 }
 
 impl ExecutionTelemetry {

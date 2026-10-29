@@ -55,6 +55,43 @@ impl Drop for ActiveModelLease {
     }
 }
 
+/// Plans a Tier 1 placement that serves `needed_ctx`, preferring the model's `default_context_len`
+/// whenever that fits with the same GPU split. The engines keep one context per residency, so a
+/// window sized for the default serves a growing conversation without being rebuilt (and losing
+/// its prefix cache) every time a request's estimate exceeds the previous one.
+fn plan_placement(
+    cfg: &hypnos_core::config::ModelConfig,
+    needed_ctx: u32,
+    batch_size: u32,
+    avail_vram: u64,
+    avail_ram: u64,
+    is_uma: bool,
+) -> Option<LayerPlacementPlan> {
+    let plan = |ctx: u32| {
+        KvCacheEstimator::compute_optimal_placement(
+            cfg,
+            Some(ctx),
+            batch_size,
+            avail_vram,
+            avail_ram,
+            is_uma,
+        )
+    };
+    let preferred_ctx = needed_ctx
+        .max(cfg.arch.default_context_len)
+        .min(cfg.arch.max_context_len);
+    if preferred_ctx == needed_ctx {
+        return plan(needed_ctx);
+    }
+    match (plan(preferred_ctx), plan(needed_ctx)) {
+        (Some(preferred), Some(needed)) if preferred.gpu_layers >= needed.gpu_layers => {
+            Some(preferred)
+        }
+        (preferred, None) => preferred,
+        (_, needed) => needed,
+    }
+}
+
 /// Counters exposed on `/metrics`.
 #[derive(Debug, Default)]
 pub struct SchedulerStats {
@@ -266,14 +303,8 @@ impl ModelScheduler {
             .free_pinned_ram_bytes()
             .saturating_add(current_plan.pinned_ram_bytes);
 
-        let mut target_plan = KvCacheEstimator::compute_optimal_placement(
-            &cfg,
-            Some(needed_ctx),
-            batch_size,
-            avail_vram,
-            avail_ram,
-            is_uma,
-        );
+        let mut target_plan =
+            plan_placement(&cfg, needed_ctx, batch_size, avail_vram, avail_ram, is_uma);
 
         // Evict idle lower-priority models from Tier 1 while the model does not fit, or only fits
         // with a partial GPU split.
@@ -320,14 +351,8 @@ impl ModelScheduler {
                 .free_pinned_ram_bytes()
                 .saturating_add(current_plan.pinned_ram_bytes);
 
-            target_plan = KvCacheEstimator::compute_optimal_placement(
-                &cfg,
-                Some(needed_ctx),
-                batch_size,
-                avail_vram,
-                avail_ram,
-                is_uma,
-            );
+            target_plan =
+                plan_placement(&cfg, needed_ctx, batch_size, avail_vram, avail_ram, is_uma);
         }
 
         let final_plan = target_plan.ok_or_else(|| {

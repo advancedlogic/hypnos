@@ -88,6 +88,8 @@ fn model(id: &str, weight_gb: u64, priority: ModelPriority, initial: MemoryTier)
         initial_tier: initial,
         keep_warm_in_ram: true,
         priority,
+        slots: 1,
+        prefix_cache: true,
         arch: ModelArchitectureParams {
             num_layers: 10,
             num_kv_heads: 0,

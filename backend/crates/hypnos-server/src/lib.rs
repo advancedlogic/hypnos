@@ -15,7 +15,7 @@ use axum::{
 };
 use chrono::Utc;
 use futures::stream;
-use hypnos_backends::create_backend_for_model;
+use hypnos_backends::{create_backend_for_model, EngineOptions};
 use hypnos_core::{
     config::{HypnosConfig, LimitsConfig, MemoryTier},
     error::HypnosError,
@@ -61,11 +61,14 @@ pub struct AppState {
 
 impl AppState {
     pub fn from_config(config: HypnosConfig) -> hypnos_core::error::Result<Self> {
+        let engine_opts = EngineOptions {
+            kv_idle_timeout: Duration::from_secs(config.server.kv_idle_timeout_secs.max(1)),
+        };
         let backends = config
             .models
             .iter()
             .cloned()
-            .map(create_backend_for_model)
+            .map(|m| create_backend_for_model(m, &engine_opts))
             .collect();
         let memory = Arc::new(TieredMemoryManager::new(&config.hardware, config.models)?);
         let scheduler = Arc::new(ModelScheduler::new(memory, backends, &config.limits));

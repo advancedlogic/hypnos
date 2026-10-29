@@ -4,10 +4,41 @@ Implementation plan for the essential changes that move Hypnos from "one request
 lock" to a persistent, batched, streaming execution model, while keeping the 3-tier memory
 scheduler as the thing that decides what is resident.
 
-Status: **work item A done** (2026-10-29): engine timings in `hypnos_telemetry.engine`, per-model
-histograms on `/metrics`, `backend/scripts/bench.sh`, baseline in `docs/bench/baseline-2026-10-29.md`.
-B to E are not started. The motivation and the comparison with vLLM-Omni are summarised in
-section 1; the rest is the work. Line numbers refer to the tree before A.
+Status: **work items A and B done** (2026-10-29). A: engine timings in `hypnos_telemetry.engine`,
+per-model histograms on `/metrics`, `backend/scripts/bench.sh`, baseline in
+`docs/bench/baseline-2026-10-29.md`. B: one engine worker thread per resident llama.cpp model
+(`hypnos-backends/src/engine.rs`, `worker.rs`) owning a persistent context, execution slots
+(`slots`, default 1), prefix reuse with multimodal chunk ids (`prefix_cache`), results in
+`docs/bench/after-B-2026-10-29.md`. C to E are not started. The motivation and the comparison with
+vLLM-Omni are summarised in section 1; the rest is the work. Line numbers refer to the tree before A.
+
+What B measured against the baseline (same machine, `slots = 1`):
+
+| Scenario | Baseline | After B |
+| :--- | :--- | :--- |
+| 2. five-turn chat, turns 2 to 5 | TTFT 297 to 325 ms, 0 cached | TTFT 142 to 162 ms, 517 to 676 positions cached per turn |
+| 3. vision chat, turns 2 and 3 | TTFT 288 to 306 ms, image re-encoded | TTFT 101 to 114 ms, one image encode over three turns |
+| 1. cold chat | context creation 62 ms per request | 0 ms (context persists) |
+| 4. four concurrent clients | 0.92x of single-client | 0.93x (unchanged by design; C) |
+
+Two things B had to add that section 4 did not foresee:
+
+- **Sliding-window checkpoints.** The generated reply never re-tokenises to the same tokens the
+  model sampled (first-token boundary, trimmed whitespace, swallowed channel markers), so the next
+  turn always diverges inside the previous reply. With `swa_full = false` the local layers cannot
+  be trimmed back to that point, which made every turn a miss. The worker now snapshots the
+  sliding-window state at the end of each prompt (`llama_state_seq_get_data_ext` with the
+  partial-only flag, about 26 MB for the 26B) and restores it when the divergence is at or after
+  the checkpoint, the same mechanism llama-server uses.
+- **Planning for the default window.** The scheduler used to size a residency for the request's
+  own estimate, which would have rebuilt the context (and dropped every cache) each time a
+  conversation grew. `acquire_model` now plans `max(needed, default_context_len)` whenever that
+  fits with the same GPU split.
+
+Left inside B's scope for later: a new image arriving mid-conversation still triggers a full
+prefill (evaluating a single mtmd chunk needs `mtmd_helper_eval_chunk_single`, which the vendored
+bindings do not expose); M-RoPE models never reuse; `slots > 1` is accepted by the config and
+booked by the planner but served one request at a time until C.
 
 What the baseline (RTX, 24 GB, Windows) says about each work item:
 
