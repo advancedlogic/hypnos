@@ -9,6 +9,7 @@
 #    ./run.sh restart backend  -> stop + start the already-built backend binary
 #    ./run.sh stop             -> stop backend and frontend
 #    ./run.sh logs             -> follow both logs
+#    ./run.sh models [id]      -> download model files into backend/models/ (backend/models.manifest)
 #
 #  Build and start are separate steps: `start` launches the compiled binary
 #  backend/target/<profile>/hypnos (hypnos.exe on Windows) and refuses to run when it is
@@ -83,6 +84,7 @@ usage() {
     ./run.sh stop               stop both
     ./run.sh status             show what is running and whether the backend is built
     ./run.sh logs [target]      tail the log file(s) in .run/
+    ./run.sh models [model id]  download the model files (about 31 GB for all) into backend/models/
 
   start/restart never compile; run ./run.sh build after changing Rust code.
   HYPNOS_PROFILE=debug selects the dev profile (backend/target/debug/hypnos).
@@ -302,6 +304,11 @@ logs() {
 # ---------------------------------------------------------------------------
 # dispatch
 # ---------------------------------------------------------------------------
+# `models` takes a model id instead of a service target.
+if [ "$ACTION" = models ]; then
+    exec bash "$ROOT_DIR/backend/scripts/fetch-models.sh" "$TARGET"
+fi
+
 case "$TARGET" in backend|frontend|all) ;; *) echo "[Hypnos] Unknown target '$TARGET'."; usage ;; esac
 
 RC=0

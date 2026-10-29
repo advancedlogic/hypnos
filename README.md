@@ -50,6 +50,11 @@ sidecar is involved.
 
 ### Model files
 
+`./run.sh models` (Linux / macOS) or `run.bat models` (Windows) downloads everything below into
+`backend/models/` with `curl`, about 31 GB. Files already present are skipped, an interrupted download
+resumes on the next run, and `./run.sh models moss-image` fetches a single model. The file list lives
+in [backend/models.manifest](backend/models.manifest); on Apple Silicon it picks the fp32 Kokoro graph.
+
 Download sources (all public Hugging Face repositories):
 
 | File | Source |
@@ -94,6 +99,7 @@ no CUDA and no Python involved. Design notes and open items: [docs/apple-silicon
 xcode-select --install          # clang, Metal compiler, frameworks
 brew install cmake ninja
 ./backend/scripts/vendor.sh
+./run.sh models                 # ~31 GB of model files into backend/models/
 ./run.sh build backend          # = cargo build --release -p hypnos-server --no-default-features --features metal
 ./run.sh start backend          # uses backend/hypnos.macos.example.toml
 ```
@@ -132,6 +138,7 @@ run.bat [build|start|stop|restart|status]      [backend|frontend|all]
 | `... stop`                  | stop both (kills the whole process tree, frees the ports)     |
 | `... status`                | show what is running, on which PID, and whether the backend is built |
 | `./run.sh logs [target]`    | follow `.run/backend.log` / `.run/frontend.log`               |
+| `... models [model id]`     | download the model files into `backend/models/` (all, or one model) |
 
 `restart` does not rebuild: run `build` after changing Rust code, then `restart backend`.
 `HYPNOS_PROFILE=debug` makes `build`/`start` use the dev profile (`backend/target/debug/`) instead.

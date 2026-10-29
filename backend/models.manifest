@@ -1,0 +1,23 @@
+# Model files for the default lineup, downloaded by `./run.sh models` / `run.bat models`
+# (backend/scripts/fetch-models.sh / .ps1) into backend/models/. All repositories are public.
+#
+# Columns (whitespace separated):
+#   model     model id from hypnos*.example.toml, selectable as `./run.sh models <model>`
+#   repo      Hugging Face repository
+#   remote    path inside the repository; a trailing `/` downloads every file in that folder
+#   local     path under backend/models/ (a trailing `/` for folders)
+#   platform  all | macos-arm64 | other   (other = everything except Apple Silicon)
+
+gemma4:26b-q4    ggml-org/gemma-4-26B-A4B-it-GGUF        gemma-4-26B-A4B-it-Q4_0.gguf          gemma-4-26B-A4B-it-Q4_0.gguf          all
+gemma4:26b-q4    ggml-org/gemma-4-26B-A4B-it-GGUF        mmproj-gemma-4-26B-A4B-it-BF16.gguf   mmproj-gemma-4-26B-A4B-it-BF16.gguf   all
+gemma4:e4b-q4    ggml-org/gemma-4-E4B-it-GGUF            gemma-4-E4B-it-Q4_0.gguf              gemma-4-E4B-it-Q4_0.gguf              all
+gemma4:e4b-q4    ggml-org/gemma-4-E4B-it-GGUF            mmproj-gemma-4-E4B-it-BF16.gguf       mmproj-gemma-4-E4B-it-BF16.gguf       all
+gemmaembedding2  ggml-org/embeddinggemma-2-GGUF          embeddinggemma-2-Q8_0.gguf            embeddinggemma-2-Q8_0.gguf            all
+# The fp16 graph returns silent (NaN) audio for some inputs on Apple Silicon; the fp32 one does not.
+kokoro-82m-q4    onnx-community/Kokoro-82M-v1.0-ONNX     onnx/model_fp16.onnx                  kokoro/model_fp16.onnx                other
+kokoro-82m-q4    onnx-community/Kokoro-82M-v1.0-ONNX     onnx/model.onnx                       kokoro/model.onnx                     macos-arm64
+kokoro-82m-q4    onnx-community/Kokoro-82M-v1.0-ONNX     voices/                               kokoro/voices/                        all
+moss-image       leejet/MOSS-Image-SFT-GGUF              MOSS-Image-SFT-Q4_K.gguf              MOSS-Image-SFT-Q4_K.gguf              all
+moss-image       unsloth/Qwen3.5-9B-GGUF                 Qwen3.5-9B-Q4_K_M.gguf                Qwen3.5-9B-Q4_K_M.gguf                all
+moss-image       Comfy-Org/MOSS-Image                    vae/flux2-vae.safetensors             flux2-vae.safetensors                 all
+moss-image       OpenMOSS-Team/MOSS-Image-Base           tokenizer/tokenizer.json              moss_tokenizer.json                   all
