@@ -1,0 +1,14 @@
+diff --git a/llama-cpp-2/src/timing.rs b/llama-cpp-2/src/timing.rs
+index 7eaf208..2d11fa4 100644
+--- a/llama-cpp-2/src/timing.rs
++++ b/llama-cpp-2/src/timing.rs
+@@ -37,6 +37,9 @@ impl LlamaTimings {
+                 n_p_eval,
+                 n_eval,
+                 n_reused,
++                // Added in llama.cpp b119xx (graph reallocation counters); not exposed by this API.
++                n_reallocs_same: 0,
++                n_reallocs_diff: 0,
+             },
+         }
+     }

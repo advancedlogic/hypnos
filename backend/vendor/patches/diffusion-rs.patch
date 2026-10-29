@@ -1,0 +1,124 @@
+diff --git a/sys/build.rs b/sys/build.rs
+index 22b9b8a..9da4a96 100644
+--- a/sys/build.rs
++++ b/sys/build.rs
+@@ -1,6 +1,6 @@
+ use std::{
+     env,
+-    fs::{create_dir_all, read_dir},
++    fs::create_dir_all,
+     path::{Path, PathBuf},
+ };
+ 
+@@ -66,7 +66,10 @@ fn main() {
+     }
+     config
+         .profile("Release")
+-        .define("SD_BUILD_SHARED_LIBS", "OFF")
++        // Hypnos patch: build stable-diffusion as a SHARED library with ggml compiled privately into
++        // it. The final binary also links llama.cpp's own static ggml; two static ggml copies collide
++        // (LNK2005 duplicate symbols), while a DLL keeps sd.cpp's ggml out of the global symbol table.
++        .define("SD_BUILD_SHARED_LIBS", "ON")
+         .define("SD_BUILD_EXAMPLES", "OFF")
+         .define("SD_BUILD_SERVER", "OFF")
+         .define("GGML_OPENMP", "OFF")
+@@ -228,43 +231,68 @@ fn main() {
+     // Build stable-diffusion
+     let destination = config.build();
+ 
+-    add_link_search_path(&out.join("lib")).unwrap();
+-    add_link_search_path(&out.join("build")).unwrap();
+-    add_link_search_path(&out).unwrap();
+-
+-    println!("cargo:rustc-link-search=native={}", destination.display());
+-    println!("cargo:rustc-link-lib=static=stable-diffusion");
+-    println!("cargo:rustc-link-lib=static=ggml-base");
+-    println!("cargo:rustc-link-lib=static=ggml-cpu");
+-    println!("cargo:rustc-link-lib=static=ggml");
+-
+-    #[cfg(feature = "cuda")]
+-    println!("cargo:rustc-link-lib=static=ggml-cuda");
+-
+-    #[cfg(feature = "hipblas")]
+-    println!("cargo:rustc-link-lib=static=ggml-hip");
+-
+-    if use_metal {
+-        println!("cargo:rustc-link-lib=static=ggml-blas");
+-        println!("cargo:rustc-link-lib=static=ggml-metal");
+-    }
+-
+-    if use_vulkan {
+-        println!("cargo:rustc-link-lib=static=ggml-vulkan");
++    // Hypnos patch: the upstream crate recursed through the whole CMake tree here and emitted ~900
++    // `-L` directories. That many search paths made rustc fail to resolve `--extern` crates in
++    // dependent crates (E0463). Only the directories that can hold the static libraries are needed.
++    for dir in [
++        out.join("lib"),
++        out.join("lib64"),
++        out.join("build"),
++        out.join("build").join("ggml").join("src"),
++        out.join("build").join("ggml").join("src").join("ggml-cuda"),
++        out.join("build").join("ggml").join("src").join("ggml-hip"),
++        out.join("build").join("ggml").join("src").join("ggml-vulkan"),
++        out.join("build").join("ggml").join("src").join("ggml-metal"),
++        out.join("build").join("ggml").join("src").join("ggml-blas"),
++        out.join("build").join("ggml").join("src").join("ggml-sycl"),
++    ] {
++        if dir.is_dir() {
++            println!("cargo:rustc-link-search=native={}", dir.display());
++        }
+     }
+ 
+-    #[cfg(feature = "sycl")]
+-    println!("cargo:rustc-link-lib=static=ggml-sycl");
++    println!("cargo:rustc-link-search=native={}", destination.display());
++    // Shared build: ggml (and the CUDA/Metal/Vulkan backends) live inside the stable-diffusion
++    // library, so it is the only thing to link against.
++    println!("cargo:rustc-link-lib=dylib=stable-diffusion");
++    let _ = (use_metal, use_vulkan);
++
++    // Make the shared library discoverable at runtime: copy it next to the compiled binaries
++    // (target/<profile>/ and target/<profile>/deps, where Cargo runs tests from).
++    copy_shared_library(&out);
+ }
+ 
+-fn add_link_search_path(dir: &Path) -> std::io::Result<()> {
+-    if dir.is_dir() {
+-        println!("cargo:rustc-link-search={}", dir.display());
+-        for entry in read_dir(dir)? {
+-            add_link_search_path(&entry?.path())?;
++fn copy_shared_library(out: &Path) {
++    let Some(profile_dir) = out.ancestors().nth(3).map(Path::to_path_buf) else {
++        return;
++    };
++    let names = ["stable-diffusion.dll", "libstable-diffusion.so", "libstable-diffusion.dylib"];
++    let mut found = Vec::new();
++    for sub in ["bin", "lib", "build", "build/bin"] {
++        for name in names {
++            let candidate = out.join(sub).join(name);
++            if candidate.is_file() {
++                found.push(candidate);
++            }
++        }
++    }
++    for src in found {
++        for dst_dir in [profile_dir.clone(), profile_dir.join("deps"), profile_dir.join("examples")] {
++            if !dst_dir.is_dir() {
++                continue;
++            }
++            let dst = dst_dir.join(src.file_name().unwrap());
++            let stale = match (std::fs::metadata(&src), std::fs::metadata(&dst)) {
++                (Ok(a), Ok(b)) => a.len() != b.len() || a.modified().ok() > b.modified().ok(),
++                _ => true,
++            };
++            if stale {
++                if let Err(e) = std::fs::copy(&src, &dst) {
++                    println!("cargo:warning=could not copy {} to {}: {e}", src.display(), dst.display());
++                }
++            }
+         }
+     }
+-    Ok(())
+ }
+ 
+ // From https://github.com/alexcrichton/cc-rs/blob/fba7feded71ee4f63cfe885673ead6d7b4f2f454/src/lib.rs#L2462

@@ -6,9 +6,11 @@ backend/target/
 target/
 
 # Model weights and vendored engine clones are fetched locally, not committed
+# (backend/vendor/patches/ is kept: backend/scripts/vendor.sh needs it to rebuild vendor/)
 backend/models/
 backend/tools/
-backend/vendor/
+backend/vendor/*
+!backend/vendor/patches/
 
 # Frontend
 frontend/node_modules/

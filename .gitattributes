@@ -3,3 +3,5 @@
 *.sh  text eol=lf
 *.bat text eol=crlf
 *.cmd text eol=crlf
+# Keep patch files byte-exact so they apply cleanly on every platform
+*.patch -text
