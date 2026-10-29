@@ -267,3 +267,17 @@ cd frontend
 npm install
 npm run dev
 ```
+
+---
+
+## License
+
+Hypnos's source code is licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT), at your option. Unless you explicitly state otherwise, any contribution
+you intentionally submit for inclusion in this work, as defined in the Apache-2.0 license, is dual
+licensed as above, without any additional terms or conditions.
+
+A `hypnos` binary built with the default engines statically links espeak-ng (GPL-3.0-or-later) for
+text-to-speech and is therefore distributed under the GPL v3 or later as a whole. Model weights are
+downloaded separately and are covered by their own licenses. See
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for every engine and its license.

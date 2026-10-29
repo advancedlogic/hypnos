@@ -56,11 +56,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Backlog
 
-- [ ] ⬜ **DOC-1** `P1` Add a LICENSE file to the repository
-      Without one nobody may legally use or contribute to the code. Pick a license (MIT and/or
-      Apache-2.0 are the Rust norm), check compatibility with the vendored engines (llama.cpp,
-      sd.cpp, ONNX Runtime, espeak-ng is GPL-3.0) and the model licenses, add `LICENSE`, set
-      `license` in the workspace `Cargo.toml` and mention it in the README.
 - [ ] 🟧 **PERF-5** `P1` Benchmark model swap latency: cold vs warm vs hot
       The 3-tier hierarchy is the headline claim but no bench measures it (baseline shows 9
       promotions averaging ~4.8 s each). Add a `bench.sh` scenario that times the first request
@@ -72,10 +67,13 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       most people. Release workflow producing archives for Windows x64 (CUDA), Linux x64 (CUDA)
       and macOS arm64 (Metal), each with the sd.cpp shared library, `espeak-ng-data`, the
       example config and the built frontend. Document the CUDA runtime / driver requirement.
+      Archives are GPL-3.0-or-later as a whole (espeak-ng, see `THIRD-PARTY-NOTICES.md`): ship
+      `LICENSE-*`, the GPL-3.0 text and the notices, and link the tagged source.
 - [ ] ⬛ **BUILD-2** `P2` Provide a Docker image with CUDA support
       Multi-stage Dockerfile (build on a CUDA devel image, run on a CUDA runtime image), models
       mounted as a volume, config via mount or env. Publish to GHCR from the release workflow
-      (BUILD-1) and add a `docker run --gpus all ...` quickstart to the README.
+      (BUILD-1) and add a `docker run --gpus all ...` quickstart to the README. Same GPL
+      obligations as BUILD-1 for the image.
 - [ ] ⬛ **BUILD-3** `P2` Re-enable CI
       `.github/workflows/ci.yml` is fully commented out. Restore the engine-free jobs: CPU-only
       `cargo build --workspace --no-default-features`, `cargo test --workspace`, scoped `cargo fmt
@@ -95,6 +93,15 @@ _No cards yet._
 
 ## Done
 
+- [x] ⬜ **DOC-1** `P1` Add a LICENSE file to the repository
+      Without one nobody may legally use or contribute to the code. Pick a license (MIT and/or
+      Apache-2.0 are the Rust norm), check compatibility with the vendored engines (llama.cpp,
+      sd.cpp, ONNX Runtime, espeak-ng is GPL-3.0) and the model licenses, add `LICENSE`, set
+      `license` in the workspace `Cargo.toml` and mention it in the README.
+      Shipped: source stays `MIT OR Apache-2.0` (already the workspace `license`), `LICENSE-MIT`,
+      `LICENSE-APACHE`, `THIRD-PARTY-NOTICES.md` (engines, crates, models; binaries are
+      GPL-3.0-or-later as a whole because espeak-ng is linked statically), README "License"
+      section, `license` in `frontend/package.json`.
 - [x] 🟪 **API-1** `P1` HTTPS and API-key authentication for the HTTP server
       Today the server binds loopback only and has no authentication (the README tells people to
       put a proxy in front). Add both natively so `server.host = "0.0.0.0"` is safe on its own:
