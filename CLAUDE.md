@@ -44,6 +44,12 @@ cd backend && cargo test -- --ignored                                     # GPU 
 # CPU-only build (no CUDA toolkit, what CI did)
 cd backend && cargo build --workspace --no-default-features
 
+# Apple Silicon (Metal); ./run.sh build does this automatically on Darwin/arm64
+cd backend && cargo build --release -p hypnos-server --no-default-features --features metal
+
+# Model files (~31 GB, listed in backend/models.manifest) into backend/models/
+./run.sh models [model-id]             # run.bat models on Windows
+
 # Lint (scope to workspace crates; --all would format the vendored bindings)
 cd backend && cargo fmt -p hypnos-core -p hypnos-memory -p hypnos-scheduler -p hypnos-backends -p hypnos-server -- --check
 cd backend && cargo clippy -p hypnos-core -p hypnos-memory -p hypnos-scheduler --all-targets -- -D warnings
@@ -73,8 +79,11 @@ hypnos-backends  engines implementing ModelBackend: llama.rs, diffusion.rs, koko
 hypnos-server    axum router, SSE streaming, metrics, built-in default profile, `hypnos` binary
 ```
 
-Only `hypnos-backends` has a feature (`cuda`, default on). `hypnos-core`, `-memory`, `-scheduler`
-never link an engine, which is why their tests run anywhere and clippy is enforced only on them.
+`hypnos-backends` has the GPU features `cuda` and `metal`; `hypnos-server` forwards both and turns
+`cuda` on by default (the workspace dependency on `hypnos-backends` has default features off). On a
+Mac always build with `--no-default-features --features metal`. `hypnos-core`, `-memory`,
+`-scheduler` never link an engine, which is why their tests run anywhere and clippy is enforced only
+on them.
 
 ### Request lifecycle
 
@@ -104,6 +113,16 @@ scheduler applies it, the backend materialises it. Models carry a priority (`Rea
 `High`, `Low`) and an `initial_tier` that drive startup pre-staging (`initialize_startup_tiers`)
 and eviction order. `POST /v1/memory/tier` moves a model manually and is refused while it is leased.
 
+### Apple Silicon
+
+`docs/apple-silicon.md` is the design and status record. On unified memory Tier 1 and Tier 2 share
+one physical pool: Tier 1 is Metal's working set (adopted from the device once llama.cpp starts),
+Tier 2 is what RAM leaves after it and a 4 GiB OS reserve, and placement is all-or-nothing (no
+partial GPU splits). `backend/hypnos.macos.example.toml` is the macOS profile. `[hardware]` also
+offers `simulate_physical_memory_bytes` (derive budgets as on a smaller machine) and
+`max_process_memory_bytes` (soft cap checked before each load; evictions are listed with their
+reason in `/v1/memory/status`).
+
 ### Configuration
 
 `HypnosConfig` (`hypnos-core/src/config.rs`): `[server]`, `[limits]`, `[hardware]`, `[[models]]` with
@@ -120,8 +139,10 @@ keep that profile in sync with `hypnos.example.toml` when adding models or field
 - `diffusion.rs`: `ggml_diffusion` (stable-diffusion.cpp, MOSS-Image). sd.cpp is built as a
   **shared** library so its ggml does not clash with llama.cpp's; the vendored build script copies
   the DLL/.so next to the binary.
-- `kokoro.rs`: `onnx_runtime` TTS on CPU with espeak-ng G2P. Must use the fp16 ONNX graph; the
-  quantized exports crash ORT session creation on Windows. The crate's `build.rs` copies
+- `kokoro.rs`: `onnx_runtime` TTS on CPU (`AutoDevicePolicy::PreferCPU`) with espeak-ng G2P. Use the
+  fp16 ONNX graph on Windows/Linux (the quantized exports crash ORT session creation on Windows) and
+  the fp32 `model.onnx` on Apple Silicon, where fp16 overflows to an all-NaN (silent) waveform for
+  some inputs; a non-finite waveform is returned as an error. The crate's `build.rs` copies
   `espeak-ng-data` next to the binary.
 
 ### Vendored engines (`backend/vendor/`)

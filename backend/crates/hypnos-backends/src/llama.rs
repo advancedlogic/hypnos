@@ -90,8 +90,15 @@ pub(crate) fn load_model(
         )));
     }
     let started = Instant::now();
+    // llama.cpp counts the output layer as layer n_layer + 1: a full placement must ask for more
+    // than `num_layers`, or the vocabulary projection stays on the CPU while the plan books it on GPU.
+    let n_gpu_layers = if gpu_layers >= cfg.arch.num_layers {
+        u32::MAX
+    } else {
+        gpu_layers
+    };
     let params = LlamaModelParams::default()
-        .with_n_gpu_layers(gpu_layers)
+        .with_n_gpu_layers(n_gpu_layers)
         .with_use_mmap(true);
     let model = LlamaModel::load_from_file(backend, &cfg.weights_path, &params).map_err(|e| {
         HypnosError::BackendError(format!(

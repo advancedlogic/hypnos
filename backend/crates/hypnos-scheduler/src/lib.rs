@@ -11,7 +11,7 @@ use hypnos_core::kv_cache::{KvCacheEstimator, LayerPlacementPlan};
 use hypnos_core::openai::{EngineTiming, ExecutionTelemetry};
 use hypnos_core::request::RequestContext;
 use hypnos_core::ModelBackend;
-use hypnos_memory::{MemoryHierarchyStatus, TieredMemoryManager};
+use hypnos_memory::{EvictionReason, MemoryHierarchyStatus, TieredMemoryManager};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -293,30 +293,31 @@ impl ModelScheduler {
         // Ground the budget view in the device's real free memory before planning.
         self.memory.reconcile_vram();
 
-        // Available VRAM includes whatever VRAM `model_id` is ALREADY holding.
-        let mut avail_vram = self
-            .memory
-            .effective_free_vram_bytes()
-            .saturating_add(current_plan.total_vram_bytes());
-        let mut avail_ram = self
-            .memory
-            .free_pinned_ram_bytes()
-            .saturating_add(current_plan.pinned_ram_bytes);
+        let (mut avail_vram, mut avail_ram) = self.available_for(&current_plan);
 
         let mut target_plan =
             plan_placement(&cfg, needed_ctx, batch_size, avail_vram, avail_ram, is_uma);
 
-        // Evict idle lower-priority models from Tier 1 while the model does not fit, or only fits
-        // with a partial GPU split.
+        // `Some((growth, headroom))` when loading `plan` would push this process past
+        // `hardware.max_process_memory_bytes` (measured footprint, not bookings).
+        let over_process_cap = |plan: &LayerPlacementPlan| -> Option<(u64, u64)> {
+            let headroom = self.memory.process_memory_headroom()?;
+            let growth = self.memory.process_growth_bytes(&current_plan, plan);
+            (growth > headroom).then_some((growth, headroom))
+        };
+
+        // Evict idle lower-priority models from Tier 1 while the model does not fit, only fits
+        // with a partial GPU split, or would cross the process memory cap.
         let candidates = self.memory.idle_vram_eviction_candidates(model_id);
         for candidate_id in candidates {
-            let needs_eviction = match &target_plan {
-                None => true,
-                Some(plan) => plan.gpu_layers < cfg.arch.num_layers,
+            let reason = match &target_plan {
+                None => EvictionReason::MemoryBudget,
+                Some(plan) if plan.gpu_layers < cfg.arch.num_layers => {
+                    EvictionReason::FullGpuPlacement
+                }
+                Some(plan) if over_process_cap(plan).is_some() => EvictionReason::ProcessMemoryCap,
+                Some(_) => break,
             };
-            if !needs_eviction {
-                break;
-            }
 
             let (cand_cfg, _) = self.memory.get_model_state(&candidate_id)?;
             let target_demote_tier = if cand_cfg.keep_warm_in_ram {
@@ -329,6 +330,7 @@ impl ModelScheduler {
                 evicting = %candidate_id,
                 for_model = %model_id,
                 to_tier = ?target_demote_tier,
+                reason = ?reason,
                 "Evicting idle model from Tier 1 VRAM to free space"
             );
 
@@ -339,17 +341,13 @@ impl ModelScheduler {
                 cand_backend.apply_placement(&demoted_plan, None).await?;
             }
             self.stats.evictions.fetch_add(1, Ordering::Relaxed);
+            // The demotion falls back to Tier 3 when Tier 2 has no room: record where it landed.
+            self.memory
+                .record_eviction(&candidate_id, model_id, reason, demoted_plan.primary_tier);
             evicted_models.push(candidate_id);
 
             self.memory.reconcile_vram();
-            avail_vram = self
-                .memory
-                .effective_free_vram_bytes()
-                .saturating_add(current_plan.total_vram_bytes());
-            avail_ram = self
-                .memory
-                .free_pinned_ram_bytes()
-                .saturating_add(current_plan.pinned_ram_bytes);
+            (avail_vram, avail_ram) = self.available_for(&current_plan);
 
             target_plan =
                 plan_placement(&cfg, needed_ctx, batch_size, avail_vram, avail_ram, is_uma);
@@ -369,6 +367,22 @@ impl ModelScheduler {
                 available_bytes: avail_vram,
             }
         })?;
+
+        if let Some((growth, headroom)) = over_process_cap(&final_plan) {
+            warn!(
+                model = %model_id,
+                needed_mb = growth / (1024 * 1024),
+                headroom_mb = headroom / (1024 * 1024),
+                footprint_mb = self.memory.process_footprint_bytes().unwrap_or(0) / (1024 * 1024),
+                "Loading would cross max_process_memory_bytes even after evicting idle models"
+            );
+            return Err(HypnosError::ProcessMemoryCap {
+                model: model_id.to_string(),
+                required_bytes: growth,
+                available_bytes: headroom,
+                cap_bytes: self.memory.process_memory_cap_bytes(),
+            });
+        }
 
         if !ctx.should_continue() {
             return Err(HypnosError::Cancelled);
@@ -424,6 +438,29 @@ impl ModelScheduler {
             evicted_models,
             _admission: admission,
         })
+    }
+
+    /// `(vram, pinned_ram)` a new placement for a model currently at `current` may use, counting what
+    /// that model already holds.
+    fn available_for(&self, current: &LayerPlacementPlan) -> (u64, u64) {
+        let mut vram = self
+            .memory
+            .effective_free_vram_bytes()
+            .saturating_add(current.total_vram_bytes());
+        let ram = self
+            .memory
+            .free_pinned_ram_bytes()
+            .saturating_add(current.pinned_ram_bytes);
+        if let Some(pool_free) = self.memory.physical_pool_free_bytes() {
+            // Unified memory: Tier 1 and Tier 2 are the same RAM, so the model's Tier 2 pages are
+            // released when it becomes resident, and other models' Tier 2 bookings limit Tier 1.
+            vram = vram.min(
+                pool_free
+                    .saturating_add(current.total_vram_bytes())
+                    .saturating_add(current.pinned_ram_bytes),
+            );
+        }
+        (vram, ram)
     }
 
     /// Manually promotes or demotes a model to a specific tier (`/v1/memory/tier`).

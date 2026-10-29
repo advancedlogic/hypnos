@@ -8,6 +8,13 @@ use std::path::{Path, PathBuf};
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
+    // macOS: dyld does not search the executable's directory, and libstable-diffusion.dylib is
+    // installed as @rpath/... and copied next to the test binaries (target/<profile>/deps).
+    // Link args only apply to this package's own targets; hypnos-server emits the same for its binary.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
+    }
+
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
     // OUT_DIR = <target>/<profile>/build/hypnos-backends-<hash>/out
     let profile_dir = match out_dir.ancestors().nth(3) {

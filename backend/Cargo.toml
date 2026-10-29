@@ -44,7 +44,9 @@ base64 = "0.22"
 # --- Native inference engines (all linked in-process, no external runtime) ---
 # llama.cpp + libmtmd (Gemma 4 text/vision/audio, EmbeddingGemma 2). The vendored copy under
 # `vendor/llama-cpp-rs` carries llama.cpp b11982 so the `gemma-embedding2` architecture is supported.
-llama-cpp-2 = { path = "vendor/llama-cpp-rs/llama-cpp-2", features = ["mtmd"] }
+# Default features are off so OpenMP is only requested by the `cuda` feature of hypnos-backends:
+# Apple clang ships no OpenMP runtime, and ggml falls back to its own thread pool without it.
+llama-cpp-2 = { path = "vendor/llama-cpp-rs/llama-cpp-2", default-features = false, features = ["common", "mtmd"] }
 # stable-diffusion.cpp (MOSS-Image). Vendored copy carries sd.cpp master-1024 with MOSS-Image support.
 diffusion-rs-sys = { path = "vendor/diffusion-rs/sys" }
 # ONNX Runtime (Kokoro-82M TTS) and espeak-ng (grapheme-to-phoneme), both statically built.
@@ -59,7 +61,8 @@ rand = "0.8"
 hypnos-core = { path = "crates/hypnos-core" }
 hypnos-memory = { path = "crates/hypnos-memory" }
 hypnos-scheduler = { path = "crates/hypnos-scheduler" }
-hypnos-backends = { path = "crates/hypnos-backends" }
+# GPU backend chosen by hypnos-server's `cuda` (default) / `metal` features.
+hypnos-backends = { path = "crates/hypnos-backends", default-features = false }
 
 [patch.crates-io]
 # Local copy of espeak-rs-sys 0.2.0 with the debug-CRT (`msvcrtd`) link directive removed; see

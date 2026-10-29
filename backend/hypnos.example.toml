@@ -49,6 +49,12 @@ vram_budget_bytes = 0
 vram_safety_margin_bytes = 1073741824   # 1 GiB left for the driver / display
 pinned_ram_budget_bytes = 34359738368   # 32 GiB Tier-2 Pinned Host RAM pool
 lock_host_memory = true                 # VirtualLock (Windows) / mlock (Linux/macOS)
+# Pretend this machine has less RAM, to try out a smaller configuration: every budget is derived
+# as on that machine (on a Mac including the GPU working set). 0 = the real amount.
+# simulate_physical_memory_bytes = 34359738368   # e.g. a 32 GB machine
+# Soft cap on what the hypnos process itself may hold (0 = none). Before each model load idle
+# models are evicted, or the request fails with HTTP 507, rather than crossing it.
+# max_process_memory_bytes = 21474836480         # e.g. 20 GiB
 
 # -----------------------------------------------------------------------------
 # 1. Gemma 4 26B-A4B (MoE, Q4_0) — Text Generation + Vision (/v1/chat/completions)

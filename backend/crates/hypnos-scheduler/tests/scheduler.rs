@@ -11,7 +11,7 @@ use hypnos_core::error::{HypnosError, Result};
 use hypnos_core::kv_cache::LayerPlacementPlan;
 use hypnos_core::request::RequestContext;
 use hypnos_core::ModelBackend;
-use hypnos_memory::TieredMemoryManager;
+use hypnos_memory::{EvictionReason, TieredMemoryManager};
 use hypnos_scheduler::ModelScheduler;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -112,7 +112,9 @@ fn hardware(vram_gb: u64) -> HardwareConfig {
         vram_budget_bytes: vram_gb * GB,
         vram_safety_margin_bytes: 256 * 1024 * 1024,
         pinned_ram_budget_bytes: 64 * GB,
-        lock_host_memory: false,
+        lock_host_memory: Some(false),
+        simulate_physical_memory_bytes: 0,
+        max_process_memory_bytes: 0,
     }
 }
 
@@ -188,6 +190,15 @@ async fn evicts_lowest_priority_idle_model_first() {
         mocks[0].tiers().last().copied(),
         Some(MemoryTier::Tier2PinnedRam)
     );
+
+    // The eviction is listed in /v1/memory/status with the model it made room for and why.
+    let events = sched.status().recent_evictions;
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].model, "low");
+    assert_eq!(events[0].for_model, "big");
+    assert_eq!(events[0].to_tier, MemoryTier::Tier2PinnedRam);
+    // "big" would fit with a partial GPU split; the eviction buys it a full one.
+    assert_eq!(events[0].reason, EvictionReason::FullGpuPlacement);
 }
 
 #[tokio::test]

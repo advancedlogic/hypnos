@@ -50,6 +50,11 @@ sidecar is involved.
 
 ### Model files
 
+`./run.sh models` (Linux / macOS) or `run.bat models` (Windows) downloads everything below into
+`backend/models/` with `curl`, about 31 GB. Files already present are skipped, an interrupted download
+resumes on the next run, and `./run.sh models moss-image` fetches a single model. The file list lives
+in [backend/models.manifest](backend/models.manifest); on Apple Silicon it picks the fp32 Kokoro graph.
+
 Download sources (all public Hugging Face repositories):
 
 | File | Source |
@@ -57,7 +62,7 @@ Download sources (all public Hugging Face repositories):
 | `gemma-4-26B-A4B-it-Q4_0.gguf`, `mmproj-gemma-4-26B-A4B-it-BF16.gguf` | `ggml-org/gemma-4-26B-A4B-it-GGUF` |
 | `gemma-4-E4B-it-Q4_0.gguf`, `mmproj-gemma-4-E4B-it-BF16.gguf` | `ggml-org/gemma-4-E4B-it-GGUF` |
 | `embeddinggemma-2-Q8_0.gguf` | `ggml-org/embeddinggemma-2-GGUF` |
-| `kokoro/model_fp16.onnx`, `kokoro/voices/*.bin` | `onnx-community/Kokoro-82M-v1.0-ONNX` (`onnx/` and `voices/` folders) |
+| `kokoro/model_fp16.onnx` (macOS: `kokoro/model.onnx`), `kokoro/voices/*.bin` | `onnx-community/Kokoro-82M-v1.0-ONNX` (`onnx/` and `voices/` folders) |
 | `MOSS-Image-SFT-Q4_K.gguf` | `leejet/MOSS-Image-SFT-GGUF` |
 | `Qwen3.5-9B-Q4_K_M.gguf` | `unsloth/Qwen3.5-9B-GGUF` |
 | `flux2-vae.safetensors` | `Comfy-Org/MOSS-Image` (`vae/`) |
@@ -66,6 +71,8 @@ Download sources (all public Hugging Face repositories):
 Notes:
 - Kokoro's quantized exports (`model_q8f16.onnx`, `model_q4.onnx`) crash the statically linked
   ONNX Runtime CPU provider at session creation on Windows; use the fp16 graph.
+- On Apple Silicon use the fp32 graph (`onnx/model.onnx`): the fp16 one overflows to a silent
+  (all-NaN) waveform for some voice/text pairs there. Hypnos now rejects such output with an error.
 - `kv_dtype = "q8_0"` and the sliding-window KV cache keep the Gemma 4 context budgets small; all
   budgets live in `backend/hypnos.example.toml`.
 
@@ -82,6 +89,50 @@ Notes:
   library (`stable-diffusion.dll`) so its ggml does not collide with llama.cpp's.
 - First build compiles all engines (10–20 minutes). `backend/scripts/smoke_test.sh` exercises every
   endpoint against a running server.
+
+### macOS (Apple Silicon)
+
+M1 or later, macOS 14+. llama.cpp and stable-diffusion.cpp run on the GPU through Metal; there is
+no CUDA and no Python involved. Design notes and open items: [docs/apple-silicon.md](docs/apple-silicon.md).
+
+```bash
+xcode-select --install          # clang, Metal compiler, frameworks
+brew install cmake ninja
+./backend/scripts/vendor.sh
+./run.sh models                 # ~31 GB of model files into backend/models/
+./run.sh build backend          # = cargo build --release -p hypnos-server --no-default-features --features metal
+./run.sh start backend          # uses backend/hypnos.macos.example.toml
+```
+
+- A plain `cargo build` selects the default `cuda` feature and fails on a Mac; always pass
+  `--no-default-features --features metal` (`run.sh` does this on Darwin/arm64).
+- CPU and GPU share one pool of RAM. Tier 1 is the Metal working set (about 2/3 to 3/4 of RAM),
+  Tier 2 is limited to what Tier 1 leaves free, and models are placed fully on the GPU or not at
+  all. `sudo sysctl iogpu.wired_limit_mb=<MiB>` raises the GPU ceiling until the next reboot.
+- What fits at once: 16 GB, `gemma4:e4b-q4` plus the small models; 32 GB, one of `gemma4:26b-q4`
+  or `moss-image` plus the small models; 48 GB, both Gemma 4 models; 64 GB and up, the whole lineup.
+- For manual debugging, use `brew install llama.cpp` instead of the Windows binaries in `backend/tools/`.
+
+### Limiting memory and simulating smaller machines
+
+All in `[hardware]` (bytes; 0 = off / auto):
+
+| Setting | Effect |
+| :--- | :--- |
+| `vram_budget_bytes` | Cap on Tier 1 (GPU memory). Clamped to what the device reports, so it can only lower the budget. |
+| `pinned_ram_budget_bytes` | Cap on Tier 2 (warm host RAM). Clamped to physical RAM minus a 4 GiB reserve. |
+| `simulate_physical_memory_bytes` | Behave like a machine with this much RAM (never more than installed): Tier 1 and Tier 2 are derived as there. On a Mac this includes Metal's GPU share, estimated at 2/3 of RAM up to 36 GB and 3/4 above. |
+| `max_process_memory_bytes` | Soft cap on memory the `hypnos` process holds, measured from the OS before every model load. Idle models are evicted to stay under it; if that is not enough the request fails with HTTP 507 (`process_memory_cap`). |
+
+The budgets steer the scheduler, they are not OS-enforced: memory an engine allocates beyond its
+estimate is caught only by `max_process_memory_bytes`, and only at the next load. On macOS the process
+figure is the `phys_footprint` plus the model weights llama.cpp maps into Metal (file-backed, so the
+footprint leaves them out); on Linux the resident set; on Windows the working set. GPU memory on a
+discrete card is limited by `vram_budget_bytes` only. `/v1/memory/status` reports
+`process_memory_bytes` next to the budgets, and `recent_evictions` lists the scheduler's last automatic
+evictions with their reason (`memory_budget`, `full_gpu_placement`, `process_memory_cap`). The
+playground's memory panel shows the process bar, a "Simulated" tag and those evictions. Disk space is only consumed by `models` downloads, which
+check free space first.
 
 ---
 
@@ -108,6 +159,7 @@ run.bat [build|start|stop|restart|status]      [backend|frontend|all]
 | `... stop`                  | stop both (kills the whole process tree, frees the ports)     |
 | `... status`                | show what is running, on which PID, and whether the backend is built |
 | `./run.sh logs [target]`    | follow `.run/backend.log` / `.run/frontend.log`               |
+| `... models [model id]`     | download the model files into `backend/models/` (all, or one model) |
 
 `restart` does not rebuild: run `build` after changing Rust code, then `restart backend`.
 `HYPNOS_PROFILE=debug` makes `build`/`start` use the dev profile (`backend/target/debug/`) instead.

@@ -113,6 +113,42 @@
     Math.min(100, (pinnedRamUsedBytes / pinnedRamTotalBytes) * 100)
   );
 
+  // Unified memory (Apple Silicon): Tier 1 and Tier 2 are one pool of physical RAM.
+  let isUnifiedMemory = $derived(
+    memoryStatus?.capabilities?.topology === 'unified_memory' &&
+      (memoryStatus?.capabilities?.physical_memory_bytes || 0) > 0
+  );
+  let umaPhysicalBytes = $derived(memoryStatus?.capabilities?.physical_memory_bytes || 1);
+  let umaResidentPct = $derived(Math.min(100, (vramUsedBytes / umaPhysicalBytes) * 100));
+  let umaWarmPct = $derived(
+    Math.min(100 - umaResidentPct, (pinnedRamUsedBytes / umaPhysicalBytes) * 100)
+  );
+  let umaGpuLimitPct = $derived(Math.min(100, (vramTotalBytes / umaPhysicalBytes) * 100));
+
+  // hardware.simulate_physical_memory_bytes: budgets come from a pretend, smaller machine.
+  let isSimulated = $derived(memoryStatus?.capabilities?.simulated === true);
+
+  // hardware.max_process_memory_bytes: memory the hypnos process holds vs. its cap.
+  let processUsedBytes = $derived(memoryStatus?.process_memory_bytes ?? null);
+  let processCapBytes = $derived(memoryStatus?.process_memory_cap_bytes ?? null);
+  let processPct = $derived(
+    processCapBytes ? Math.min(100, ((processUsedBytes || 0) / processCapBytes) * 100) : 0
+  );
+  let recentEvictions = $derived((memoryStatus?.recent_evictions || []).slice(0, 5));
+
+  const EVICTION_REASONS = {
+    memory_budget: 'did not fit in the memory budget',
+    full_gpu_placement: 'to fit all layers on the GPU',
+    process_memory_cap: 'process memory cap',
+  };
+
+  function timeAgo(unixMs) {
+    const secs = Math.max(0, Math.round((Date.now() - unixMs) / 1000));
+    if (secs < 60) return `${secs}s ago`;
+    if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+    return `${Math.round(secs / 3600)}h ago`;
+  }
+
   let cosineMatrix = $derived.by(() => {
     if (!embedResult?.data || embedResult.data.length < 2) return [];
     const vecs = embedResult.data.map((d) => d.embedding);
@@ -152,8 +188,8 @@
   }
 
   function tierLabel(tier) {
-    if (tier === 'tier1_gpu_vram') return 'Tier 1 • GPU VRAM';
-    if (tier === 'tier2_pinned_ram') return 'Tier 2 • Pinned RAM';
+    if (tier === 'tier1_gpu_vram') return isUnifiedMemory ? 'Tier 1 • GPU resident' : 'Tier 1 • GPU VRAM';
+    if (tier === 'tier2_pinned_ram') return isUnifiedMemory ? 'Tier 2 • Warm (page cache)' : 'Tier 2 • Pinned RAM';
     return 'Tier 3 • NVMe SSD';
   }
 
@@ -763,14 +799,54 @@
       <!-- Tier 1 & Tier 2 Real-Time Capacity Gauges -->
       <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-4 space-y-4">
         <div class="flex items-center justify-between">
-          <h2 class="text-sm font-semibold text-slate-200">Hardware Memory Pools</h2>
-          {#if memoryStatus}
+          <h2 class="text-sm font-semibold text-slate-200 flex items-center gap-2">
+            Hardware Memory Pools
+            {#if isSimulated}
+              <span
+                class="text-[10px] font-medium px-1.5 py-0.5 rounded bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/40"
+                title="hardware.simulate_physical_memory_bytes: budgets are derived as on this smaller machine"
+              >
+                Simulated {formatBytes(memoryStatus.capabilities.physical_memory_bytes)} machine
+                {#if memoryStatus.capabilities.installed_memory_bytes}
+                  ({formatBytes(memoryStatus.capabilities.installed_memory_bytes)} installed)
+                {/if}
+              </span>
+            {/if}
+          </h2>
+          {#if memoryStatus && !isUnifiedMemory}
             <span class="text-xs text-slate-400">
               DMA Speed: ~{memoryStatus.capabilities.tier2_to_tier1_bandwidth_gbps} GB/s
             </span>
           {/if}
         </div>
 
+        {#if isUnifiedMemory}
+        <!-- Unified memory: one physical pool; the marker is the GPU working-set limit -->
+        <div class="space-y-1.5">
+          <div class="flex justify-between text-xs">
+            <span class="font-medium text-slate-200">Unified Memory (CPU + GPU share one pool)</span>
+            <span class="text-slate-300 font-mono">
+              {formatBytes(vramUsedBytes + pinnedRamUsedBytes)} / {formatBytes(umaPhysicalBytes)}
+            </span>
+          </div>
+          <div class="relative w-full h-3 rounded-full bg-slate-950 overflow-hidden border border-slate-800 flex">
+            <div
+              class="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300"
+              style="width: {umaResidentPct}%"
+            ></div>
+            <div
+              class="h-full bg-gradient-to-r from-amber-500 to-orange-400 transition-all duration-300"
+              style="width: {umaWarmPct}%"
+            ></div>
+            <div class="absolute top-0 h-full w-0.5 bg-slate-300/70" style="left: {umaGpuLimitPct}%"></div>
+          </div>
+          <div class="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400">
+            <span><span class="text-emerald-300">■</span> GPU resident {formatBytes(vramUsedBytes)} / {formatBytes(vramTotalBytes)}</span>
+            <span><span class="text-amber-300">■</span> Warm {formatBytes(pinnedRamUsedBytes)} / {formatBytes(pinnedRamTotalBytes)}</span>
+            <span>│ GPU working-set limit</span>
+          </div>
+        </div>
+        {:else}
         <!-- Tier 1 GPU VRAM Bar -->
         <div class="space-y-1.5">
           <div class="flex justify-between text-xs">
@@ -802,6 +878,57 @@
             ></div>
           </div>
         </div>
+        {/if}
+
+        <!-- hypnos process memory (hardware.max_process_memory_bytes) -->
+        {#if processUsedBytes !== null}
+          {#if processCapBytes}
+            <div class="space-y-1.5">
+              <div class="flex justify-between text-xs">
+                <span class="font-medium text-sky-300">Hypnos Process (cap)</span>
+                <span class="text-slate-300 font-mono">
+                  {formatBytes(processUsedBytes)} / {formatBytes(processCapBytes)} ({processPct.toFixed(1)}%)
+                </span>
+              </div>
+              <div class="w-full h-3 rounded-full bg-slate-950 overflow-hidden border border-slate-800">
+                <div
+                  class="h-full transition-all duration-300 {processPct > 95 ? 'bg-rose-500' : processPct > 80 ? 'bg-amber-400' : 'bg-gradient-to-r from-sky-500 to-cyan-400'}"
+                  style="width: {processPct}%"
+                ></div>
+              </div>
+              <p class="text-[11px] text-slate-400">
+                Loads that would cross the cap evict idle models first, or fail with HTTP 507.
+              </p>
+            </div>
+          {:else}
+            <p class="text-xs text-slate-400">
+              Hypnos process: <span class="font-mono text-slate-300">{formatBytes(processUsedBytes)}</span>
+              <span class="text-slate-500">(no cap; set hardware.max_process_memory_bytes)</span>
+            </p>
+          {/if}
+        {/if}
+
+        <!-- Automatic evictions, newest first -->
+        {#if recentEvictions.length > 0}
+          <div class="space-y-1 pt-1 border-t border-slate-800">
+            <h3 class="text-xs font-medium text-slate-300 pt-2">Recent evictions</h3>
+            <ul class="space-y-1">
+              {#each recentEvictions as ev (ev.unix_ms + ev.model)}
+                <li class="text-[11px] text-slate-400 flex justify-between gap-2">
+                  <span>
+                    <span class="text-slate-200 font-medium">{ev.model}</span>
+                    → {tierLabel(ev.to_tier)} for
+                    <span class="text-slate-200">{ev.for_model}</span>:
+                    <span class={ev.reason === 'process_memory_cap' ? 'text-sky-300' : 'text-amber-300'}>
+                      {EVICTION_REASONS[ev.reason] || ev.reason}
+                    </span>
+                  </span>
+                  <span class="text-slate-500 shrink-0">{timeAgo(ev.unix_ms)}</span>
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
       </div>
 
       <!-- 5-Model Residency Cards -->

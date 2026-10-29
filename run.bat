@@ -6,6 +6,7 @@ REM ============================================================================
 REM  Hypnos process manager (Windows)
 REM
 REM    run.bat [build|start|stop|restart|status] [backend|frontend|all]
+REM    run.bat models [all|<model id>]   download model files into backend\models\
 REM
 REM    run.bat build            -> compile the backend (cargo build --release) + npm install
 REM    run.bat                  -> start all (never compiles)
@@ -59,6 +60,7 @@ if "%TARGET%"=="" set "TARGET=all"
 if /i "%ACTION%"=="help" goto :usage
 if /i "%ACTION%"=="-h" goto :usage
 if /i "%ACTION%"=="--help" goto :usage
+if /i "%ACTION%"=="models" goto :do_models
 
 if /i not "%TARGET%"=="all" if /i not "%TARGET%"=="backend" if /i not "%TARGET%"=="frontend" (
     echo [Hypnos] Unknown target "%TARGET%".
@@ -74,6 +76,12 @@ echo [Hypnos] Unknown action "%ACTION%".
 goto :usage
 
 REM ----------------------------------------------------------------------------
+:do_models
+REM backend\models.manifest lists the files; existing ones are kept, interrupted ones resume.
+"%SYS32%\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\backend\scripts\fetch-models.ps1" %TARGET%
+set "RC=%ERRORLEVEL%"
+goto :end_rc
+
 :do_build
 set "RC=0"
 if /i not "%TARGET%"=="frontend" call :build_backend
@@ -340,6 +348,7 @@ echo     run.bat start backend      start only the Rust backend binary ^(port %B
 echo     run.bat restart frontend   restart only the Vite dev server ^(port %FRONTEND_PORT%^)
 echo     run.bat stop               stop both
 echo     run.bat status             show what is running and whether the backend is built
+echo     run.bat models [model id]  download the model files ^(about 31 GB for all^) into backend\models\
 echo.
 echo   start/restart never compile; run `run.bat build` after changing Rust code.
 echo   HYPNOS_PROFILE=debug selects the dev profile ^(backend\target\debug\hypnos.exe^).

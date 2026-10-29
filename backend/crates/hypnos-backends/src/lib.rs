@@ -84,11 +84,34 @@ impl BackendContextState {
 }
 
 /// Number of CPU threads handed to the native engines (capped; GPU-resident models need few).
+/// On Apple Silicon only the performance cores count: llama.cpp slows down when work is spread
+/// onto efficiency cores.
 pub(crate) fn default_threads() -> i32 {
-    std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        .clamp(1, 16) as i32
+    static THREADS: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+    *THREADS.get_or_init(|| {
+        apple_performance_cores()
+            .or_else(|| std::thread::available_parallelism().map(|n| n.get()).ok())
+            .unwrap_or(4)
+            .clamp(1, 16) as i32
+    })
+}
+
+fn apple_performance_cores() -> Option<usize> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let out = std::process::Command::new("sysctl")
+        .args(["-n", "hw.perflevel0.logicalcpu"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .ok()
+        .filter(|&n| n > 0)
 }
 
 /// Server-wide settings the engines need beyond their own [`ModelConfig`].

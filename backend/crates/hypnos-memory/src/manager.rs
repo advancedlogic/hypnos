@@ -1,4 +1,4 @@
-use crate::hardware::DeviceMemoryCapabilities;
+use crate::hardware::{DeviceMemoryCapabilities, OS_RESERVE_BYTES};
 use crate::mmap_cache::MmapWeightBuffer;
 use hypnos_core::config::{HardwareConfig, MemoryTier, MemoryTopology, ModelConfig};
 use hypnos_core::error::{HypnosError, Result};
@@ -6,7 +6,7 @@ use hypnos_core::kv_cache::LayerPlacementPlan;
 use hypnos_core::GpuMemoryProbe;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -42,8 +42,51 @@ pub struct MemoryHierarchyStatus {
     pub tier1_vram_effective_free_bytes: u64,
     pub tier2_pinned_ram_used_bytes: u64,
     pub tier2_pinned_ram_free_bytes: u64,
+    /// Unified memory only: physical RAM not booked by either tier (Tier 1 and Tier 2 share it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub physical_pool_free_bytes: Option<u64>,
+    /// This process's memory footprint as the OS reports it (see `process.rs`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_footprint_bytes: Option<u64>,
+    /// Memory this process holds, as compared against the cap: the footprint plus, on macOS
+    /// unified memory, the model weights llama.cpp maps from disk into Metal buffers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_memory_bytes: Option<u64>,
+    /// `hardware.max_process_memory_bytes`, when set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_memory_cap_bytes: Option<u64>,
+    /// The scheduler's most recent automatic evictions, newest first.
+    #[serde(default)]
+    pub recent_evictions: Vec<EvictionEvent>,
     pub models: Vec<ModelTierSnapshot>,
 }
+
+/// Why the scheduler evicted an idle model from Tier 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvictionReason {
+    /// The requested model did not fit in the memory budgets at all.
+    MemoryBudget,
+    /// It fit only with some layers left off the GPU.
+    FullGpuPlacement,
+    /// Loading it would have crossed `hardware.max_process_memory_bytes`.
+    ProcessMemoryCap,
+}
+
+/// One automatic eviction, as listed in [`MemoryHierarchyStatus::recent_evictions`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvictionEvent {
+    pub model: String,
+    /// The model whose request needed the memory.
+    pub for_model: String,
+    pub reason: EvictionReason,
+    pub to_tier: MemoryTier,
+    /// Milliseconds since the Unix epoch.
+    pub unix_ms: u64,
+}
+
+/// How many eviction events `/v1/memory/status` keeps.
+const EVICTION_LOG_LEN: usize = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelTierSnapshot {
@@ -63,7 +106,18 @@ pub struct ModelTierSnapshot {
 /// Coordinates memory placement across Tier 1 (GPU VRAM / Wired UMA),
 /// Tier 2 (Pinned Host RAM / Warm UMA), and Tier 3 (NVMe SSD).
 pub struct TieredMemoryManager {
-    capabilities: DeviceMemoryCapabilities,
+    /// Updated once the engine's probe reports the device: on unified memory the GPU's own
+    /// working-set figure replaces the startup estimate, and a budget above the device is clamped.
+    capabilities: RwLock<DeviceMemoryCapabilities>,
+    /// `hardware.vram_budget_bytes` (0 = derive from the device).
+    configured_vram_budget_bytes: u64,
+    configured_pinned_ram_budget_bytes: u64,
+    /// `hardware.simulate_physical_memory_bytes` is set: keep the simulated budgets.
+    simulating: bool,
+    /// `hardware.max_process_memory_bytes` (0 = no cap).
+    max_process_memory_bytes: u64,
+    /// Newest first, at most `EVICTION_LOG_LEN`.
+    evictions: parking_lot::Mutex<VecDeque<EvictionEvent>>,
     lock_host_memory: bool,
     models: RwLock<HashMap<String, ManagedModelMemory>>,
     vram_used_bytes: AtomicU64,
@@ -79,7 +133,29 @@ pub struct TieredMemoryManager {
 impl TieredMemoryManager {
     pub fn new(hw_config: &HardwareConfig, model_configs: Vec<ModelConfig>) -> Result<Self> {
         let capabilities = DeviceMemoryCapabilities::detect(hw_config);
-        if hw_config.lock_host_memory {
+        let is_uma = capabilities.topology == MemoryTopology::UnifiedMemory;
+        let lock_host_memory = hw_config.lock_host_memory_for(capabilities.topology);
+        if is_uma {
+            if lock_host_memory {
+                warn!("lock_host_memory = true on unified memory: mlock and the Metal working set share one wired-memory limit");
+            }
+            if let Some(w) =
+                hw_config.unified_memory_oversubscription(capabilities.physical_memory_bytes)
+            {
+                warn!(config_warning = %w);
+            }
+        }
+        if hw_config.max_process_memory_bytes > 0 {
+            match crate::process::process_footprint_bytes() {
+                Some(now) => info!(
+                    cap_mb = hw_config.max_process_memory_bytes / (1024 * 1024),
+                    footprint_now_mb = now / (1024 * 1024),
+                    "Process memory cap active: model loads that would cross it evict or are refused"
+                ),
+                None => warn!("max_process_memory_bytes is set but this OS does not report the process footprint; the cap is not enforced"),
+            }
+        }
+        if lock_host_memory {
             crate::mmap_cache::raise_working_set_limit(
                 hw_config
                     .pinned_ram_budget_bytes
@@ -89,8 +165,11 @@ impl TieredMemoryManager {
         let mut models = HashMap::new();
 
         for mut cfg in model_configs {
-            let host_buffer =
-                MmapWeightBuffer::open_or_virtual(&cfg.weights_path, cfg.total_weight_bytes)?;
+            let host_buffer = MmapWeightBuffer::open_or_virtual(
+                &cfg.weights_path,
+                cfg.total_weight_bytes,
+                !is_uma,
+            )?;
             if cfg.total_weight_bytes == 0 {
                 cfg.total_weight_bytes = host_buffer.len_bytes().max(512 * 1024 * 1024);
             }
@@ -120,8 +199,13 @@ impl TieredMemoryManager {
         }
 
         Ok(Self {
-            capabilities,
-            lock_host_memory: hw_config.lock_host_memory,
+            capabilities: RwLock::new(capabilities),
+            configured_vram_budget_bytes: hw_config.vram_budget_bytes,
+            configured_pinned_ram_budget_bytes: hw_config.pinned_ram_budget_bytes,
+            simulating: hw_config.simulate_physical_memory_bytes > 0,
+            max_process_memory_bytes: hw_config.max_process_memory_bytes,
+            evictions: parking_lot::Mutex::new(VecDeque::with_capacity(EVICTION_LOG_LEN)),
+            lock_host_memory,
             models: RwLock::new(models),
             vram_used_bytes: AtomicU64::new(0),
             pinned_ram_used_bytes: AtomicU64::new(0),
@@ -133,18 +217,132 @@ impl TieredMemoryManager {
         })
     }
 
-    pub fn capabilities(&self) -> &DeviceMemoryCapabilities {
-        &self.capabilities
+    pub fn capabilities(&self) -> DeviceMemoryCapabilities {
+        self.capabilities.read().clone()
     }
 
     pub fn is_unified_memory(&self) -> bool {
-        self.capabilities.topology == MemoryTopology::UnifiedMemory
+        self.capabilities.read().topology == MemoryTopology::UnifiedMemory
     }
 
     /// Installs a live device-memory probe. Called by the server once an engine is available.
+    ///
+    /// On unified memory with an auto-detected budget (and no simulation), the device's total
+    /// (Metal's `recommendedMaxWorkingSetSize`) becomes the Tier 1 ceiling, replacing the estimate.
+    /// Otherwise a Tier 1 budget above what the device reports is clamped to it.
     pub fn set_gpu_probe(&self, probe: Arc<dyn GpuMemoryProbe>) {
         *self.gpu_probe.write() = Some(probe);
-        self.reconcile_vram();
+        let Some((_, device_total)) = self.reconcile_vram() else {
+            return;
+        };
+        if device_total == 0 {
+            return;
+        }
+        let mut caps = self.capabilities.write();
+        if caps.total_vram_bytes == device_total {
+            return;
+        }
+        let before_mb = caps.total_vram_bytes / (1024 * 1024);
+        let adopt = caps.topology == MemoryTopology::UnifiedMemory
+            && self.configured_vram_budget_bytes == 0
+            && !self.simulating;
+        if adopt {
+            caps.set_vram_total(device_total, self.configured_pinned_ram_budget_bytes);
+            info!(
+                estimated_mb = before_mb,
+                device_working_set_mb = device_total / (1024 * 1024),
+                usable_vram_mb = caps.usable_vram_budget_bytes / (1024 * 1024),
+                pinned_ram_mb = caps.pinned_ram_budget_bytes / (1024 * 1024),
+                "Unified memory: Tier 1 budget set from the GPU's recommended working set"
+            );
+        } else if caps.total_vram_bytes > device_total {
+            caps.set_vram_total(device_total, self.configured_pinned_ram_budget_bytes);
+            warn!(
+                budget_mb = before_mb,
+                device_mb = device_total / (1024 * 1024),
+                "Tier 1 budget exceeds the memory the GPU reports; clamped"
+            );
+        }
+    }
+
+    /// This process's memory footprint as the OS reports it
+    /// (see [`crate::process::process_footprint_bytes`]).
+    pub fn process_footprint_bytes(&self) -> Option<u64> {
+        crate::process::process_footprint_bytes()
+    }
+
+    /// Memory this process holds. On macOS with unified memory, llama.cpp maps model weights from
+    /// disk straight into Metal buffers: those pages are file-backed, so `phys_footprint` leaves
+    /// them out, yet they cannot be reclaimed while the model is resident. Their size is the
+    /// booked weight bytes of the resident llama models (buffers Metal allocates itself, such as
+    /// stable-diffusion.cpp's, are already part of the footprint).
+    pub fn process_memory_bytes(&self) -> Option<u64> {
+        let footprint = self.process_footprint_bytes()?;
+        if !(cfg!(target_os = "macos") && self.is_unified_memory()) {
+            return Some(footprint);
+        }
+        let mapped_weights: u64 = self
+            .models
+            .read()
+            .values()
+            .filter(|m| {
+                m.config.engine == hypnos_core::config::EngineKind::GgmlLlama
+                    && m.placement.primary_tier == MemoryTier::Tier1GpuVram
+            })
+            .map(|m| m.placement.vram_weight_bytes)
+            .sum();
+        Some(footprint.saturating_add(mapped_weights))
+    }
+
+    /// Records an automatic eviction for `/v1/memory/status`.
+    pub fn record_eviction(
+        &self,
+        model: &str,
+        for_model: &str,
+        reason: EvictionReason,
+        to_tier: MemoryTier,
+    ) {
+        let unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let mut log = self.evictions.lock();
+        log.push_front(EvictionEvent {
+            model: model.to_string(),
+            for_model: for_model.to_string(),
+            reason,
+            to_tier,
+            unix_ms,
+        });
+        log.truncate(EVICTION_LOG_LEN);
+    }
+
+    /// `hardware.max_process_memory_bytes` (0 = no cap).
+    pub fn process_memory_cap_bytes(&self) -> u64 {
+        self.max_process_memory_bytes
+    }
+
+    /// How much a model load may still add before the process crosses
+    /// `hardware.max_process_memory_bytes`. `None` when no cap is set or the OS gives no reading.
+    pub fn process_memory_headroom(&self) -> Option<u64> {
+        if self.max_process_memory_bytes == 0 {
+            return None;
+        }
+        let used = self.process_memory_bytes()?;
+        Some(self.max_process_memory_bytes.saturating_sub(used))
+    }
+
+    /// The part of a placement change that adds to [`Self::process_memory_bytes`]. On unified
+    /// memory that is the Tier 1 booking: Tier 2 pages there are reclaimable page cache, which the
+    /// process measure leaves out, so a promotion from Tier 2 still adds the full model. Next to a
+    /// discrete GPU only the host-RAM side counts (resident set / working set include it).
+    pub fn process_growth_bytes(&self, from: &LayerPlacementPlan, to: &LayerPlacementPlan) -> u64 {
+        if self.is_unified_memory() {
+            to.total_vram_bytes()
+                .saturating_sub(from.total_vram_bytes())
+        } else {
+            to.pinned_ram_bytes.saturating_sub(from.pinned_ram_bytes)
+        }
     }
 
     /// Re-reads device memory and derives how much VRAM is in use beyond what the planner booked.
@@ -177,6 +375,7 @@ impl TieredMemoryManager {
     /// Budget-based free VRAM (what the planner has not booked).
     pub fn free_vram_bytes(&self) -> u64 {
         self.capabilities
+            .read()
             .usable_vram_budget_bytes
             .saturating_sub(self.used_vram_bytes())
     }
@@ -199,10 +398,10 @@ impl TieredMemoryManager {
         let budget_free = self.free_vram_bytes();
         match self.real_free_vram_bytes() {
             Some(real_free) => {
-                let margin = self
-                    .capabilities
+                let caps = self.capabilities.read();
+                let margin = caps
                     .total_vram_bytes
-                    .saturating_sub(self.capabilities.usable_vram_budget_bytes);
+                    .saturating_sub(caps.usable_vram_budget_bytes);
                 budget_free.min(real_free.saturating_sub(margin))
             }
             None => budget_free,
@@ -215,8 +414,24 @@ impl TieredMemoryManager {
 
     pub fn free_pinned_ram_bytes(&self) -> u64 {
         self.capabilities
+            .read()
             .pinned_ram_budget_bytes
             .saturating_sub(self.used_pinned_ram_bytes())
+    }
+
+    /// Unified memory only: physical RAM (minus the OS reserve) that neither Tier 1 nor Tier 2 has
+    /// booked. `None` on discrete GPUs, or when physical memory could not be read.
+    pub fn physical_pool_free_bytes(&self) -> Option<u64> {
+        let caps = self.capabilities.read();
+        if caps.topology != MemoryTopology::UnifiedMemory || caps.physical_memory_bytes == 0 {
+            return None;
+        }
+        Some(
+            caps.physical_memory_bytes
+                .saturating_sub(OS_RESERVE_BYTES)
+                .saturating_sub(self.used_vram_bytes())
+                .saturating_sub(self.used_pinned_ram_bytes()),
+        )
     }
 
     /// Returns a clone of the model's static configuration and current placement.
@@ -251,9 +466,23 @@ impl TieredMemoryManager {
         let prev_plan = entry.placement.clone();
         let prev_tier = prev_plan.primary_tier;
 
-        // Reconcile Tier 1 VRAM delta
         let old_vram = prev_plan.total_vram_bytes();
         let new_vram = new_plan.total_vram_bytes();
+
+        // Unified memory: both tiers are carved from the same RAM, so the combined growth must fit.
+        if let Some(pool_free) = self.physical_pool_free_bytes() {
+            let old_total = old_vram.saturating_add(prev_plan.pinned_ram_bytes);
+            let new_total = new_vram.saturating_add(new_plan.pinned_ram_bytes);
+            if new_total > old_total && new_total - old_total > pool_free {
+                return Err(HypnosError::InsufficientMemory {
+                    model: model_id.to_string(),
+                    required_bytes: new_total - old_total,
+                    available_bytes: pool_free,
+                });
+            }
+        }
+
+        // Reconcile Tier 1 VRAM delta
         if new_vram > old_vram {
             let delta = new_vram - old_vram;
             let free = self.free_vram_bytes();
@@ -436,6 +665,10 @@ impl TieredMemoryManager {
 
     /// Returns a full snapshot of the 3-tier hierarchy.
     pub fn status_snapshot(&self) -> MemoryHierarchyStatus {
+        // Read before taking the models lock: `process_memory_bytes` takes it too, and a nested
+        // read can deadlock behind a waiting writer.
+        let process_footprint_bytes = self.process_footprint_bytes();
+        let process_memory_bytes = self.process_memory_bytes();
         let guard = self.models.read();
         let now = Instant::now();
         let mut models: Vec<ModelTierSnapshot> = guard
@@ -459,7 +692,7 @@ impl TieredMemoryManager {
 
         let has_real = self.has_real_reading.load(Ordering::SeqCst);
         MemoryHierarchyStatus {
-            capabilities: self.capabilities.clone(),
+            capabilities: self.capabilities(),
             tier1_vram_used_bytes: self.used_vram_bytes(),
             tier1_vram_free_bytes: self.free_vram_bytes(),
             tier1_vram_real_free_bytes: has_real
@@ -470,6 +703,12 @@ impl TieredMemoryManager {
             tier1_vram_effective_free_bytes: self.effective_free_vram_bytes(),
             tier2_pinned_ram_used_bytes: self.used_pinned_ram_bytes(),
             tier2_pinned_ram_free_bytes: self.free_pinned_ram_bytes(),
+            physical_pool_free_bytes: self.physical_pool_free_bytes(),
+            process_footprint_bytes,
+            process_memory_bytes,
+            process_memory_cap_bytes: (self.max_process_memory_bytes > 0)
+                .then_some(self.max_process_memory_bytes),
+            recent_evictions: self.evictions.lock().iter().cloned().collect(),
             models,
         }
     }

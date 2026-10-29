@@ -9,6 +9,7 @@
 #    ./run.sh restart backend  -> stop + start the already-built backend binary
 #    ./run.sh stop             -> stop backend and frontend
 #    ./run.sh logs             -> follow both logs
+#    ./run.sh models [id]      -> download model files into backend/models/ (backend/models.manifest)
 #
 #  Build and start are separate steps: `start` launches the compiled binary
 #  backend/target/<profile>/hypnos (hypnos.exe on Windows) and refuses to run when it is
@@ -37,6 +38,13 @@ case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;;
     *) IS_WINDOWS=0 ;;
 esac
+
+# Apple Silicon: Metal instead of the default CUDA engines, and the unified-memory profile.
+CARGO_FEATURE_FLAGS=()
+if [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ]; then
+    CARGO_FEATURE_FLAGS=(--no-default-features --features metal)
+    [ -f "$ROOT_DIR/backend/hypnos.macos.example.toml" ] && BACKEND_CONFIG="hypnos.macos.example.toml"
+fi
 
 # Cargo profile for the backend binary: release (default) or debug (`cargo build` dev profile).
 HYPNOS_PROFILE="${HYPNOS_PROFILE:-release}"
@@ -76,6 +84,7 @@ usage() {
     ./run.sh stop               stop both
     ./run.sh status             show what is running and whether the backend is built
     ./run.sh logs [target]      tail the log file(s) in .run/
+    ./run.sh models [model id]  download the model files (about 31 GB for all) into backend/models/
 
   start/restart never compile; run ./run.sh build after changing Rust code.
   HYPNOS_PROFILE=debug selects the dev profile (backend/target/debug/hypnos).
@@ -201,7 +210,7 @@ stop_one() {
 build_backend() {
     echo "[Hypnos] Building backend ($HYPNOS_PROFILE profile) -> $BACKEND_BIN"
     echo "         The first build compiles the native engines (llama.cpp, stable-diffusion.cpp, espeak-ng); this takes a while."
-    (cd "$ROOT_DIR/backend" && "${CARGO_CMD[@]}" build "${CARGO_PROFILE_FLAGS[@]}" --bin hypnos)
+    (cd "$ROOT_DIR/backend" && "${CARGO_CMD[@]}" build ${CARGO_PROFILE_FLAGS[@]+"${CARGO_PROFILE_FLAGS[@]}"} -p hypnos-server --bin hypnos ${CARGO_FEATURE_FLAGS[@]+"${CARGO_FEATURE_FLAGS[@]}"})
     local rc=$?
     if [ "$rc" != 0 ]; then
         echo "[Hypnos] backend build FAILED (cargo exit code $rc)."
@@ -295,6 +304,11 @@ logs() {
 # ---------------------------------------------------------------------------
 # dispatch
 # ---------------------------------------------------------------------------
+# `models` takes a model id instead of a service target.
+if [ "$ACTION" = models ]; then
+    exec bash "$ROOT_DIR/backend/scripts/fetch-models.sh" "$TARGET"
+fi
+
 case "$TARGET" in backend|frontend|all) ;; *) echo "[Hypnos] Unknown target '$TARGET'."; usage ;; esac
 
 RC=0

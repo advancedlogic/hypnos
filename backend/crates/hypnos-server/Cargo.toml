@@ -9,6 +9,13 @@ rust-version.workspace = true
 name = "hypnos"
 path = "src/main.rs"
 
+[features]
+default = ["cuda"]
+# Forwarded to hypnos-backends so `-p hypnos-server --no-default-features --features metal` selects
+# the GPU backend without reaching into the dependency's features.
+cuda = ["hypnos-backends/cuda"]
+metal = ["hypnos-backends/metal"]
+
 [dependencies]
 hypnos-core.workspace = true
 hypnos-memory.workspace = true

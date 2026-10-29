@@ -288,9 +288,47 @@ pub struct HardwareConfig {
     /// Maximum Tier 2 Pinned Host RAM budget in bytes (e.g., 32 GB)
     #[serde(default = "default_pinned_ram_budget")]
     pub pinned_ram_budget_bytes: u64,
-    /// Whether to use OS memory locking (`VirtualLock` / `mlock`) for Tier 2 Pinned RAM
-    #[serde(default = "default_true")]
-    pub lock_host_memory: bool,
+    /// Whether to use OS memory locking (`VirtualLock` / `mlock`) for Tier 2 Pinned RAM.
+    /// Unset = on for discrete GPUs, off on unified memory, where `mlock` and the Metal working set
+    /// count against the same wired-memory limit (see [`HardwareConfig::lock_host_memory_for`]).
+    #[serde(default)]
+    pub lock_host_memory: Option<bool>,
+    /// Pretend the machine has this much physical RAM (0 = use the real amount; never above it).
+    /// All budgets are derived as on that machine; on unified memory this includes the GPU working
+    /// set. Meant for trying out smaller configurations, e.g. a 32 GB Mac on a 128 GB one.
+    #[serde(default)]
+    pub simulate_physical_memory_bytes: u64,
+    /// Soft cap on this process's real memory footprint as the OS reports it (0 = no cap). Checked
+    /// before every model load: idle models are evicted, or the request is refused, rather than
+    /// letting the load cross the cap. Memory a resident model grows into later is not prevented.
+    #[serde(default)]
+    pub max_process_memory_bytes: u64,
+}
+
+impl HardwareConfig {
+    /// Resolves `lock_host_memory` for the detected topology.
+    pub fn lock_host_memory_for(&self, topology: MemoryTopology) -> bool {
+        self.lock_host_memory
+            .unwrap_or(topology == MemoryTopology::DiscretePcie)
+    }
+
+    /// On unified memory Tier 1 and Tier 2 are the same physical RAM. Returns a warning when the
+    /// explicitly configured budgets add up to more than `physical_memory_bytes`.
+    pub fn unified_memory_oversubscription(&self, physical_memory_bytes: u64) -> Option<String> {
+        if self.vram_budget_bytes == 0 || physical_memory_bytes == 0 {
+            return None;
+        }
+        let claimed = self
+            .vram_budget_bytes
+            .saturating_add(self.pinned_ram_budget_bytes);
+        (claimed > physical_memory_bytes).then(|| {
+            format!(
+                "hardware.vram_budget_bytes + pinned_ram_budget_bytes ({} MiB) exceed the {} MiB of unified memory; Tier 2 is clamped to what Tier 1 leaves free",
+                claimed / (1024 * 1024),
+                physical_memory_bytes / (1024 * 1024)
+            )
+        })
+    }
 }
 
 fn default_vram_safety_margin() -> u64 {
@@ -311,7 +349,9 @@ impl Default for HardwareConfig {
             vram_budget_bytes: 24 * 1024 * 1024 * 1024, // 24 GB default
             vram_safety_margin_bytes: default_vram_safety_margin(),
             pinned_ram_budget_bytes: default_pinned_ram_budget(),
-            lock_host_memory: true,
+            lock_host_memory: None,
+            simulate_physical_memory_bytes: 0,
+            max_process_memory_bytes: 0,
         }
     }
 }
@@ -703,6 +743,30 @@ num_layers = 4
         let cfg = HypnosConfig::from_toml_str(&minimal_toml("w.gguf")).unwrap();
         let report = cfg.validate(&dir);
         assert!(report.is_ok(), "{:?}", report.errors);
+    }
+
+    #[test]
+    fn unified_memory_oversubscription_is_reported() {
+        let gb = 1024 * 1024 * 1024;
+        let mut hw = HardwareConfig {
+            vram_budget_bytes: 24 * gb,
+            pinned_ram_budget_bytes: 32 * gb,
+            ..HardwareConfig::default()
+        };
+        assert!(hw.unified_memory_oversubscription(32 * gb).is_some());
+        assert!(hw.unified_memory_oversubscription(64 * gb).is_none());
+        // Auto-detected Tier 1 is derived from the device and clamped, so nothing to report.
+        hw.vram_budget_bytes = 0;
+        assert!(hw.unified_memory_oversubscription(32 * gb).is_none());
+    }
+
+    #[test]
+    fn lock_host_memory_defaults_by_topology() {
+        let mut hw = HardwareConfig::default();
+        assert!(hw.lock_host_memory_for(MemoryTopology::DiscretePcie));
+        assert!(!hw.lock_host_memory_for(MemoryTopology::UnifiedMemory));
+        hw.lock_host_memory = Some(true);
+        assert!(hw.lock_host_memory_for(MemoryTopology::UnifiedMemory));
     }
 
     #[test]
