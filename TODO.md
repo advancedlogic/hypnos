@@ -72,23 +72,9 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 _No cards yet._
 
-## Backlog
+## Done
 
-- [ ] 🟪 **API-1** `P1` HTTPS and API-key authentication for the HTTP server
-      Today the server binds loopback only and has no authentication (the README tells people to
-      put a proxy in front). Add both natively so `server.host = "0.0.0.0"` is safe on its own:
-      TLS termination in-process (rustls through `axum-server` or `tokio-rustls`) configured by
-      `server.tls.cert_path` / `server.tls.key_path` (PEM; plain HTTP when unset), and bearer
-      authentication for every `/v1/*` route from a `server.api_keys` list (env override
-      `HYPNOS_API_KEYS`; `/health`, `/ready` and `/metrics` stay open or get their own flag).
-      Compare keys in constant time, answer 401 in the OpenAI error shape, log rejections without
-      the key. CORS already allows `Authorization`; the playground needs an API-key field stored
-      per browser and sent on every request (including streamed and multipart ones).
-      Related: `cors_layer`, `observe_request`, `ServerConfig`, `validate` warning on non-loopback host.
-
-## In Progress
-
-- [ ] 🟦 **UI-1** `P1` Add request log inspector panel with per-call telemetry
+- [x] 🟦 **UI-1** `P1` Add request log inspector panel with per-call telemetry
       Backend: keep a bounded in-memory ring of per-request records (request id, route, model id,
       status, start/end time, processing ms, tokens in / out / cached, tokens/s, tier-switch ms,
       and the request + response payloads, truncated for media). Expose it via a new
@@ -98,11 +84,9 @@ _No cards yet._
       Frontend: a "Logs" panel in `App.svelte` listing calls newest-first with columns for model,
       route, duration, tokens in/out/cached and tokens/s, a level selector, filter by model/route,
       and a detail view showing the full input and output of the selected call.
-      Related: `ExecutionTelemetry`, `metrics.rs`, `x-request-id` header.
-
-## Done
-
-
+      Shipped: `request_log.rs` ring with capture levels, `GET /v1/logs`, `GET /v1/logs/{id}`,
+      `POST /v1/logs/level`, `DELETE /v1/logs`; "6. Request Logs" tab in the playground.
+      Commit `b79886c`.
 - [x] 🟧 **PERF-4** `P1` Continuous batching across execution slots
       Work item C of `docs/execution-efficiency-plan.md`: the engine worker admits jobs into free
       slots and builds one `llama_batch` per step (chunked prefill for new slots, one token per
