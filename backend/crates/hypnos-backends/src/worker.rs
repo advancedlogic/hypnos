@@ -52,6 +52,19 @@ impl<J: FailJob> WorkerInbox<J> {
         }
     }
 
+    /// Non-blocking variant of [`next`](Self::next) for a worker that has work in progress:
+    /// `None` means nothing is queued right now.
+    pub(crate) fn try_next(&self) -> Option<WorkerMsg<J>> {
+        if self.stopping.load(Ordering::SeqCst) {
+            return Some(WorkerMsg::Shutdown);
+        }
+        match self.rx.try_recv() {
+            Ok(msg) => Some(msg),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => Some(WorkerMsg::Shutdown),
+        }
+    }
+
     /// Fails every job still queued after the worker decided to stop.
     pub(crate) fn drain_pending(&self, why: &str) {
         while let Ok(WorkerMsg::Job(job)) = self.rx.try_recv() {

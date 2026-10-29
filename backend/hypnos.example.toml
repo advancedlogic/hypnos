@@ -60,9 +60,10 @@ min_gpu_layer_ratio = 0.25
 initial_tier = "tier2_pinned_ram"       # Pre-stage in pinned RAM on boot for fast promotion
 keep_warm_in_ram = true
 priority = "high"
-# Execution slots sharing one persistent llama.cpp context (KV booking = slots x context). 1 serves
-# requests one at a time; 2-4 lets a 24 GB GPU decode several chats in one step (work item C).
-slots = 1
+# Execution slots sharing one persistent llama.cpp context (KV booking = slots x context). Requests
+# in different slots are decoded together, one llama_batch per step; 1 serves them one at a time.
+# 4 fits a 24 GB GPU next to the weights (about 0.9 GiB of KV per slot at 16k context).
+slots = 4
 # Reuse a slot's KV cache when a prompt extends what it processed last (multi-turn chats prefill
 # only the new turn; unchanged images are not re-encoded).
 prefix_cache = true
@@ -95,6 +96,8 @@ min_gpu_layer_ratio = 0.25
 initial_tier = "tier2_pinned_ram"
 keep_warm_in_ram = true
 priority = "high"
+slots = 4                               # dense model, ~150 MiB of KV per slot at 8k context
+prefix_cache = true
 
 [models.arch]
 num_layers = 42

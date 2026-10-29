@@ -154,9 +154,12 @@ Behaviour that matters in production:
   exceeded), request timeout (HTTP 504), body/audio/image/prompt size limits, `max_tokens` cap.
 - **Cancellation**: when a client disconnects, the generation is stopped at the next token
   (llama.cpp), chunk (Kokoro) or diffusion step (sd.cpp) and the lease is released.
-- **Persistent contexts and prefix reuse** (llama.cpp models): a resident model is served by one
-  worker thread that keeps a single `llama_context` for the whole residency and runs requests
-  through execution slots (`slots` per model, default 1). With `prefix_cache = true` (default) a
+- **Persistent contexts, slots and prefix reuse** (llama.cpp models): a resident model is served
+  by one worker thread that keeps a single `llama_context` for the whole residency and runs
+  requests through execution slots (`slots` per model, default 1; the planner books KV for every
+  slot). Requests in different slots are decoded together, one `llama_batch` per step, so several
+  chats share each forward pass; `hypnos_telemetry.engine.concurrent_slots` reports how many
+  shared a request's steps. With `prefix_cache = true` (default) a
   prompt that extends what a slot processed last prefills only the new part, and an image or audio
   clip already in the cache is not re-encoded; `usage.prompt_tokens_details.cached_tokens` reports
   the reused positions. Idle slot caches are cleared after `server.kv_idle_timeout_secs`.

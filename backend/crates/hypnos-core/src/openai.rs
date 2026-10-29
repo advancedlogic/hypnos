@@ -470,6 +470,10 @@ pub struct EngineTiming {
     /// Chat: prompt positions served from the slot's KV cache (prefix reuse); 0 on a miss.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cached_tokens: Option<u32>,
+    /// Chat: the most execution slots that were active at once while this request ran
+    /// (1 means it never shared a decode step).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub concurrent_slots: Option<u32>,
 }
 
 impl ExecutionTelemetry {

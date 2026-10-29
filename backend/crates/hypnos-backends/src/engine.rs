@@ -3,13 +3,19 @@
 //!
 //! A slot is a llama.cpp sequence id plus a description of what its KV cache holds
 //! ([`CacheKey`]s: text tokens, and media chunks by id). When a new prompt arrives the worker
-//! picks the slot whose cache shares the longest prefix with it, drops the divergent tail
+//! picks the free slot whose cache shares the longest prefix with it, drops the divergent tail
 //! (`llama_memory_seq_rm`) and prefills only the remainder. A multi-turn chat therefore pays for
 //! the new turn only, and an image that is already in the cache is never run through the vision
-//! tower again. With `slots = 1` jobs are strictly serialised, as before; the slot table is
-//! written so that work item C can keep several slots active per decode step.
+//! tower again.
+//!
+//! Requests in different slots run together: every step the worker builds one `llama_batch`
+//! holding the next token of each decoding slot plus up to the remaining batch budget of prompt
+//! tokens from slots still prefilling, decodes it once, then samples each slot from its own
+//! logits. A long prompt is therefore chunked across steps and never stalls the slots that are
+//! already generating. With `slots = 1` this degenerates to one request at a time.
 
 use std::collections::hash_map::DefaultHasher;
+use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroU32;
 use std::sync::mpsc::SyncSender;
@@ -31,6 +37,7 @@ use llama_cpp_2::mtmd::{
 };
 use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::token::LlamaToken;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 
@@ -56,7 +63,7 @@ pub(crate) struct GenStats {
     /// Prompt positions served from the slot's KV cache.
     pub cached_tokens: u32,
     pub finish_reason: &'static str,
-    /// Waiting in the worker queue, measured from `started`.
+    /// Waiting in the worker queue (and for a free slot), measured from `started`.
     pub queue_ms: f64,
     /// Context (re)creation attributed to this request; 0 while the resident context is reused.
     pub context_ms: f64,
@@ -64,6 +71,8 @@ pub(crate) struct GenStats {
     pub decode_ms: f64,
     /// `started` to the first visible text piece; `None` when nothing visible was produced.
     pub ttft_ms: Option<f64>,
+    /// Most slots active at once while this request ran.
+    pub concurrent_slots: u32,
 }
 
 impl GenStats {
@@ -84,6 +93,7 @@ impl GenStats {
             // The first token is sampled from the prefill logits; only the rest cost a decode step.
             decode_tokens_per_s: per_s(self.completion_tokens.saturating_sub(1), self.decode_ms),
             cached_tokens: Some(self.cached_tokens),
+            concurrent_slots: Some(self.concurrent_slots),
             ..EngineTiming::default()
         }
     }
@@ -184,6 +194,8 @@ pub(crate) struct Slot {
     /// Positions consumed in `seq_id` (equals the key count unless a media chunk spans several).
     pub n_past: i32,
     pub last_used: Instant,
+    /// A request is running in this slot.
+    pub in_use: bool,
     /// Position of the saved sliding-window snapshot, if any (metadata only, for planning).
     pub checkpoint: Option<CheckpointAt>,
     /// The snapshot itself (sliding-window layers only; the full-attention layers keep every
@@ -308,6 +320,7 @@ impl SlotTable {
                     keys: Vec::new(),
                     n_past: 0,
                     last_used: now,
+                    in_use: false,
                     checkpoint: None,
                     checkpoint_state: None,
                 })
@@ -317,11 +330,19 @@ impl SlotTable {
         }
     }
 
-    /// Best slot for `prompt`: the longest reusable prefix, then the least recently used.
+    /// Best free slot for `prompt`: the longest reusable prefix, then the least recently used.
     /// `allow_reuse = false` (M-RoPE models, where text positions are not scalar) always clears.
-    pub(crate) fn select(&self, prompt: &[CacheKey], allow_reuse: bool) -> (usize, CachePlan) {
+    /// `None` when every slot is busy.
+    pub(crate) fn select(
+        &self,
+        prompt: &[CacheKey],
+        allow_reuse: bool,
+    ) -> Option<(usize, CachePlan)> {
         let mut best: Option<(usize, CachePlan, i32, Instant)> = None;
         for (i, slot) in self.slots.iter().enumerate() {
+            if slot.in_use {
+                continue;
+            }
             let plan = plan_cache(slot, prompt, self.prefix_cache && allow_reuse, self.swa);
             let reused = match plan {
                 CachePlan::Keep(r) => r.positions,
@@ -337,8 +358,11 @@ impl SlotTable {
                 best = Some((i, plan, reused, slot.last_used));
             }
         }
-        let (i, plan, _, _) = best.expect("slot table is never empty");
-        (i, plan)
+        best.map(|(i, plan, _, _)| (i, plan))
+    }
+
+    pub(crate) fn has_free(&self) -> bool {
+        self.slots.iter().any(|s| !s.in_use)
     }
 
     /// Forgets every cache (after the context was rebuilt).
@@ -348,12 +372,14 @@ impl SlotTable {
         }
     }
 
-    /// Slots holding a cache that has been idle for longer than `timeout`.
+    /// Free slots holding a cache that has been idle for longer than `timeout`.
     pub(crate) fn expired(&self, timeout: Duration, now: Instant) -> Vec<usize> {
         self.slots
             .iter()
             .enumerate()
-            .filter(|(_, s)| !s.keys.is_empty() && now.duration_since(s.last_used) >= timeout)
+            .filter(|(_, s)| {
+                !s.in_use && !s.keys.is_empty() && now.duration_since(s.last_used) >= timeout
+            })
             .map(|(i, _)| i)
             .collect()
     }
@@ -442,23 +468,31 @@ fn run_worker(spec: WorkerSpec, inbox: WorkerInbox<LlamaJob>, ready: SyncSender<
         .kv_idle_timeout
         .min(Duration::from_secs(5))
         .max(Duration::from_millis(100));
-    loop {
-        match inbox.next(tick) {
-            None => {
-                let now = Instant::now();
-                for i in engine.slots.expired(opts.kv_idle_timeout, now) {
-                    debug!(model = %engine.cfg.id, slot = i, "clearing idle slot KV cache");
-                    engine.clear_slot(i);
+    'run: loop {
+        if engine.active.is_empty() {
+            match inbox.next(tick) {
+                None => {
+                    let now = Instant::now();
+                    for i in engine.slots.expired(opts.kv_idle_timeout, now) {
+                        debug!(model = %engine.cfg.id, slot = i, "clearing idle slot KV cache");
+                        engine.clear_slot(i);
+                    }
+                }
+                Some(WorkerMsg::Shutdown) => break 'run,
+                Some(WorkerMsg::Job(job)) => engine.accept(mtmd, job),
+            }
+        } else {
+            // Work in progress: pick up whatever arrived, then run one decode step.
+            while let Some(msg) = inbox.try_next() {
+                match msg {
+                    WorkerMsg::Shutdown => break 'run,
+                    WorkerMsg::Job(job) => engine.accept(mtmd, job),
                 }
             }
-            Some(WorkerMsg::Shutdown) => break,
-            Some(WorkerMsg::Job(LlamaJob::Reconfigure { n_ctx, reply })) => {
-                let _ = reply.send(engine.reconfigure(n_ctx));
-            }
-            Some(WorkerMsg::Job(LlamaJob::Chat(job))) => engine.chat(mtmd, job),
-            Some(WorkerMsg::Job(LlamaJob::Embed(job))) => engine.embed(job),
+            engine.step(mtmd);
         }
     }
+    engine.abort_all("model was released from VRAM while the request was running");
     inbox.drain_pending("model was released from VRAM while the request was queued");
     // `engine` (the context) drops before `loaded` (projector, then weights).
 }
@@ -471,6 +505,42 @@ struct Tokenized {
     /// M-RoPE models position text in several dimensions; the scalar prefix bookkeeping does
     /// not apply, so reuse is disabled for them.
     mrope: bool,
+}
+
+/// A chat request executing in a slot.
+struct Active {
+    slot: usize,
+    params: GenParams,
+    rctx: RequestContext,
+    started: Instant,
+    admitted: Instant,
+    stream: Option<mpsc::Sender<ChatStreamEvent>>,
+    reply: Option<oneshot::Sender<Result<(String, GenStats)>>>,
+    n_prompt: usize,
+    cached_tokens: u32,
+    /// Prompt tokens still to evaluate and how many of them have been decoded so far.
+    pending: Vec<LlamaToken>,
+    sent: usize,
+    /// How many prompt tokens / which decode token went into the current batch.
+    added: usize,
+    decoding: Option<LlamaToken>,
+    /// Set once the last prompt token has been decoded.
+    prefill_done: Option<Instant>,
+    /// The token to decode next (sampled in the previous step); `None` while prefilling.
+    next_token: Option<LlamaToken>,
+    /// Batch index whose logits belong to this request after the current decode.
+    logits_idx: Option<i32>,
+    sampler: LlamaSampler,
+    decoder: encoding_rs::Decoder,
+    text: String,
+    completion: u32,
+    in_channel: bool,
+    channel_header_pending: bool,
+    ttft_ms: Option<f64>,
+    /// Text the client has not accepted yet (its channel was full).
+    unsent: String,
+    finish: Option<&'static str>,
+    concurrent_slots: u32,
 }
 
 struct Engine<'m> {
@@ -488,6 +558,11 @@ struct Engine<'m> {
     n_ctx: u32,
     n_batch: u32,
     slots: SlotTable,
+    active: Vec<Active>,
+    /// Chat jobs waiting for a free slot, in arrival order.
+    waiting: VecDeque<ChatJob>,
+    /// Embedding and reconfigure jobs that need an idle engine.
+    deferred: VecDeque<LlamaJob>,
 }
 
 fn kv_types(dtype: KvDataType) -> (KvCacheType, KvCacheType) {
@@ -518,29 +593,17 @@ fn l2_normalize(v: &[f32]) -> Vec<f32> {
     v.iter().map(|x| x / norm).collect()
 }
 
-/// Decodes `tokens` into `seq` starting at `pos`, `n_batch` at a time, requesting logits for the
-/// last token only. Returns the next position.
-fn decode_tokens(
-    ctx: &mut LlamaContext,
-    batch: &mut LlamaBatch,
-    tokens: &[LlamaToken],
-    mut pos: i32,
-    seq: i32,
-    n_batch: usize,
-) -> Result<i32> {
-    let last = tokens.len().saturating_sub(1);
-    for (ci, chunk) in tokens.chunks(n_batch.max(1)).enumerate() {
-        batch.clear();
-        for (i, t) in chunk.iter().enumerate() {
-            batch
-                .add(*t, pos + i as i32, &[seq], ci * n_batch + i == last)
-                .map_err(backend_err("batch add failed"))?;
-        }
-        ctx.decode(batch)
-            .map_err(backend_err("llama.cpp prefill decode failed"))?;
-        pos += chunk.len() as i32;
+fn make_sampler(params: &GenParams) -> LlamaSampler {
+    if params.temperature <= 0.0 {
+        LlamaSampler::greedy()
+    } else {
+        LlamaSampler::chain_simple([
+            LlamaSampler::top_k(params.top_k.max(1)),
+            LlamaSampler::top_p(params.top_p.clamp(0.0, 1.0), 1),
+            LlamaSampler::temp(params.temperature),
+            LlamaSampler::dist(params.seed),
+        ])
     }
-    Ok(pos)
 }
 
 impl<'m> Engine<'m> {
@@ -596,6 +659,9 @@ impl<'m> Engine<'m> {
             batch,
             n_ctx,
             n_batch,
+            active: Vec::new(),
+            waiting: VecDeque::new(),
+            deferred: VecDeque::new(),
         })
     }
 
@@ -699,9 +765,82 @@ impl<'m> Engine<'m> {
         slot.forget();
     }
 
-    // ---- chat ---------------------------------------------------------------------------
+    // ---- job intake ---------------------------------------------------------------------
 
-    fn chat(&mut self, mtmd: &mut Option<MtmdContext>, job: ChatJob) {
+    fn accept(&mut self, mtmd: &mut Option<MtmdContext>, job: LlamaJob) {
+        match job {
+            LlamaJob::Chat(job) => {
+                if self.embeddings_mode {
+                    let _ = job.reply.send(Err(HypnosError::ModalityMismatch {
+                        model: self.cfg.id.clone(),
+                        expected: self.cfg.modality,
+                        actual: Modality::TextGeneration,
+                    }));
+                } else if self.slots.has_free() {
+                    self.admit(mtmd, job);
+                } else {
+                    self.waiting.push_back(job);
+                }
+            }
+            other => {
+                if self.active.is_empty() {
+                    self.run_idle_job(other);
+                } else {
+                    self.deferred.push_back(other);
+                }
+            }
+        }
+    }
+
+    /// Embedding and reconfigure jobs touch the whole context; they run between batches.
+    fn run_idle_job(&mut self, job: LlamaJob) {
+        match job {
+            LlamaJob::Embed(job) => self.embed(job),
+            LlamaJob::Reconfigure { n_ctx, reply } => {
+                let _ = reply.send(self.reconfigure(n_ctx));
+            }
+            LlamaJob::Chat(job) => self.waiting.push_back(job),
+        }
+    }
+
+    /// Fills free slots from the waiting queue and runs deferred jobs once the engine is idle.
+    fn drain_queues(&mut self, mtmd: &mut Option<MtmdContext>) {
+        while self.slots.has_free() {
+            let Some(job) = self.waiting.pop_front() else {
+                break;
+            };
+            self.admit(mtmd, job);
+        }
+        if self.active.is_empty() {
+            while let Some(job) = self.deferred.pop_front() {
+                self.run_idle_job(job);
+            }
+        }
+    }
+
+    /// Fails everything in flight or queued (shutdown).
+    fn abort_all(&mut self, why: &str) {
+        for mut a in std::mem::take(&mut self.active) {
+            if let Some(reply) = a.reply.take() {
+                let _ = reply.send(Err(HypnosError::BackendError(why.to_string())));
+            }
+            self.slots.slots[a.slot].in_use = false;
+            self.clear_slot(a.slot);
+        }
+        for job in self.waiting.drain(..) {
+            LlamaJob::Chat(job).fail(HypnosError::BackendError(why.to_string()));
+        }
+        for job in self.deferred.drain(..) {
+            job.fail(HypnosError::BackendError(why.to_string()));
+        }
+    }
+
+    // ---- admission --------------------------------------------------------------------
+
+    /// Tokenizes the prompt, prepares a slot's cache for it and starts the request. Multimodal
+    /// prompts that cannot reuse the cache are evaluated here by libmtmd (one non-causal batch
+    /// per image), everything else is prefilled through the shared batch in [`step`](Self::step).
+    fn admit(&mut self, mtmd: &mut Option<MtmdContext>, job: ChatJob) {
         let ChatJob {
             prompt,
             media,
@@ -711,41 +850,11 @@ impl<'m> Engine<'m> {
             stream,
             reply,
         } = job;
-        let outcome = self.run_chat(
-            mtmd,
-            prompt,
-            &media,
-            &params,
-            &rctx,
-            started,
-            stream.as_ref(),
-        );
-        let _ = reply.send(outcome);
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn run_chat(
-        &mut self,
-        mtmd: &mut Option<MtmdContext>,
-        prompt: PromptSpec,
-        media: &[Vec<u8>],
-        params: &GenParams,
-        rctx: &RequestContext,
-        started: Instant,
-        stream: Option<&mpsc::Sender<ChatStreamEvent>>,
-    ) -> Result<(String, GenStats)> {
         if !rctx.should_continue() {
-            return Err(HypnosError::Cancelled);
+            let _ = reply.send(Err(HypnosError::Cancelled));
+            return;
         }
-        if self.embeddings_mode {
-            return Err(HypnosError::ModalityMismatch {
-                model: self.cfg.id.clone(),
-                expected: self.cfg.modality,
-                actual: Modality::TextGeneration,
-            });
-        }
-        let queue_ms = ms_since(started);
-        let phase = Instant::now();
+        let admitted = Instant::now();
         let text = match prompt {
             PromptSpec::Messages { messages, think } => build_prompt(
                 self.model,
@@ -757,16 +866,35 @@ impl<'m> Engine<'m> {
             PromptSpec::Raw(s) => s,
         };
         debug!(model = %self.cfg.id, prompt_chars = text.len(), media = media.len(), "chat prefill");
-        let tokenized = self.tokenize(mtmd, &text, media)?;
+        let tokenized = match self.tokenize(mtmd, &text, &media) {
+            Ok(t) => t,
+            Err(e) => {
+                let _ = reply.send(Err(e));
+                return;
+            }
+        };
         if tokenized.n_tokens + 8 > self.n_ctx as usize {
-            return Err(HypnosError::InvalidRequest(format!(
+            let _ = reply.send(Err(HypnosError::InvalidRequest(format!(
                 "prompt{} needs {} tokens but the context window is {}; raise num_ctx",
                 if media.is_empty() { "" } else { " + media" },
                 tokenized.n_tokens,
                 self.n_ctx
-            )));
+            ))));
+            return;
         }
-        let (slot_idx, plan) = self.slots.select(&tokenized.keys, !tokenized.mrope);
+        let Some((slot_idx, plan)) = self.slots.select(&tokenized.keys, !tokenized.mrope) else {
+            // Raced with another admission; wait for the next free slot.
+            self.waiting.push_front(ChatJob {
+                prompt: PromptSpec::Raw(text),
+                media,
+                params,
+                rctx,
+                started,
+                stream,
+                reply,
+            });
+            return;
+        };
         {
             let slot = &self.slots.slots[slot_idx];
             let common = common_prefix(&slot.keys, &tokenized.keys);
@@ -782,15 +910,132 @@ impl<'m> Engine<'m> {
                 "prefix cache decision"
             );
         }
-        let result = self.generate_in_slot(
-            mtmd, slot_idx, plan, tokenized, params, rctx, started, phase, queue_ms, stream,
-        );
-        if result.is_err() {
-            // A failed prefill or decode leaves the sequence in an unknown state.
-            self.clear_slot(slot_idx);
+        let mut active = Active {
+            slot: slot_idx,
+            sampler: make_sampler(&params),
+            params,
+            rctx,
+            started,
+            admitted,
+            stream,
+            reply: Some(reply),
+            n_prompt: tokenized.n_tokens,
+            cached_tokens: 0,
+            pending: Vec::new(),
+            sent: 0,
+            added: 0,
+            decoding: None,
+            prefill_done: None,
+            next_token: None,
+            logits_idx: None,
+            decoder: encoding_rs::UTF_8.new_decoder(),
+            text: String::new(),
+            completion: 0,
+            in_channel: false,
+            channel_header_pending: false,
+            ttft_ms: None,
+            unsent: String::new(),
+            finish: None,
+            concurrent_slots: 1,
+        };
+        self.slots.slots[slot_idx].in_use = true;
+        match self.prepare_slot(mtmd, &mut active, plan, tokenized) {
+            Ok(()) => {
+                self.active.push(active);
+            }
+            Err(e) => {
+                self.slots.slots[slot_idx].in_use = false;
+                self.clear_slot(slot_idx);
+                if let Some(reply) = active.reply.take() {
+                    let _ = reply.send(Err(e));
+                }
+            }
         }
-        self.slots.slots[slot_idx].last_used = Instant::now();
-        result
+    }
+
+    /// Applies the cache plan to the slot and either queues the prompt's text for the shared
+    /// batch or (multimodal, from scratch) evaluates it right away.
+    fn prepare_slot(
+        &mut self,
+        mtmd: &mut Option<MtmdContext>,
+        a: &mut Active,
+        plan: CachePlan,
+        tokenized: Tokenized,
+    ) -> Result<()> {
+        let slot = &mut self.slots.slots[a.slot];
+        let seq = slot.seq_id;
+        match plan {
+            CachePlan::Clear => {
+                if !slot.keys.is_empty() {
+                    self.ctx
+                        .clear_kv_cache_seq(Some(seq as u32), None, None)
+                        .map_err(backend_err("KV cache clear failed"))?;
+                }
+                slot.forget();
+            }
+            CachePlan::Keep(reuse) => {
+                if reuse.restore_checkpoint {
+                    let state = slot.checkpoint_state.as_ref().ok_or_else(|| {
+                        HypnosError::BackendError("slot checkpoint missing".into())
+                    })?;
+                    self.ctx
+                        .state_seq_set(state, seq)
+                        .map_err(backend_err("KV checkpoint restore failed"))?;
+                }
+                if reuse.positions < slot.n_past {
+                    self.ctx
+                        .kv_cache_seq_rm(seq, Some(reuse.positions as u32), None)
+                        .map_err(backend_err("KV cache trim failed"))?;
+                }
+                slot.keys.truncate(reuse.keys);
+                slot.n_past = reuse.positions;
+                if slot
+                    .checkpoint
+                    .is_some_and(|ck| ck.positions > reuse.positions)
+                {
+                    slot.checkpoint = None;
+                    slot.checkpoint_state = None;
+                }
+            }
+        }
+        a.cached_tokens = slot.n_past.max(0) as u32;
+
+        let Tokenized { keys, chunks, .. } = tokenized;
+        let text_tokens = |ks: &[CacheKey]| -> Vec<LlamaToken> {
+            ks.iter()
+                .filter_map(|k| match k {
+                    CacheKey::Token(t) => Some(*t),
+                    CacheKey::Media { .. } => None,
+                })
+                .collect()
+        };
+        match (plan, &chunks) {
+            (CachePlan::Clear, Some((chunks, _bitmaps))) => {
+                // libmtmd runs its own decodes (non-causal image batches); do it now, alone.
+                let m = mtmd
+                    .as_mut()
+                    .expect("multimodal prompt tokenized without a projector");
+                let n_past = chunks
+                    .eval_chunks(m, &mut self.ctx, 0, seq, self.n_batch as i32, true)
+                    .map_err(backend_err("libmtmd prefill failed"))?;
+                slot.keys = keys;
+                slot.n_past = n_past;
+                self.finish_prefill(a);
+                // The logits of the last prompt token are only valid until the next decode.
+                let token = a.sampler.sample(&self.ctx, -1);
+                self.take_token(a, token);
+            }
+            (CachePlan::Clear, None) => {
+                a.pending = text_tokens(&keys);
+                slot.keys = keys;
+            }
+            (CachePlan::Keep(reuse), _) => {
+                // `plan_cache` guarantees the remainder is text.
+                a.pending = text_tokens(&keys[reuse.keys..]);
+                slot.keys = keys;
+            }
+        }
+        Ok(())
     }
 
     fn tokenize(
@@ -879,250 +1124,267 @@ impl<'m> Engine<'m> {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn generate_in_slot(
-        &mut self,
-        mtmd: &mut Option<MtmdContext>,
-        slot_idx: usize,
-        plan: CachePlan,
-        tokenized: Tokenized,
-        params: &GenParams,
-        rctx: &RequestContext,
-        started: Instant,
-        phase: Instant,
-        queue_ms: f64,
-        stream: Option<&mpsc::Sender<ChatStreamEvent>>,
-    ) -> Result<(String, GenStats)> {
-        let Engine {
-            ctx,
-            batch,
-            slots,
-            model,
-            n_batch,
-            n_ctx,
-            cfg,
-            ..
-        } = self;
-        let n_batch = *n_batch as usize;
-        let n_ctx = *n_ctx;
-        let slot = &mut slots.slots[slot_idx];
-        let seq = slot.seq_id;
-        let vocab = model.vocab();
+    // ---- one decode step over every active slot ---------------------------------------
 
-        // ---- prepare the slot's cache -------------------------------------------------------
-        match plan {
-            CachePlan::Clear => {
-                if !slot.keys.is_empty() {
-                    ctx.clear_kv_cache_seq(Some(seq as u32), None, None)
-                        .map_err(backend_err("KV cache clear failed"))?;
-                }
-                slot.forget();
+    fn step(&mut self, mtmd: &mut Option<MtmdContext>) {
+        let n_active = self.active.len() as u32;
+        let n_ctx = self.n_ctx;
+        let mut budget = self.n_batch as usize;
+        self.batch.clear();
+
+        // 1. Cancellations and length limits are checked before any work is queued.
+        for a in &mut self.active {
+            a.concurrent_slots = a.concurrent_slots.max(n_active);
+            a.added = 0;
+            a.decoding = None;
+            a.logits_idx = None;
+            if a.finish.is_none() && !a.rctx.should_continue() {
+                a.finish = Some("cancelled");
             }
-            CachePlan::Keep(reuse) => {
-                if reuse.restore_checkpoint {
-                    let state = slot.checkpoint_state.as_ref().ok_or_else(|| {
-                        HypnosError::BackendError("slot checkpoint missing".into())
-                    })?;
-                    ctx.state_seq_set(state, seq)
-                        .map_err(backend_err("KV checkpoint restore failed"))?;
-                }
-                if reuse.positions < slot.n_past {
-                    ctx.kv_cache_seq_rm(seq, Some(reuse.positions as u32), None)
-                        .map_err(backend_err("KV cache trim failed"))?;
-                }
-                slot.keys.truncate(reuse.keys);
-                slot.n_past = reuse.positions;
-                if slot
-                    .checkpoint
-                    .is_some_and(|ck| ck.positions > reuse.positions)
-                {
-                    slot.checkpoint = None;
-                    slot.checkpoint_state = None;
+            if a.finish.is_none() {
+                let n_past = self.slots.slots[a.slot].n_past as u32;
+                if n_past.saturating_add(1) >= n_ctx {
+                    a.finish = Some("length");
                 }
             }
         }
-        let cached_tokens = slot.n_past.max(0) as u32;
 
-        // ---- prefill -------------------------------------------------------------------------
-        let Tokenized {
-            keys,
-            n_tokens,
-            chunks,
-            ..
-        } = tokenized;
-        let mut n_past = match plan {
-            CachePlan::Clear => match &chunks {
-                Some((chunks, _bitmaps)) => {
-                    let m = mtmd
-                        .as_mut()
-                        .expect("multimodal prompt tokenized without a projector");
-                    chunks
-                        .eval_chunks(m, ctx, 0, seq, n_batch as i32, true)
-                        .map_err(backend_err("libmtmd prefill failed"))?
-                }
-                None => {
-                    let tokens: Vec<LlamaToken> = keys
-                        .iter()
-                        .filter_map(|k| match k {
-                            CacheKey::Token(t) => Some(*t),
-                            CacheKey::Media { .. } => None,
-                        })
-                        .collect();
-                    decode_tokens(ctx, batch, &tokens, 0, seq, n_batch)?
-                }
-            },
-            CachePlan::Keep(reuse) => {
-                // `plan_cache` guarantees the remainder is text.
-                let suffix: Vec<LlamaToken> = keys[reuse.keys..]
-                    .iter()
-                    .filter_map(|k| match k {
-                        CacheKey::Token(t) => Some(*t),
-                        CacheKey::Media { .. } => None,
-                    })
-                    .collect();
-                decode_tokens(ctx, batch, &suffix, slot.n_past, seq, n_batch)?
+        // 2. Decoding slots first (one token each), then prompt tokens up to the budget.
+        for a in &mut self.active {
+            if a.finish.is_some() {
+                continue;
             }
-        };
-        drop(chunks);
-        slot.keys = keys;
-        slot.n_past = n_past;
+            if let Some(token) = a.next_token.take() {
+                let slot = &self.slots.slots[a.slot];
+                if self
+                    .batch
+                    .add(token, slot.n_past, &[slot.seq_id], true)
+                    .is_ok()
+                {
+                    a.logits_idx = Some(self.batch.n_tokens() - 1);
+                    a.decoding = Some(token);
+                    budget = budget.saturating_sub(1);
+                } else {
+                    a.next_token = Some(token);
+                }
+            }
+        }
+        for a in &mut self.active {
+            if a.finish.is_some() || a.decoding.is_some() || budget == 0 {
+                continue;
+            }
+            let remaining = a.pending.len().saturating_sub(a.sent);
+            if remaining == 0 {
+                continue;
+            }
+            let take = remaining.min(budget);
+            let slot = &self.slots.slots[a.slot];
+            for i in 0..take {
+                let last = a.sent + i + 1 == a.pending.len();
+                if self
+                    .batch
+                    .add(
+                        a.pending[a.sent + i],
+                        slot.n_past + i as i32,
+                        &[slot.seq_id],
+                        last,
+                    )
+                    .is_err()
+                {
+                    break;
+                }
+                a.added += 1;
+                if last {
+                    a.logits_idx = Some(self.batch.n_tokens() - 1);
+                }
+            }
+            budget -= a.added;
+        }
+
+        // 3. One decode for everyone.
+        if self.batch.n_tokens() > 0 {
+            if let Err(e) = self.ctx.decode(&mut self.batch) {
+                let err = format!("llama.cpp decode failed: {e:?}");
+                warn!(model = %self.cfg.id, error = %err, "batch decode failed; failing every active request");
+                self.abort_all(&err);
+                return;
+            }
+        }
+
+        // 4. Bookkeeping, sampling and streaming per slot.
+        let mut done = Vec::new();
+        for i in 0..self.active.len() {
+            let mut a = std::mem::replace(&mut self.active[i], Active::placeholder());
+            let slot = &mut self.slots.slots[a.slot];
+            if let Some(token) = a.decoding.take() {
+                slot.n_past += 1;
+                slot.keys.push(CacheKey::Token(token));
+            } else if a.added > 0 {
+                slot.n_past += a.added as i32;
+                a.sent += a.added;
+                if a.sent == a.pending.len() {
+                    self.finish_prefill(&mut a);
+                }
+            }
+            if let Some(idx) = a.logits_idx.take() {
+                let token = a.sampler.sample(&self.ctx, idx);
+                self.take_token(&mut a, token);
+            }
+            self.flush_stream(&mut a);
+            if a.finish.is_some() {
+                done.push(i);
+            }
+            self.active[i] = a;
+        }
+        for i in done.into_iter().rev() {
+            let a = self.active.swap_remove(i);
+            self.complete(a);
+        }
+        self.drain_queues(mtmd);
+    }
+
+    /// The prompt is fully in the KV cache: snapshot the sliding-window state and start timing
+    /// the decode phase.
+    fn finish_prefill(&mut self, a: &mut Active) {
+        let slot = &mut self.slots.slots[a.slot];
         // Sliding-window layers forget old positions as generation proceeds; snapshot them at the
         // prompt end so the next turn can resume from here even if it diverges inside the reply.
-        if cfg.prefix_cache && cfg.arch.sliding_window_len.is_some() {
-            match ctx.state_seq_get(seq, LlamaStateSeqFlags::PARTIAL_ONLY) {
+        if self.cfg.prefix_cache && self.cfg.arch.sliding_window_len.is_some() {
+            match self
+                .ctx
+                .state_seq_get(slot.seq_id, LlamaStateSeqFlags::PARTIAL_ONLY)
+            {
                 Ok(state) => {
                     slot.checkpoint = Some(CheckpointAt {
                         keys: slot.keys.len(),
-                        positions: n_past,
+                        positions: slot.n_past,
                     });
                     slot.checkpoint_state = Some(state);
                 }
                 Err(e) => {
-                    warn!(model = %cfg.id, slot = slot_idx, error = ?e, "could not checkpoint slot state");
+                    warn!(model = %self.cfg.id, slot = a.slot, error = ?e, "could not checkpoint slot state");
                     slot.checkpoint = None;
                     slot.checkpoint_state = None;
                 }
             }
         }
-        let prefill_ms = ms_since(phase);
-        let phase = Instant::now();
-        let mut ttft_ms: Option<f64> = None;
+        a.prefill_done = Some(Instant::now());
+    }
 
-        // ---- sampling ------------------------------------------------------------------------
-        let mut sampler = if params.temperature <= 0.0 {
-            LlamaSampler::greedy()
-        } else {
-            LlamaSampler::chain_simple([
-                LlamaSampler::top_k(params.top_k.max(1)),
-                LlamaSampler::top_p(params.top_p.clamp(0.0, 1.0), 1),
-                LlamaSampler::temp(params.temperature),
-                LlamaSampler::dist(params.seed),
-            ])
-        };
-        let mut decoder = encoding_rs::UTF_8.new_decoder();
-        let mut text = String::new();
-        let mut completion: u32 = 0;
-        let mut finish_reason = "length";
-        let max_tokens = params.max_tokens.max(1);
-        // Gemma 4 wraps reasoning in `<|channel>thought ... <channel|>`; even with thinking
-        // disabled the model may emit an empty channel. Everything inside it is swallowed, as are
-        // bare special tokens.
-        let mut in_channel = false;
-        let mut channel_header_pending = false;
-
-        while completion < max_tokens {
-            if !rctx.should_continue() {
-                finish_reason = "cancelled";
-                break;
-            }
-            let token = sampler.sample(ctx, -1);
-            sampler.accept(token);
-            if vocab.is_eog(token) {
-                finish_reason = "stop";
-                break;
-            }
-            let piece = vocab.token_to_piece(token, true, None);
-            if piece.as_slice() == b"<turn|>" || piece.as_slice() == b"<end_of_turn>" {
-                finish_reason = "stop";
-                break;
-            }
-            completion += 1;
-            let is_marker = is_special_marker(&piece);
-            if piece.as_slice() == b"<|channel>" {
-                in_channel = true;
-                channel_header_pending = true;
-            } else if piece.as_slice() == b"<channel|>" {
-                in_channel = false;
-            } else if !vocab.is_control(token) && !is_marker && !in_channel {
-                let mut out = String::with_capacity(
-                    decoder
-                        .max_utf8_buffer_length(piece.len())
-                        .unwrap_or(piece.len() * 3),
-                );
-                let _ = decoder.decode_to_string(&piece, &mut out, false);
-                // Right after a channel closes the model emits the leading newline(s) of the answer.
-                if channel_header_pending {
-                    channel_header_pending = false;
-                    let trimmed = out.trim_start_matches(['\n', '\r']).to_string();
-                    if trimmed.is_empty() {
-                        out.clear();
-                    } else {
-                        out = trimmed;
-                    }
-                }
-                if !out.is_empty() {
-                    ttft_ms.get_or_insert_with(|| ms_since(started));
-                    text.push_str(&out);
-                    if let Some(tx) = stream {
-                        if tx.blocking_send(ChatStreamEvent::Delta(out)).is_err() {
-                            finish_reason = "stop";
-                            break;
-                        }
-                    }
-                }
-            }
-            if (n_past as u32).saturating_add(1) >= n_ctx {
-                finish_reason = "length";
-                break;
-            }
-            batch.clear();
-            batch
-                .add(token, n_past, &[seq], true)
-                .map_err(backend_err("batch add failed"))?;
-            ctx.decode(batch)
-                .map_err(backend_err("llama.cpp decode failed"))?;
-            n_past += 1;
-            slot.keys.push(CacheKey::Token(token));
-            slot.n_past = n_past;
+    /// Handles one sampled token: stop conditions, the Gemma thinking channel, text decoding.
+    /// Sets `next_token` when generation continues.
+    fn take_token(&mut self, a: &mut Active, token: LlamaToken) {
+        let vocab = self.model.vocab();
+        a.sampler.accept(token);
+        if vocab.is_eog(token) {
+            a.finish = Some("stop");
+            return;
         }
+        let piece = vocab.token_to_piece(token, true, None);
+        if piece.as_slice() == b"<turn|>" || piece.as_slice() == b"<end_of_turn>" {
+            a.finish = Some("stop");
+            return;
+        }
+        a.completion += 1;
+        let is_marker = is_special_marker(&piece);
+        if piece.as_slice() == b"<|channel>" {
+            a.in_channel = true;
+            a.channel_header_pending = true;
+        } else if piece.as_slice() == b"<channel|>" {
+            a.in_channel = false;
+        } else if !vocab.is_control(token) && !is_marker && !a.in_channel {
+            let mut out = String::with_capacity(
+                a.decoder
+                    .max_utf8_buffer_length(piece.len())
+                    .unwrap_or(piece.len() * 3),
+            );
+            let _ = a.decoder.decode_to_string(&piece, &mut out, false);
+            // Right after a channel closes the model emits the leading newline(s) of the answer.
+            if a.channel_header_pending {
+                a.channel_header_pending = false;
+                let trimmed = out.trim_start_matches(['\n', '\r']).to_string();
+                if trimmed.is_empty() {
+                    out.clear();
+                } else {
+                    out = trimmed;
+                }
+            }
+            if !out.is_empty() {
+                a.ttft_ms.get_or_insert_with(|| ms_since(a.started));
+                a.text.push_str(&out);
+                if a.stream.is_some() {
+                    a.unsent.push_str(&out);
+                }
+            }
+        }
+        if a.completion >= a.params.max_tokens.max(1) {
+            a.finish = Some("length");
+            return;
+        }
+        a.next_token = Some(token);
+    }
 
-        let decode_ms = ms_since(phase);
+    /// Pushes buffered text to the client without blocking the step: a full channel keeps the
+    /// text for the next step, a closed one ends the request.
+    fn flush_stream(&mut self, a: &mut Active) {
+        let Some(tx) = &a.stream else {
+            return;
+        };
+        if a.unsent.is_empty() {
+            return;
+        }
+        let delta = std::mem::take(&mut a.unsent);
+        match tx.try_send(ChatStreamEvent::Delta(delta)) {
+            Ok(()) => {}
+            Err(TrySendError::Full(ChatStreamEvent::Delta(delta))) => a.unsent = delta,
+            Err(TrySendError::Full(_)) => {}
+            Err(TrySendError::Closed(_)) => {
+                a.unsent.clear();
+                if a.finish.is_none() {
+                    a.finish = Some("stop");
+                }
+            }
+        }
+    }
+
+    /// Answers the request and frees its slot.
+    fn complete(&mut self, mut a: Active) {
+        if let (Some(tx), false) = (&a.stream, a.unsent.is_empty()) {
+            // The client was slow; wait for it now that nothing else depends on this slot.
+            let _ = tx.blocking_send(ChatStreamEvent::Delta(std::mem::take(&mut a.unsent)));
+        }
+        let slot = &mut self.slots.slots[a.slot];
+        slot.in_use = false;
+        slot.last_used = Instant::now();
+        let prefill_done = a.prefill_done.unwrap_or_else(Instant::now);
+        let stats = GenStats {
+            prompt_tokens: a.n_prompt as u32,
+            completion_tokens: a.completion,
+            cached_tokens: a.cached_tokens,
+            finish_reason: a.finish.unwrap_or("stop"),
+            queue_ms: a.admitted.duration_since(a.started).as_secs_f64() * 1000.0,
+            context_ms: 0.0,
+            prefill_ms: prefill_done.duration_since(a.admitted).as_secs_f64() * 1000.0,
+            decode_ms: ms_since(prefill_done),
+            ttft_ms: a.ttft_ms,
+            concurrent_slots: a.concurrent_slots,
+        };
         debug!(
-            model = %cfg.id,
-            slot = slot_idx,
-            prompt_tokens = n_tokens,
-            cached_tokens,
-            completion_tokens = completion,
-            queue_ms = format!("{queue_ms:.0}"),
-            prefill_ms = format!("{prefill_ms:.0}"),
-            decode_ms = format!("{decode_ms:.0}"),
-            ttft_ms = ttft_ms.map(|v| format!("{v:.0}")),
+            model = %self.cfg.id,
+            slot = a.slot,
+            prompt_tokens = stats.prompt_tokens,
+            cached_tokens = stats.cached_tokens,
+            completion_tokens = stats.completion_tokens,
+            concurrent_slots = stats.concurrent_slots,
+            queue_ms = format!("{:.0}", stats.queue_ms),
+            prefill_ms = format!("{:.0}", stats.prefill_ms),
+            decode_ms = format!("{:.0}", stats.decode_ms),
+            ttft_ms = stats.ttft_ms.map(|v| format!("{v:.0}")),
             "generation timings"
         );
-        Ok((
-            text,
-            GenStats {
-                prompt_tokens: n_tokens as u32,
-                completion_tokens: completion,
-                cached_tokens,
-                finish_reason,
-                queue_ms,
-                context_ms: 0.0,
-                prefill_ms,
-                decode_ms,
-                ttft_ms,
-            },
-        ))
+        if let Some(reply) = a.reply.take() {
+            let _ = reply.send(Ok((std::mem::take(&mut a.text), stats)));
+        }
     }
 
     // ---- embeddings ---------------------------------------------------------------------
@@ -1197,6 +1459,46 @@ impl<'m> Engine<'m> {
     }
 }
 
+impl Active {
+    /// A stand-in used while an entry is taken out of the active list for processing.
+    fn placeholder() -> Self {
+        Active {
+            slot: usize::MAX,
+            params: GenParams {
+                max_tokens: 1,
+                temperature: 0.0,
+                top_p: 1.0,
+                top_k: 1,
+                seed: 0,
+            },
+            rctx: RequestContext::unbounded(),
+            started: Instant::now(),
+            admitted: Instant::now(),
+            stream: None,
+            reply: None,
+            n_prompt: 0,
+            cached_tokens: 0,
+            pending: Vec::new(),
+            sent: 0,
+            added: 0,
+            decoding: None,
+            prefill_done: None,
+            next_token: None,
+            logits_idx: None,
+            sampler: LlamaSampler::greedy(),
+            decoder: encoding_rs::UTF_8.new_decoder(),
+            text: String::new(),
+            completion: 0,
+            in_channel: false,
+            channel_header_pending: false,
+            ttft_ms: None,
+            unsent: String::new(),
+            finish: Some("stop"),
+            concurrent_slots: 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1221,6 +1523,7 @@ mod tests {
             keys,
             n_past,
             last_used: Instant::now(),
+            in_use: false,
             checkpoint: None,
             checkpoint_state: None,
         }
@@ -1369,31 +1672,44 @@ mod tests {
     }
 
     #[test]
-    fn select_prefers_longest_prefix_then_least_recently_used() {
+    fn select_prefers_longest_prefix_then_least_recently_used_and_skips_busy_slots() {
         let mut table = SlotTable::new(3, true, None);
         table.slots[0].keys = tok(&[1, 2]);
         table.slots[0].n_past = 2;
         table.slots[1].keys = tok(&[1, 2, 3, 4]);
         table.slots[1].n_past = 4;
-        let (i, plan) = table.select(&tok(&[1, 2, 3, 4, 5]), true);
+        let (i, plan) = table.select(&tok(&[1, 2, 3, 4, 5]), true).unwrap();
         assert_eq!(i, 1);
         assert_eq!(plan, CachePlan::Keep(reuse(4, 4)));
-        // No overlap anywhere: the least recently used slot wins (slot 2 was never used, but all
-        // three share the creation instant, so make slot 0 clearly older).
+        // The best slot is busy: the next best wins.
+        table.slots[1].in_use = true;
+        let (i, plan) = table.select(&tok(&[1, 2, 3, 4, 5]), true).unwrap();
+        assert_eq!((i, plan), (0, CachePlan::Keep(reuse(2, 2))));
+        table.slots[1].in_use = false;
+        // No overlap anywhere: the least recently used slot wins.
         table.slots[0].last_used = Instant::now() - Duration::from_secs(60);
-        let (i, plan) = table.select(&tok(&[9]), true);
+        let (i, plan) = table.select(&tok(&[9]), true).unwrap();
         assert_eq!((i, plan), (0, CachePlan::Clear));
         // M-RoPE models never reuse.
-        let (_, plan) = table.select(&tok(&[1, 2, 3, 4, 5]), false);
+        let (_, plan) = table.select(&tok(&[1, 2, 3, 4, 5]), false).unwrap();
         assert_eq!(plan, CachePlan::Clear);
+        // Everything busy: nothing to select.
+        for s in &mut table.slots {
+            s.in_use = true;
+        }
+        assert!(table.select(&tok(&[1]), true).is_none());
+        assert!(!table.has_free());
     }
 
     #[test]
-    fn idle_slots_expire() {
-        let mut table = SlotTable::new(2, true, None);
+    fn idle_slots_expire_unless_busy() {
+        let mut table = SlotTable::new(3, true, None);
         table.slots[0].keys = tok(&[1]);
         table.slots[0].last_used = Instant::now() - Duration::from_secs(10);
         table.slots[1].keys = tok(&[1]);
+        table.slots[2].keys = tok(&[1]);
+        table.slots[2].last_used = Instant::now() - Duration::from_secs(10);
+        table.slots[2].in_use = true;
         let expired = table.expired(Duration::from_secs(5), Instant::now());
         assert_eq!(expired, vec![0]);
         table.reset();

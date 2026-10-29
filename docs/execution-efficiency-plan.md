@@ -11,8 +11,28 @@ per-model histograms on `/metrics`, `backend/scripts/bench.sh`, baseline in
 (`slots`, default 1), prefix reuse with multimodal chunk ids (`prefix_cache`), results in
 `docs/bench/after-B-2026-10-29.md`. D: `synthesize_speech_stream` on the backend trait, Kokoro
 streams each chunk as ONNX Runtime returns it, `POST /v1/audio/speech` with `"stream": true`
-returns raw PCM or a live WAV. C and E are not started. The motivation and the comparison with
-vLLM-Omni are summarised in section 1; the rest is the work. Line numbers refer to the tree before A.
+returns raw PCM or a live WAV. C: the worker decodes every active slot in one `llama_batch` per
+step (chunked prefill, per-slot sampling by batch index, non-blocking per-slot streaming);
+`hypnos.example.toml` gives both Gemma chat models `slots = 4`. E is not started. The motivation
+and the comparison with vLLM-Omni are summarised in section 1; the rest is the work. Line numbers
+refer to the tree before A.
+
+What C measured (`docs/bench/after-C-2026-10-29.md`, four concurrent clients, 128 tokens each):
+
+| Model | Single client | Four clients, aggregate | Ratio | Slowest TTFT |
+| :--- | :--- | :--- | :--- | :--- |
+| gemma4:26b-q4 (MoE, 4 slots) | 114 tokens/s | 248 tokens/s, wall 2.1 s (was 4.9 s) | 2.18x | 171 ms (was 3.7 s) |
+| gemma4:e4b-q4 (dense, 4 slots) | 94 tokens/s | 103 tokens/s | 1.10x | 102 ms |
+
+Single-client TTFT and the prefix-cache results of B are unchanged. The 2.5x target of section 5
+is not reached on either model, for different reasons. On the 26B a four-sequence step costs 1.7x a
+single-sequence step: with a mixture of experts every extra sequence routes to more distinct
+experts, so the weights read per step grow with the batch. On the E4B a four-sequence step costs
+3.6x a single step although all 42 layers are on the GPU, so some per-token work is not batched at
+all; the Gemma E-series per-layer token embeddings, which llama.cpp gathers per token outside the
+GPU graph, are the prime suspect and need a look in the engine before `slots > 1` is worth
+anything on that model. Also visible in scenario 6: with `slots = 4` the 26B books 3.5 GiB more KV,
+so it and the E4B still evict each other on every voice turn (work item E's co-residency lease).
 
 What D measured (600-character paragraph, Kokoro on CPU): time to first audio 5.4 s without
 streaming, 385 ms with it (engine 364 ms), total synthesis unchanged at 5.5 s. Section 6 asked for

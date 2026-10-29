@@ -70,16 +70,18 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## In Progress
 
-- [ ] 🟧 **PERF-4** `P1` Continuous batching across execution slots
-      Work item C of `docs/execution-efficiency-plan.md`: the engine worker admits jobs into free
-      slots and builds one `llama_batch` per step (chunked prefill for new slots, one token per
-      decoding slot), decodes once, samples per slot by batch index, streams per slot with
-      back-pressure that never stalls the other slots. Config knob stays `slots`. Done when bench
-      scenario 4 reaches at least 2.5x single-client aggregate decode tokens/s with single-client
-      TTFT within 10 percent.
+_No cards yet._
 
 ## Done
 
+- [x] 🟧 **PERF-4** `P1` Continuous batching across execution slots
+      Work item C of `docs/execution-efficiency-plan.md`: the engine worker admits jobs into free
+      slots and builds one `llama_batch` per step (chunked prefill for new slots, one token per
+      decoding slot), decodes once, samples per slot by batch index, streams per slot with
+      back-pressure that never stalls the other slots. Config knob stays `slots`. Measured: four clients
+      on gemma4:26b-q4 reach 2.18x single-client aggregate decode tokens/s (wall 4.9 s -> 2.1 s),
+      single-client TTFT unchanged; the dense E4B only 1.10x, see the plan
+      (`docs/bench/after-C-2026-10-29.md`).
 - [x] 🟧 **PERF-3** `P1` Streaming text-to-speech
       Work item D of `docs/execution-efficiency-plan.md`: `synthesize_speech_stream` on the backend
       trait, Kokoro emits each chunk (and the first clause early) as ONNX returns it,

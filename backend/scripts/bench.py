@@ -296,6 +296,7 @@ def chat_row(label, r):
         fmt(eng(tel, "prefill_ms"), 0),
         fmt(eng(tel, "prefill_tokens_per_s"), 0),
         fmt(eng(tel, "decode_tokens_per_s"), 1),
+        fmt(eng(tel, "concurrent_slots")),
         fmt(tel.get("tier_switch_latency_ms"), 0) if tel else "n/a",
         tel.get("previous_tier", "n/a") if tel else "n/a",
     ]
@@ -304,7 +305,7 @@ def chat_row(label, r):
 CHAT_HEADER = [
     "run", "TTFT ms", "total ms", "prompt tok", "cached tok", "completion tok", "decode tok/s (client)",
     "engine TTFT ms", "queue ms", "context ms", "prefill ms",
-    "prefill tok/s", "decode tok/s (engine)", "tier switch ms", "previous tier",
+    "prefill tok/s", "decode tok/s (engine)", "slots", "tier switch ms", "previous tier",
 ]
 
 
