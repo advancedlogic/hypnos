@@ -24,3 +24,6 @@ backend/hypnos.toml
 
 # Release archives (backend/scripts/package-release.sh)
 /dist/
+
+# Python bytecode from the scripts (bench.py, soak.py)
+__pycache__/

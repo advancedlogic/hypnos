@@ -69,14 +69,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       Kokoro and Gemma 4 E4B transcription, check the license, the API stability and whether its
       ggml builds shared cleanly; close the card with the numbers if it does not clearly win.
       After TEST-1 and TEST-2.
-- [ ] 🟨 **TEST-1** `P1` Soak test: many clients for hours, memory and bookings must stay flat
-      All measurements so far are single-client scenarios (`backend/scripts/bench.sh`). Run the
-      bench scenarios in a loop with 4-8 concurrent clients across modalities for several hours
-      against a release build, sampling `/v1/memory/status` (process footprint, VRAM booked vs.
-      real free, unaccounted), `/metrics` (promotions, evictions, load failures, rejections),
-      the picture store and the request-log ring. Pass: no growth after warm-up, no deadlock, no
-      429 storm, every eviction explained. Script it as `backend/scripts/soak.sh` with a report
-      like `docs/bench/`, and fix what it finds (file them as BUG cards).
 - [ ] 🟧 **PERF-7** `P2` Gemma 4 26B decodes at 12 tokens/s on the RTX 5090 laptop; VRAM is full
       The request log and the soak show 12 tok/s for `gemma4:26b-q4` (README: ~100 tok/s on a
       24 GB CUDA GPU). `/v1/memory/status` has the device full: 21.8 GB booked plus 3.9 GB
@@ -85,6 +77,10 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       Confirm with a smaller booking (`slots = 2` or a 8k context) and nvidia-smi, then either
       lower the default booking for 24 GB cards or make the planner keep a margin above the
       unaccounted reading (`vram_safety_margin_bytes` is 1 GiB).
+      Also seen in the confirmation soak: MOSS-Image placed fully on the GPU by the booking, then
+      sd.cpp failed with "reported free 0.00 MB" needing 518 MB of workspace: the planner should
+      compare against the device's real free memory (it is read at every reconcile) and refuse or
+      shrink a placement the device cannot hold, not only its own bookings.
 
 ## In Progress
 
@@ -101,6 +97,28 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       archives were never attached; the step now uploads into an existing or draft release.
 
 ## Done
+
+- [x] 🟨 **TEST-1** `P1` Soak test: many clients for hours, memory and bookings must stay flat
+      All measurements so far are single-client scenarios (`backend/scripts/bench.sh`). Run the
+      bench scenarios in a loop with 4-8 concurrent clients across modalities for several hours
+      against a release build, sampling `/v1/memory/status` (process footprint, VRAM booked vs.
+      real free, unaccounted), `/metrics` (promotions, evictions, load failures, rejections),
+      the picture store and the request-log ring. Pass: no growth after warm-up, no deadlock, no
+      429 storm, every eviction explained. Script it as `backend/scripts/soak.sh` with a report
+      like `docs/bench/`, and fix what it finds (file them as BUG cards).
+      Shipped: `backend/scripts/soak.sh` / `soak.py` (stdlib, reuses bench.py's client): N
+      workers pick chat, streaming chat, vision, speech, embeddings, entities and document
+      conversion (pictures kept, then released) by weight, one worker generates an image every
+      `--image-every` seconds to force evictions, a sampler reads `/v1/memory/status`, `/metrics`
+      and the log ring; the report (`docs/bench/soak-2026-10-30.md`) carries pass/fail verdicts
+      (footprint and unaccounted VRAM flat after the warm-up with an absolute floor, no 5xx
+      other than 507 capacity refusals, 429 under 5 %, no stall, no load failures, every
+      eviction explained) plus per-kind latency and the samples. Found and fixed BUG-1 (eviction
+      racing a fast-path lease) in the two-minute shakedown and BUG-2 (fast path during a load)
+      in the 45-minute run; filed PERF-7 (12 tok/s decode on a full device). 45 min x 4 clients:
+      3,705 requests, 2 errors (BUG-2), footprint +1.3 % after warm-up. Confirmation run after
+      BUG-2 (`soak-2026-10-30-after-bug2.md`, 12 min): 1,130 requests, no entities error, one
+      image 500 from sd.cpp finding the device full (PERF-7), footprint +0.3 %.
 
 - [x] 🟥 **BUG-2** `P1` A request could run on an engine that was still loading
       Found by the 45-minute soak (TEST-1): two entities requests answered 500 "model
