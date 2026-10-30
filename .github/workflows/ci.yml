@@ -1,9 +1,13 @@
 name: ci
 
 on:
+  # Changes that only touch prose build nothing. A required status check stays pending on such a
+  # PR; run the workflow by hand (workflow_dispatch) if one is ever needed.
   push:
     branches: [main]
+    paths-ignore: ["docs/**", "website/**", "**/*.md"]
   pull_request:
+    paths-ignore: ["docs/**", "website/**", "**/*.md"]
   workflow_dispatch:
 
 concurrency:
@@ -23,8 +27,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned, unlike the builds: each Rust release adds lints, and `-D warnings` would turn a
+      # new release into a red main with no code change. Bump it deliberately, together with the
+      # fixes the new clippy asks for (the version the project is developed with).
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.98.0
           components: rustfmt, clippy
       - name: Vendor engine sources
         # Cargo loads every workspace member's path dependencies, even for the engine-free crates.

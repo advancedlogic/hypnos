@@ -64,7 +64,9 @@ Build notes:
 - The first backend build compiles every native engine (10-20 min). CMake generator is forced to
   Ninja; the Visual Studio generator ignores `CUDAHOSTCXX`.
 - `.github/workflows/ci.yml` runs fmt + clippy, the CPU (Linux, Windows) and Metal (macOS) builds
-  and tests, and the frontend build on every push to main and every PR.
+  and tests, and the frontend build on every push to main and every PR, except changes that only
+  touch `docs/`, `website/` or `*.md`. Clippy runs on a pinned Rust (1.98.0 in the lint job;
+  the builds use current stable): bump it on purpose, with the fixes the new lints ask for.
 - `.github/workflows/release.yml` builds the CUDA (Linux, Windows) and Metal archives on a `v*` tag
   and publishes them as a GitHub release; a manual run only builds them as artifacts.
 - `backend/backend.http` has ready-made requests for the VS Code REST Client extension.
