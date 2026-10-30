@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 /// Supported GPU compute & memory architectures.
@@ -118,6 +119,7 @@ pub enum ModelPriority {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelArchitectureParams {
     /// Total number of transformer / DiT blocks that can be split between GPU and CPU.
+    #[serde(default = "default_num_layers")]
     pub num_layers: u32,
     /// Number of Key/Value attention heads per layer (GQA/MQA aware). Zero for non-KV models.
     #[serde(default)]
@@ -147,8 +149,25 @@ pub struct ModelArchitectureParams {
     /// Peak transient workspace / scratch activation buffer in bytes during forward pass.
     #[serde(default = "default_activation_workspace")]
     pub activation_workspace_bytes: u64,
+    /// Keys written in the config's `[models.arch]` table, recorded by
+    /// [`HypnosConfig::from_toml_str`]. `None` when the params were built in code; then every
+    /// field counts as explicit and [`HypnosConfig::detect_arch_from_gguf`] leaves them alone.
+    #[serde(skip)]
+    pub configured_keys: Option<BTreeSet<String>>,
 }
 
+impl ModelArchitectureParams {
+    /// Whether `key` was set explicitly (and must not be replaced by detected values).
+    pub fn is_configured(&self, key: &str) -> bool {
+        self.configured_keys
+            .as_ref()
+            .is_none_or(|keys| keys.contains(key))
+    }
+}
+
+fn default_num_layers() -> u32 {
+    32
+}
 fn default_head_dim() -> u32 {
     128
 }
@@ -175,6 +194,7 @@ impl Default for ModelArchitectureParams {
             kv_dtype: KvDataType::F16,
             non_layer_overhead_bytes: 512 * 1024 * 1024,
             activation_workspace_bytes: default_activation_workspace(),
+            configured_keys: None,
         }
     }
 }
@@ -565,7 +585,122 @@ impl ValidationReport {
 
 impl HypnosConfig {
     pub fn from_toml_str(content: &str) -> crate::error::Result<Self> {
-        toml::from_str(content).map_err(|e| crate::error::HypnosError::Config(e.to_string()))
+        let err = |e: toml::de::Error| crate::error::HypnosError::Config(e.to_string());
+        let mut config: Self = toml::from_str(content).map_err(err)?;
+        // Serde fills defaults silently; remember which arch keys the file actually wrote so GGUF
+        // detection can fill the rest without overriding them.
+        let raw: toml::Table = toml::from_str(content).map_err(err)?;
+        let raw_models = raw.get("models").and_then(|m| m.as_array());
+        for (i, model) in config.models.iter_mut().enumerate() {
+            let keys = raw_models
+                .and_then(|m| m.get(i))
+                .and_then(|m| m.get("arch"))
+                .and_then(|a| a.as_table())
+                .map(|t| t.keys().cloned().collect())
+                .unwrap_or_default();
+            model.arch.configured_keys = Some(keys);
+        }
+        Ok(config)
+    }
+
+    /// Fills `[models.arch]` fields the config left unset from each model's GGUF metadata
+    /// (`block_count`, `head_count_kv`, `key_length`, `context_length`, sliding window). Explicit
+    /// values are kept. Returns one line per model describing what was detected, for the log.
+    pub fn detect_arch_from_gguf(&mut self, base_dir: &std::path::Path) -> Vec<String> {
+        let mut notes = Vec::new();
+        for m in &mut self.models {
+            let path = if m.weights_path.is_absolute() {
+                m.weights_path.clone()
+            } else {
+                base_dir.join(&m.weights_path)
+            };
+            let is_gguf = path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("gguf"));
+            if !is_gguf || !path.is_file() || m.arch.configured_keys.is_none() {
+                continue;
+            }
+            let meta = match crate::gguf::GgufArchMetadata::read(&path) {
+                Ok(Some(meta)) => meta,
+                Ok(None) => continue,
+                Err(e) => {
+                    notes.push(format!("'{}': could not read GGUF metadata: {e}", m.id));
+                    continue;
+                }
+            };
+            let arch = &mut m.arch;
+            let mut applied = Vec::new();
+            let mut kept = Vec::new();
+            let mut fill = |key: &str, detected: Option<u32>, field: &mut u32, configured: bool| {
+                let Some(v) = detected else { return };
+                if !configured {
+                    *field = v;
+                    applied.push(format!("{key}={v}"));
+                } else if *field != v {
+                    kept.push(format!("{key}={} (GGUF says {v})", *field));
+                }
+            };
+            let c = |k: &str| arch.is_configured(k);
+            let (c_layers, c_kv, c_dim, c_ctx) = (
+                c("num_layers"),
+                c("num_kv_heads"),
+                c("head_dim"),
+                c("max_context_len"),
+            );
+            let (c_swa, c_global) = (c("sliding_window_len"), c("global_attn_every_n_layers"));
+            fill(
+                "num_layers",
+                meta.block_count,
+                &mut arch.num_layers,
+                c_layers,
+            );
+            fill(
+                "num_kv_heads",
+                meta.head_count_kv,
+                &mut arch.num_kv_heads,
+                c_kv,
+            );
+            fill("head_dim", meta.head_dim, &mut arch.head_dim, c_dim);
+            fill(
+                "max_context_len",
+                meta.context_length,
+                &mut arch.max_context_len,
+                c_ctx,
+            );
+            // Sliding-window fields are optional; fill them as a pair so a config that sets only
+            // one of them is not half-overridden.
+            if !c_swa && !c_global {
+                if let (Some(w), Some(n)) = (meta.sliding_window, meta.global_attn_every_n_layers) {
+                    arch.sliding_window_len = Some(w);
+                    arch.global_attn_every_n_layers = Some(n);
+                    applied.push(format!(
+                        "sliding_window_len={w}, global_attn_every_n_layers={n}"
+                    ));
+                }
+            }
+            // A detected training context below the configured default would fail validation;
+            // the default is a reservation, so shrink it to what the model supports.
+            if !arch.is_configured("default_context_len")
+                && arch.default_context_len > arch.max_context_len
+            {
+                arch.default_context_len = arch.max_context_len;
+                applied.push(format!("default_context_len={}", arch.max_context_len));
+            }
+            let mut line = format!(
+                "'{}': [models.arch] from GGUF ({})",
+                m.id, meta.architecture
+            );
+            line += &if applied.is_empty() {
+                ": nothing to fill".to_string()
+            } else {
+                format!(": {}", applied.join(", "))
+            };
+            if !kept.is_empty() {
+                line += &format!("; kept from config: {}", kept.join(", "));
+            }
+            notes.push(line);
+        }
+        notes
     }
 
     /// Checks the configuration against the filesystem and basic invariants. `base_dir` is the

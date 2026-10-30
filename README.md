@@ -132,12 +132,9 @@ weights_path = "models/Qwen3-8B-Q4_K_M.gguf"
 priority = "high"                    # realtime_pinned | high | normal | low
 initial_tier = "tier2_pinned_ram"    # stage in RAM at startup; default tier3_nvme_ssd loads on first use
 
-[models.arch]                        # used to size the KV cache and the GPU/CPU layer split
-num_layers = 36                      # GGUF <arch>.block_count
-num_kv_heads = 8                     # GGUF <arch>.attention.head_count_kv
-head_dim = 128                       # GGUF <arch>.attention.key_length
-default_context_len = 8192
-max_context_len = 32768
+[models.arch]                        # optional; sizes the KV cache and the GPU/CPU layer split
+default_context_len = 8192           # context reserved per load (layers, KV heads, head_dim,
+                                     # max context and sliding window are read from the GGUF)
 kv_dtype = "q8_0"                    # f16 | q8_0 | q4_0
 ```
 
@@ -147,10 +144,11 @@ HYPNOS_CONFIG=my.toml ./run.sh start backend     # or: cd backend && ./target/re
 
 On Windows: `set HYPNOS_CONFIG=my.toml` and then `run.bat start backend`.
 
-- Hypnos does not read `[models.arch]` from the GGUF yet: copy the three values from the file's
-  metadata (the Hugging Face file page shows it, or `gguf-dump` from llama.cpp's `gguf-py`). Wrong
-  values only make the VRAM plan inaccurate; the defaults assume 32 layers, 8 KV heads and
-  `head_dim = 128`.
+- `[models.arch]` fields you leave out are read from the GGUF header at startup
+  (`<arch>.block_count`, `.attention.head_count_kv`, `.attention.key_length`, `.context_length`,
+  `.attention.sliding_window[_pattern]`) and logged; values you set always win, and a mismatch with
+  the file is logged too. Per-layer values (Gemma 4) are booked at their largest, so the plan errs
+  on the safe side.
 - Weight size is read from the file. `[server]`, `[limits]` and `[hardware]` are optional; GPU
   memory is detected, so you only set budgets to stay below what the device has.
 - Speech, text-to-speech and image generation need the engine-specific fields shown in

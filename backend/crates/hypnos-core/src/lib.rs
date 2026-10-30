@@ -1,5 +1,6 @@
 pub mod config;
 pub mod error;
+pub mod gguf;
 pub mod kv_cache;
 pub mod openai;
 pub mod request;

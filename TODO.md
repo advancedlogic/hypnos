@@ -92,12 +92,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       30-60 s screen recording of the playground while chat, speech and image requests move
       models between tiers (evictions and promotions visible). Keep it under ~5 MB, save under
       `assets/`, and replace the `DOC-3` placeholder comment at the top of `README.md`.
-- [ ] 🟫 **MEM-1** `P2` Read `[models.arch]` defaults from GGUF metadata
-      Custom models must copy `num_layers`, `num_kv_heads` and `head_dim` from the GGUF by hand
-      (README "Bring your own models"); the defaults (32 / 8 / 128) misplan anything else. Fill
-      unset fields from `<arch>.block_count`, `.attention.head_count_kv`, `.attention.key_length`,
-      `.context_length` and the sliding-window keys, keep explicit config values, and log what
-      was detected. `gguf_inspector.rs` already parses the header.
 
 ## In Progress
 
@@ -105,6 +99,17 @@ _No cards yet._
 
 ## Done
 
+- [x] 🟫 **MEM-1** `P2` Read `[models.arch]` defaults from GGUF metadata
+      Custom models must copy `num_layers`, `num_kv_heads` and `head_dim` from the GGUF by hand
+      (README "Bring your own models"); the defaults (32 / 8 / 128) misplan anything else. Fill
+      unset fields from `<arch>.block_count`, `.attention.head_count_kv`, `.attention.key_length`,
+      `.context_length` and the sliding-window keys, keep explicit config values, and log what
+      was detected. `gguf_inspector.rs` already parses the header.
+      Shipped: std-only reader `hypnos-core/src/gguf.rs` (per-layer arrays booked at their max,
+      bool `sliding_window_pattern` turned into `global_attn_every_n_layers`), `from_toml_str`
+      records the arch keys the file wrote, `HypnosConfig::detect_arch_from_gguf` fills the rest
+      before `validate` and logs applied / kept values. Code-built configs (default profile) are
+      left alone. Detected values match the hand-tuned Gemma 4 entries.
 - [x] 🟧 **PERF-5** `P1` Benchmark model swap latency: cold vs warm vs hot
       The 3-tier hierarchy is the headline claim but no bench measures it (baseline shows 9
       promotions averaging ~4.8 s each). Add a `bench.sh` scenario that times the first request

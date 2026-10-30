@@ -101,6 +101,7 @@ fn model(id: &str, weight_gb: u64, priority: ModelPriority, initial: MemoryTier)
             kv_dtype: KvDataType::F16,
             non_layer_overhead_bytes: 64 * 1024 * 1024,
             activation_workspace_bytes: 64 * 1024 * 1024,
+            configured_keys: None,
         },
     }
 }

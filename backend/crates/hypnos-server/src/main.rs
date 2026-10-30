@@ -71,8 +71,13 @@ async fn main() -> Result<()> {
         .server
         .apply_env_api_keys(std::env::var("HYPNOS_API_KEYS").ok().as_deref());
 
-    // Fail fast on a broken configuration instead of on the first request.
+    // Fill unset [models.arch] fields from the GGUF headers before validating them.
     let base_dir = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+    for note in config.detect_arch_from_gguf(&base_dir) {
+        info!(config = %note);
+    }
+
+    // Fail fast on a broken configuration instead of on the first request.
     let report = config.validate(&base_dir);
     for w in &report.warnings {
         warn!(config_warning = %w);

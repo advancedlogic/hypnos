@@ -68,6 +68,7 @@ pub fn default_six_model_config() -> HypnosConfig {
                     kv_dtype: KvDataType::Q8_0,
                     non_layer_overhead_bytes: 2304 * mb,
                     activation_workspace_bytes: 768 * mb,
+                    configured_keys: None,
                 },
             },
             // 2. Gemma 4 E4B Q4_0 — Audio / Speech-to-Text (+ text + vision chat)
@@ -99,6 +100,7 @@ pub fn default_six_model_config() -> HypnosConfig {
                     kv_dtype: KvDataType::Q8_0,
                     non_layer_overhead_bytes: 1536 * mb,
                     activation_workspace_bytes: 512 * mb,
+                    configured_keys: None,
                 },
             },
             // 3. Kokoro 82M (fp16 ONNX) — Text-to-Speech on CPU via ONNX Runtime.
@@ -131,6 +133,7 @@ pub fn default_six_model_config() -> HypnosConfig {
                     kv_dtype: KvDataType::F16,
                     non_layer_overhead_bytes: 15 * mb,
                     activation_workspace_bytes: 64 * mb,
+                    configured_keys: None,
                 },
             },
             // 4. EmbeddingGemma 2 Q8_0 — Dense Vector Embeddings (768-dim, mean pooling)
@@ -162,6 +165,7 @@ pub fn default_six_model_config() -> HypnosConfig {
                     kv_dtype: KvDataType::F16,
                     non_layer_overhead_bytes: 100 * mb,
                     activation_workspace_bytes: 128 * mb,
+                    configured_keys: None,
                 },
             },
             // 5. MOSS-Image SFT Q4_K — Image Generation (stable-diffusion.cpp)
@@ -193,6 +197,7 @@ pub fn default_six_model_config() -> HypnosConfig {
                     kv_dtype: KvDataType::F16,
                     non_layer_overhead_bytes: 6 * gb,
                     activation_workspace_bytes: 3 * gb,
+                    configured_keys: None,
                 },
             },
         ],

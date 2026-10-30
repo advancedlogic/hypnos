@@ -231,6 +231,7 @@ mod tests {
                 kv_dtype: KvDataType::Q8_0,
                 non_layer_overhead_bytes: 1200 * 1024 * 1024,
                 activation_workspace_bytes: 512 * 1024 * 1024,
+                configured_keys: None,
             },
         }
     }
