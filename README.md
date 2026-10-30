@@ -9,9 +9,10 @@
   with a scheduler that decides what lives in VRAM so you don't have to.</b>
 </p>
 
-Hypnos serves chat, vision, speech-to-text, text-to-speech, embeddings and image generation from a
-single Rust process. llama.cpp, stable-diffusion.cpp and ONNX Runtime are linked in, so there is no
-Python, no sidecar and no second server competing for the same GPU. A lease-based scheduler moves
+Hypnos serves chat, vision, speech-to-text, text-to-speech, embeddings, image generation, document
+conversion and entity extraction from a single Rust process. llama.cpp, stable-diffusion.cpp, ONNX
+Runtime, docling.rs and GLiNER are linked in, so there is no Python, no sidecar and no second server
+competing for the same GPU. A lease-based scheduler moves
 models between GPU memory, pinned RAM and NVMe on demand: the models you use all the time stay hot,
 the big ones come in when asked for, and nothing is evicted while a request is using it.
 
@@ -34,12 +35,13 @@ the big ones come in when asked for, and nothing is evicted while a request is u
 - **Runs on CUDA (Windows, Linux) and Apple Silicon (Metal).**
 
 <p align="center">
-  <img src="assets/demo.gif" alt="Playground: a chat request promotes Gemma 4 26B to the GPU, an image request evicts it for MOSS-Image, TTS answers from a pinned model, and the next chat swaps the 26B back in" width="960">
+  <img src="assets/demo.gif" alt="Playground: a chat request promotes Gemma 4 26B from pinned RAM to the GPU, docling converts a PDF and keeps its pictures, GLiNER extracts entities, an image request evicts the 26B for MOSS-Image, Kokoro answers from a pinned model, and the next chat swaps the 26B back in" width="960">
 </p>
 
-<p align="center"><sub>The playground on an Apple M5 Max limited to a simulated 32 GB machine
-(<code>simulate_physical_memory_bytes</code>), real time: chat, image, speech, chat. The 26B model and
-MOSS-Image don't fit together, so each request evicts the other; Kokoro and the embedder stay pinned.</sub></p>
+<p align="center"><sub>The playground on an RTX 5090 laptop GPU (24 GB) with the default lineup: chat, a PDF
+through docling with its pictures kept, entity extraction with GLiNER, an image, speech, chat. The 26B
+model and MOSS-Image don't fit together, so each request evicts the other; Kokoro and the embedder stay
+pinned. 95 s of real time with the waits shortened (<code>tools/demo-gif/</code> re-records it).</sub></p>
 
 ### Measured
 
@@ -52,6 +54,8 @@ Measured on one 24 GB CUDA GPU with the default lineup (full reports in [docs/be
 | Follow-up question about the same image | 300 ms → **105 ms** (image not re-encoded) |
 | Four concurrent chat clients | **2.18x** the aggregate decode throughput of one (continuous batching) |
 | Text-to-speech, time to first audio | 5.4 s → **385 ms** with streaming synthesis |
+| Document conversion (docling), text page / page with two tables | **49 ms** / 1.07 s on the GPU, 133 ms / 0.9 s on the CPU (RTX 5090 laptop; [report](docs/bench/docling-cuda-2026-10-30.md)) |
+| Entity extraction (GLiNER2.5), 1,700 words with 11 labels | **1.5 s** on an M5 Max CPU, models loaded in under a second |
 
 Model swap: time to the first token of Gemma 4 26B-A4B Q4 (15.8 GB) depending on where the
 scheduler finds it, measured on an Apple M5 Max (128 GB, Metal) with the OS page cache dropped for
@@ -204,7 +208,12 @@ On Windows: `set HYPNOS_CONFIG=my.toml` and then `run.bat start backend`.
   memory is detected, so you only set budgets to stay below what the device has.
 - Speech, text-to-speech and image generation need the engine-specific fields shown in
   [backend/hypnos.example.toml](backend/hypnos.example.toml), which documents every option.
-  Startup validates the config and prints one error per problem.
+  Document conversion (`engine = "docling"`, `modality = "document_conversion"`) and entity
+  extraction (`engine = "gliner"`, `modality = "entity_extraction"`) point `weights_path` at a
+  model file inside their model folder (`docling/layout_heron_int8.onnx`,
+  `gliner2.5-multi/encoder_fp32.onnx`)
+  and run on the CPU with `device = "cpu"`, so they book host RAM rather than VRAM; the example
+  config has both blocks. Startup validates the config and prints one error per problem.
 
 ---
 

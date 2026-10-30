@@ -1,0 +1,14 @@
+{
+  "name": "hypnos-demo-gif",
+  "private": true,
+  "description": "Records assets/demo.gif: headless Chromium drives the playground while requests move models between tiers.",
+  "scripts": {
+    "postinstall": "playwright install chromium",
+    "record": "node record.js ../../assets/demo.gif pictures.pdf"
+  },
+  "dependencies": {
+    "gifenc": "1.0.3",
+    "playwright": "1.56.1",
+    "pngjs": "7.0.0"
+  }
+}

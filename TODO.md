@@ -50,7 +50,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 6   | 5   | 4   | 6    | 1   | 7     | 6   | 3    |
+| 2  | 6   | 5   | 4   | 7    | 1   | 7     | 6   | 3    |
 
 ---
 
@@ -118,6 +118,17 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       (429s, evictions, slow first token, OOM), how to read `hypnos_telemetry` and the `/metrics`
       histograms, what every 4xx / 5xx and error `type` means and the fix, log levels and
       redaction, upgrade and rollback, and the Docker / systemd / Windows service recipes.
+- [ ] 🟧 **PERF-6** `P1` Tier 2 -> Tier 1 promotion of the 26B takes 23-59 s on Windows CUDA
+      Seen while recording the demo on the RTX 5090 laptop (request log, 2026-10-30): the first
+      chat after startup promoted `gemma4:26b-q4` from pinned RAM in 23.2 s, and the chat after an
+      image generation in 58.7 s, against 0.99 s from Tier 2 on the M5 Max
+      (`docs/bench/swap-metal-2026-10-29.md`). Find where the time goes (`hypnos_telemetry`
+      has only the total switch; add phases: weight upload, context + KV allocation for
+      `slots x default_context_len`, mmproj load, warm-up), check that the CUDA path uploads from
+      the VirtualLock'd Tier 2 pages rather than re-reading the file through llama.cpp's own mmap,
+      and whether MOSS-Image's unload (text encoder, VAE) is paid inside the next promotion. This
+      is PERF-5's CUDA swap measurement (`bench.sh --scenarios 7`) with a target: Tier 2 should
+      beat Tier 3 clearly, and a 16 GB upload over PCIe 4/5 is 2-4 s, not 20-60.
 
 ## In Progress
 
@@ -339,6 +350,9 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       Shipped: `assets/demo.gif` (46 s, 0.76 MB), recorded headless with Playwright from timed
       screenshots against a demo server on an M5 Max with `simulate_physical_memory_bytes` = 32 GB,
       so the 26B chat model and MOSS-Image evict each other. README placeholder replaced.
+      Re-recorded 2026-10-30 on the RTX 5090 laptop with the documents (pictures kept) and
+      entities tabs in the sequence; the recorder now lives in `tools/demo-gif/` (Playwright +
+      gifenc, 1.66 MB, 45 s playback of 95 s real time).
 - [x] 🟫 **MEM-1** `P2` Read `[models.arch]` defaults from GGUF metadata
       Custom models must copy `num_layers`, `num_kv_heads` and `head_dim` from the GGUF by hand
       (README "Bring your own models"); the defaults (32 / 8 / 128) misplan anything else. Fill
