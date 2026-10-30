@@ -121,16 +121,28 @@ fn decode_data_uri(uri: &str, fallback_mime: &str) -> Result<(String, Vec<u8>)> 
 
 impl PictureStore {
     /// Opens the store in `dir` (default: `hypnos-pictures` under the OS temporary directory),
-    /// creating it and removing documents left behind by an earlier run.
+    /// creating it and removing documents an earlier run left behind once they are past `ttl`.
     pub fn open(dir: Option<&Path>, ttl: Duration, max_bytes: u64) -> std::io::Result<Self> {
         let dir = dir
             .map(Path::to_path_buf)
             .unwrap_or_else(|| std::env::temp_dir().join("hypnos-pictures"));
         std::fs::create_dir_all(&dir)?;
+        // Only documents past their TTL: another instance on this machine may share the
+        // directory (the default one is shared), and its live documents must survive our start.
+        let expired = |path: &Path| {
+            std::fs::metadata(path)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age >= ttl)
+        };
         let mut stale = 0;
         for entry in std::fs::read_dir(&dir)?.flatten() {
             let name = entry.file_name();
-            if is_document_id(&name.to_string_lossy()) && entry.path().is_dir() {
+            if is_document_id(&name.to_string_lossy())
+                && entry.path().is_dir()
+                && expired(&entry.path())
+            {
                 if std::fs::remove_dir_all(entry.path()).is_ok() {
                     stale += 1;
                 }
@@ -490,10 +502,25 @@ mod tests {
         std::fs::write(stale.join("1.json"), b"{}").unwrap();
         let other = dir.join("keep-me");
         std::fs::create_dir_all(&other).unwrap();
-        let store = PictureStore::open(Some(&dir), Duration::from_secs(60), 0).unwrap();
+        let store = PictureStore::open(Some(&dir), Duration::ZERO, 0).unwrap();
         assert!(!stale.exists());
         assert!(other.exists(), "only document directories are touched");
         let _ = std::fs::remove_dir_all(store.dir());
+    }
+
+    #[test]
+    fn a_second_store_on_the_same_directory_keeps_live_documents() {
+        // Two servers on one machine share the default directory (API-6 allows several).
+        let first = temp_store(Duration::from_secs(60), 0);
+        let id = first.new_document();
+        first.add_page(&id, 1, &[picture("Figure 1")]).unwrap();
+        let second = PictureStore::open(Some(first.dir()), Duration::from_secs(60), 0).unwrap();
+        assert!(
+            first.get(&id, 1).unwrap().is_some(),
+            "the first server's picture survived"
+        );
+        drop(second);
+        let _ = std::fs::remove_dir_all(first.dir());
     }
 
     #[test]
