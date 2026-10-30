@@ -266,21 +266,26 @@ impl ModelScheduler {
             let needed_ctx = requested_context_len
                 .unwrap_or(cfg.arch.default_context_len)
                 .min(cfg.arch.max_context_len);
-            if let Some(current_plan) = self
-                .memory
-                .increment_lease_if_resident(model_id, needed_ctx)?
-            {
-                return Ok(ActiveModelLease {
-                    model_id: model_id.to_string(),
-                    memory: self.memory.clone(),
-                    backend,
-                    previous_tier: MemoryTier::Tier1GpuVram,
-                    placement: current_plan,
-                    tier_switch_latency_ms: 0.0,
-                    evicted_models: Vec::new(),
-                    load_phases: None,
-                    _admission: admission,
-                });
+            // The booking is written before the engine finishes loading (BUG-2): only an engine
+            // that reports itself resident serves from the fast path; otherwise the request waits
+            // for the transition lock, which the load in progress holds.
+            if backend.is_resident() {
+                if let Some(current_plan) = self
+                    .memory
+                    .increment_lease_if_resident(model_id, needed_ctx)?
+                {
+                    return Ok(ActiveModelLease {
+                        model_id: model_id.to_string(),
+                        memory: self.memory.clone(),
+                        backend,
+                        previous_tier: MemoryTier::Tier1GpuVram,
+                        placement: current_plan,
+                        tier_switch_latency_ms: 0.0,
+                        evicted_models: Vec::new(),
+                        load_phases: None,
+                        _admission: admission,
+                    });
+                }
             }
         }
 
@@ -300,22 +305,25 @@ impl ModelScheduler {
             .unwrap_or(cfg.arch.default_context_len)
             .min(cfg.arch.max_context_len);
 
-        // Double-check after acquiring transition_lock
-        if let Some(current_plan) = self
-            .memory
-            .increment_lease_if_resident(model_id, needed_ctx)?
-        {
-            return Ok(ActiveModelLease {
-                model_id: model_id.to_string(),
-                memory: self.memory.clone(),
-                backend,
-                previous_tier: MemoryTier::Tier1GpuVram,
-                placement: current_plan,
-                tier_switch_latency_ms: switch_start.elapsed().as_secs_f64() * 1000.0,
-                evicted_models: Vec::new(),
-                load_phases: None,
-                _admission: admission,
-            });
+        // Double-check after acquiring transition_lock (a load that held it has finished or
+        // rolled back by now, so the engine's residency is settled).
+        if backend.is_resident() {
+            if let Some(current_plan) = self
+                .memory
+                .increment_lease_if_resident(model_id, needed_ctx)?
+            {
+                return Ok(ActiveModelLease {
+                    model_id: model_id.to_string(),
+                    memory: self.memory.clone(),
+                    backend,
+                    previous_tier: MemoryTier::Tier1GpuVram,
+                    placement: current_plan,
+                    tier_switch_latency_ms: switch_start.elapsed().as_secs_f64() * 1000.0,
+                    evicted_models: Vec::new(),
+                    load_phases: None,
+                    _admission: admission,
+                });
+            }
         }
 
         let is_uma = self.memory.is_unified_memory();

@@ -387,6 +387,56 @@ async fn cancelled_while_another_load_holds_the_transition_lock() {
 }
 
 #[tokio::test]
+async fn no_fast_path_lease_while_the_engine_is_still_loading() {
+    // BUG-2: the booking says Tier 1 as soon as the load starts; a second request must wait for
+    // the engine to be resident instead of running on it (GLiNER answered "not loaded").
+    let (sched, mocks) = build(
+        12,
+        vec![model(
+            "a",
+            2,
+            ModelPriority::Normal,
+            MemoryTier::Tier3NvmeSsd,
+        )],
+        4,
+    );
+    mocks[0].block_loads.store(true, Ordering::SeqCst);
+    let first = {
+        let sched = sched.clone();
+        tokio::spawn(async move {
+            let ctx = RequestContext::unbounded();
+            sched.acquire_model("a", None, 1, &ctx).await.map(|_| ())
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // The booking already says Tier 1 (what the fast path used to trust)...
+    let booked = sched.memory().get_model_state("a").unwrap().1;
+    assert_eq!(booked.primary_tier, MemoryTier::Tier1GpuVram);
+    assert!(!mocks[0].is_resident());
+    // ...but a second request does not get a lease until the engine is resident.
+    let second = {
+        let sched = sched.clone();
+        tokio::spawn(async move {
+            let ctx = RequestContext::unbounded();
+            let lease = sched.acquire_model("a", None, 1, &ctx).await.unwrap();
+            lease.backend.is_resident()
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(
+        !second.is_finished(),
+        "the second request waited for the load"
+    );
+    mocks[0].gate.notify_one();
+    first.await.unwrap().unwrap();
+    assert!(
+        second.await.unwrap(),
+        "served only once the engine was resident"
+    );
+    assert_eq!(sched.memory().active_leases("a"), 0);
+}
+
+#[tokio::test]
 async fn load_failures_are_counted_per_model() {
     let (sched, mocks) = build(
         12,

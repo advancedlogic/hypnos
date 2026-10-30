@@ -50,7 +50,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 6   | 5   | 4   | 8    | 2   | 7     | 6   | 3    |
+| 2  | 6   | 5   | 4   | 8    | 3   | 7     | 6   | 3    |
 
 ---
 
@@ -101,6 +101,15 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       archives were never attached; the step now uploads into an existing or draft release.
 
 ## Done
+
+- [x] 🟥 **BUG-2** `P1` A request could run on an engine that was still loading
+      Found by the 45-minute soak (TEST-1): two entities requests answered 500 "model
+      'gliner2.5-multi' is not loaded" in the 3.8 s between the scheduler booking Tier 1 for the
+      model and the engine finishing its load. The booking is written before `apply_placement`
+      runs, and the fast path trusted it. Fixed: both fast paths in `acquire_model` first ask
+      the engine `is_resident()` (every engine implements it) and otherwise wait for the
+      transition lock, which the load in progress holds. Scheduler test
+      `no_fast_path_lease_while_the_engine_is_still_loading` with a load blocked on a gate.
 
 - [x] 🟨 **TEST-2** `P2` Cover the engine failure paths and contain engine crashes
       The CUDA lifecycle test (`multi_modal_lifecycle.rs`) runs only by hand with real weights.
