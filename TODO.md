@@ -129,6 +129,9 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       known risks), then download each archive and run `scripts/smoke_test.sh` against it on its
       platform. Afterwards the README's prebuilt-binaries section must match what the release
       actually contains.
+      Found so far: the v0.1.0 release was made in the GitHub UI (that creates the tag and starts
+      the run), and the publish step's `gh release create` fails on an existing release, so the
+      archives were never attached; the step now uploads into an existing or draft release.
 
 ## Done
 

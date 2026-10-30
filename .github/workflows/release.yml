@@ -214,6 +214,15 @@ jobs:
           v3 or later (text included); Hypnos's own code is MIT OR Apache-2.0. Corresponding source:
           https://github.com/${GITHUB_REPOSITORY}/tree/${GITHUB_REF_NAME}
           EOF
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --title "Hypnos $GITHUB_REF_NAME" --notes-file notes.md \
-            -- *.tar.gz *.zip SHA256SUMS
+          # A release made in the GitHub UI (which creates the tag) or left as a draft when its tag
+          # moved gets the archives attached and is published; otherwise one is created.
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber \
+              -- *.tar.gz *.zip SHA256SUMS
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false \
+              --title "Hypnos $GITHUB_REF_NAME" --notes-file notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --title "Hypnos $GITHUB_REF_NAME" --notes-file notes.md \
+              -- *.tar.gz *.zip SHA256SUMS
+          fi
