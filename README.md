@@ -430,6 +430,10 @@ check free space first.
 
 ## Operating the server
 
+[docs/operating.md](docs/operating.md) is the operator's guide: sizing a machine for a lineup,
+which knob to turn for which symptom, reading the telemetry and `/metrics`, every error and its
+fix, log levels and redaction, upgrades, and the Docker / systemd / Windows service recipes.
+
 | Endpoint | Purpose |
 | :--- | :--- |
 | `GET /health` | liveness: version and uptime |

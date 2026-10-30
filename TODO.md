@@ -78,12 +78,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       A C++ abort inside llama.cpp / sd.cpp takes the whole process down: document the
       supervisor expectation (run scripts, Docker restart policy, systemd unit) and add a
       per-engine crash counter to `/metrics` so restarts are visible.
-- [ ] ⬜ **DOC-5** `P2` Write an operator's guide (sizing, knobs, telemetry, errors)
-      `docs/operating.md` for people who run Hypnos rather than build it: sizing a box for a
-      lineup (VRAM / pinned RAM budgets, slots x context), which knob to turn for which symptom
-      (429s, evictions, slow first token, OOM), how to read `hypnos_telemetry` and the `/metrics`
-      histograms, what every 4xx / 5xx and error `type` means and the fix, log levels and
-      redaction, upgrade and rollback, and the Docker / systemd / Windows service recipes.
 
 ## In Progress
 
@@ -100,6 +94,19 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       archives were never attached; the step now uploads into an existing or draft release.
 
 ## Done
+
+- [x] ⬜ **DOC-5** `P2` Write an operator's guide (sizing, knobs, telemetry, errors)
+      `docs/operating.md` for people who run Hypnos rather than build it: sizing a box for a
+      lineup (VRAM / pinned RAM budgets, slots x context), which knob to turn for which symptom
+      (429s, evictions, slow first token, OOM), how to read `hypnos_telemetry` and the `/metrics`
+      histograms, what every 4xx / 5xx and error `type` means and the fix, log levels and
+      redaction, upgrade and rollback, and the Docker / systemd / Windows service recipes.
+      Shipped: `docs/operating.md`: sizing (what Tier 1 / Tier 2 bookings add up to, the budget
+      rule for pinned RAM), a symptom -> knob table, the telemetry fields and `/metrics` series
+      with alerts worth having, every status / error `type` and its fix, log levels and
+      redaction, exposure, upgrade and rollback with `config_version`, Docker / systemd (with
+      `LimitMEMLOCK`) / Windows service recipes and the supervision model, a go-live checklist.
+      Linked from the README's "Operating the server"; CLAUDE.md asks to keep it in step.
 
 - [x] 🟧 **PERF-6** `P1` Tier 2 -> Tier 1 promotion of the 26B takes 23-59 s on Windows CUDA
       Seen while recording the demo on the RTX 5090 laptop (request log, 2026-10-30): the first
