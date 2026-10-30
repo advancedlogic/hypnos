@@ -394,7 +394,7 @@ check free space first.
 | Endpoint | Purpose |
 | :--- | :--- |
 | `GET /health` | liveness: version and uptime |
-| `GET /ready` | readiness: 503 until startup tier initialization has finished |
+| `GET /ready` | readiness: 503 until startup tier initialization has finished. The port is open from the start: `/health`, `/v1/memory/status` (where the staging shows), `/v1/models` and `/v1/logs` answer meanwhile, while the inference and placement routes answer 503 `model_not_available` with `Retry-After` instead of queueing behind a model load that can take minutes |
 | `GET /metrics` | Prometheus text: per-route counters and latency, scheduler promotions/evictions/load failures/rejections, VRAM bookkeeping vs. real device memory, per-model tier and leases, and per-model execution histograms (`hypnos_chat_ttft_ms`, `hypnos_chat_queue_ms`, `hypnos_chat_context_ms`, `hypnos_chat_prefill_tokens_per_s`, `hypnos_chat_decode_tokens_per_s`, `hypnos_tts_rtf`, `hypnos_tts_ttfa_ms`, `hypnos_stt_rtf`, `hypnos_image_jct_s`; each also exposes a `_last` gauge) and prefix-cache counters (`hypnos_prefix_cache_hits_total`, `_misses_total`, `_tokens_reused_total`) |
 | `GET /v1/memory/status` | full 3-tier snapshot, including `tier1_vram_real_free_bytes` and `tier1_vram_unaccounted_bytes` |
 | `POST /v1/memory/tier` | manual promote / demote (`{"model": "...", "target_tier": "tier2_pinned_ram"}`); refused with 429 while the model is leased |

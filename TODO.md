@@ -50,7 +50,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 4   | 5   | 2   | 6    | 1   | 6     | 5   | 1    |
+| 2  | 6   | 5   | 4   | 6    | 1   | 7     | 6   | 3    |
 
 ---
 
@@ -78,12 +78,73 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       costs: S3 + CloudFront free tier covers a site this size). Optional follow-up: a
       `website.yml` GitHub Actions job that syncs on every push to `main` touching `website/`
       (OIDC role, no long-lived keys).
+- [ ] 🟨 **TEST-1** `P1` Soak test: many clients for hours, memory and bookings must stay flat
+      All measurements so far are single-client scenarios (`backend/scripts/bench.sh`). Run the
+      bench scenarios in a loop with 4-8 concurrent clients across modalities for several hours
+      against a release build, sampling `/v1/memory/status` (process footprint, VRAM booked vs.
+      real free, unaccounted), `/metrics` (promotions, evictions, load failures, rejections),
+      the picture store and the request-log ring. Pass: no growth after warm-up, no deadlock, no
+      429 storm, every eviction explained. Script it as `backend/scripts/soak.sh` with a report
+      like `docs/bench/`, and fix what it finds (file them as BUG cards).
+- [ ] 🟨 **TEST-2** `P2` Cover the engine failure paths and contain engine crashes
+      The CUDA lifecycle test (`multi_modal_lifecycle.rs`) runs only by hand with real weights.
+      Add engine-free tests for CUDA OOM mid-generation (mock backend failing on the n-th token:
+      the lease is released, the slot cleared, the request answers 5xx), a weights file that
+      changes or disappears under a resident model, and cancellation during a tier transition.
+      A C++ abort inside llama.cpp / sd.cpp takes the whole process down: document the
+      supervisor expectation (run scripts, Docker restart policy, systemd unit) and add a
+      per-engine crash counter to `/metrics` so restarts are visible.
+- [ ] 🟪 **API-5** `P2` Per-key rate limits and quotas, and redaction in the request log
+      API keys are all-or-nothing. Add per-key limits in `[server]` (requests per minute,
+      concurrent requests, tokens per day) enforced in `auth::require_api_key` with 429 and
+      `Retry-After`, a key label in the request log and `/metrics`, and an audit line per
+      rejected call. The request log captures prompts and completions at `debug`: add
+      `request_log_redact` (patterns or "all") and keep `info` the documented level for anything
+      exposed beyond a trusted group. Until then the README should say to put a gateway in front.
+- [ ] 🟫 **MEM-2** `P3` Expose GPU device health on /metrics (utilisation, temperature, errors)
+      `/metrics` covers bookings and placements but not the device itself. Through the existing
+      probe path (`GpuMemoryProbe`, NVML / `nvidia-smi` on CUDA, IOKit on Apple Silicon) export
+      utilisation, temperature, power, clock throttling and Xid / driver error counts, sampled
+      with the VRAM reconcile; show the first three in the playground's tier visualizer header.
+- [ ] 🟫 **MEM-3** `P3` Version the config and the model manifest with a migration path
+      `HypnosConfig` has no schema version; the first breaking change to a field or to
+      `models.manifest` will break every deployed `hypnos.toml`. Add `config_version` (absent =
+      1) with per-version migration notes in the README, warnings for deprecated keys instead of
+      silent acceptance, and a `hypnos --check-config` mode that prints what `validate` and the
+      GGUF detection would do without starting the server.
+- [ ] ⬜ **DOC-5** `P2` Write an operator's guide (sizing, knobs, telemetry, errors)
+      `docs/operating.md` for people who run Hypnos rather than build it: sizing a box for a
+      lineup (VRAM / pinned RAM budgets, slots x context), which knob to turn for which symptom
+      (429s, evictions, slow first token, OOM), how to read `hypnos_telemetry` and the `/metrics`
+      histograms, what every 4xx / 5xx and error `type` means and the fix, log levels and
+      redaction, upgrade and rollback, and the Docker / systemd / Windows service recipes.
 
 ## In Progress
 
-_No cards yet._
+- [ ] ⬛ **BUILD-6** `P1` Cut the first release (v0.1.0) and prove the release pipeline
+      No `v*` tag had ever been pushed: the archives, the Docker image on GHCR and the publish
+      job have never run on GitHub, while the README's quickstart points at them. Push the tag,
+      watch the three archive jobs, the Docker push and the publish job, fix what fails (the
+      Linux link of `docling-cuda`, the Windows esaxx CRT, runner disk and time limits are the
+      known risks), then download each archive and run `scripts/smoke_test.sh` against it on its
+      platform. Afterwards the README's prebuilt-binaries section must match what the release
+      actually contains.
 
 ## Done
+
+- [x] 🟪 **API-4** `P2` Listen before startup pre-staging so /ready answers 503 instead of nothing
+      `main.rs` runs `initialize_startup_tiers` before binding the port: with the 26B model
+      pre-staged into pinned RAM that is about 3 minutes during which `/health` and `/ready` are
+      unreachable, so orchestrators and `run.sh status` see a dead process. Bind first, serve
+      `/health` and a 503 `/ready` while staging runs in a background task (the `ready` flag
+      already exists), and refuse `/v1/*` with 503 `model_not_available` until it finishes.
+      Keep graceful shutdown working mid-staging.
+      Shipped: `main.rs` binds and serves first and runs `initialize_startup_tiers` as a task that
+      flips `ready` (a failure there is logged and the models load on demand); a shutdown during
+      staging aborts the task and releases what was loaded. `require_ready` answers 503
+      `model_not_available` + `Retry-After: 5` on the inference and placement routes until then;
+      `/health`, `/ready` (503), `/v1/memory/status`, `GET /v1/models`, `/v1/logs` and the stored
+      picture routes stay open. Router test `tests/ready.rs`; README and CLAUDE.md updated.
 
 - [x] ⬛ **BUILD-4** `P3` Ship docling on CUDA in the release archives and the Docker image
       ENG-3 left docling's CUDA path behind the `docling-cuda` feature. ort's prebuilt GPU build of

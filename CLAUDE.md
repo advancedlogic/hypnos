@@ -93,7 +93,10 @@ on them.
 
 ### Request lifecycle
 
-0. With `server.api_keys` (or `HYPNOS_API_KEYS`) set, `auth::require_api_key` answers 401 for any
+0. `main.rs` binds the port before `initialize_startup_tiers`, which runs as a background task
+   and flips `AppState::ready`; until then `require_ready` answers 503 `model_not_available` on
+   the inference and placement routes (`/health`, `/ready` (503), `/v1/memory/status`,
+   `GET /v1/models` and `/v1/logs` stay open). With `server.api_keys` (or `HYPNOS_API_KEYS`) set, `auth::require_api_key` answers 401 for any
    `/v1/*` request without a matching `Authorization: Bearer` key (it runs inside CORS and
    `observe_request`; `/health`, `/ready` and, by default, `/metrics` stay open). `[server.tls]`
    makes `main.rs` serve HTTPS through axum-server + rustls (ring provider).

@@ -160,21 +160,30 @@ async fn run() -> Result<()> {
         .memory()
         .set_gpu_probe(std::sync::Arc::new(hypnos_backends::LlamaGpuProbe));
 
-    // Pre-stage models configured with `initial_tier = tier1_gpu_vram` / `tier2_pinned_ram`.
-    state.scheduler.initialize_startup_tiers().await?;
-    state.ready.store(true, Ordering::SeqCst);
-
-    let status = state.scheduler.status();
-    info!(
-        accelerator = ?status.capabilities.accelerator,
-        topology = ?status.capabilities.topology,
-        vram_booked_mb = status.tier1_vram_used_bytes / (1024 * 1024),
-        vram_effective_free_mb = status.tier1_vram_effective_free_bytes / (1024 * 1024),
-        vram_real_free_mb = status.tier1_vram_real_free_bytes.map(|v| v / (1024 * 1024)),
-        pinned_ram_used_mb = status.tier2_pinned_ram_used_bytes / (1024 * 1024),
-        models_registered = status.models.len(),
-        "Hypnos 3-Tier Memory Coordinator ready"
-    );
+    // Listen before the startup pre-staging (`initial_tier = tier1_gpu_vram` / `tier2_pinned_ram`),
+    // which takes minutes with a large model: `/health` answers at once, `/ready` and the
+    // inference routes say 503 until it is done, and `/v1/memory/status` shows its progress.
+    let staging = {
+        let state = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = state.scheduler.initialize_startup_tiers().await {
+                // Models not pre-staged load on their first request; the server still serves.
+                error!(error = %e, "Startup tier initialization failed; models load on demand");
+            }
+            state.ready.store(true, Ordering::SeqCst);
+            let status = state.scheduler.status();
+            info!(
+                accelerator = ?status.capabilities.accelerator,
+                topology = ?status.capabilities.topology,
+                vram_booked_mb = status.tier1_vram_used_bytes / (1024 * 1024),
+                vram_effective_free_mb = status.tier1_vram_effective_free_bytes / (1024 * 1024),
+                vram_real_free_mb = status.tier1_vram_real_free_bytes.map(|v| v / (1024 * 1024)),
+                pinned_ram_used_mb = status.tier2_pinned_ram_used_bytes / (1024 * 1024),
+                models_registered = status.models.len(),
+                "Hypnos 3-Tier Memory Coordinator ready"
+            );
+        })
+    };
 
     let mut app = build_router(state.clone(), &allowed_origins);
     if let Some(dir) = &playground {
@@ -208,6 +217,10 @@ async fn run() -> Result<()> {
     }
 
     state.ready.store(false, Ordering::SeqCst);
+    // A shutdown during pre-staging: stop staging further models (the load in progress finishes,
+    // `shutdown` waits for the transition lock) and release what was loaded.
+    staging.abort();
+    let _ = staging.await;
     state.scheduler.shutdown().await;
     info!("Hypnos stopped");
     Ok(())

@@ -243,6 +243,7 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
         .route("/metrics", get(metrics_endpoint))
         // Inside observe_request (rejections get a request id, metrics and a log entry) and inside
         // CORS (preflights are answered before it, and a 401 still carries CORS headers).
+        .layer(middleware::from_fn_with_state(state.clone(), require_ready))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_api_key,
@@ -272,6 +273,37 @@ pub fn playground_dir(configured: Option<&std::path::Path>) -> Option<PathBuf> {
 /// so static files skip authentication and the request log (the API calls it makes do not).
 pub fn with_playground(router: Router, dir: &std::path::Path) -> Router {
     router.fallback_service(ServeDir::new(dir).append_index_html_on_directories(true))
+}
+
+/// Routes that stay open while startup pre-staging runs: observation and the logs, not inference
+/// or placement changes, which would queue behind the transition lock for minutes.
+fn open_while_staging(method: &axum::http::Method, route: &str) -> bool {
+    !route.starts_with("/v1/")
+        || route.starts_with("/v1/logs")
+        || route == "/v1/memory/status"
+        || (route == "/v1/models" && method == axum::http::Method::GET)
+        // Stored pictures are served from disk, no model involved.
+        || (route.starts_with("/v1/documents/") && route != "/v1/documents/convert")
+}
+
+/// Answers 503 `model_not_available` on inference and placement routes until the startup tier
+/// initialization has finished (`/ready` reports the same), so a request made during the minutes
+/// a large model takes to pre-stage is refused at once rather than queued behind that load.
+async fn require_ready(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    if state.ready.load(Ordering::SeqCst) || open_while_staging(req.method(), req.uri().path()) {
+        return next.run(req).await;
+    }
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, "5")],
+        Json(json!({
+            "error": {
+                "message": "Hypnos is still pre-staging its startup models; retry shortly (GET /ready reports when it is done)",
+                "type": "model_not_available",
+            }
+        })),
+    )
+        .into_response()
 }
 
 /// Routes whose calls go into the request log (inference and manual tier changes; not the
