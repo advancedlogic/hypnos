@@ -1,6 +1,8 @@
 # Keep shell scripts runnable on Linux/macOS checkouts even when core.autocrlf=true (Windows):
 # bash rejects CRLF line endings. Batch files stay CRLF, which cmd.exe expects.
 *.sh  text eol=lf
+# fetch-models.sh reads it line by line; keep it LF so a CRLF checkout cannot hide the rows.
+backend/models.manifest text eol=lf
 *.bat text eol=crlf
 *.cmd text eol=crlf
 # Keep patch files byte-exact so they apply cleanly on every platform

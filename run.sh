@@ -40,8 +40,11 @@ case "$(uname -s)" in
     *) IS_WINDOWS=0 ;;
 esac
 
-# Apple Silicon: Metal instead of the default CUDA engines, and the unified-memory profile.
-CARGO_FEATURE_FLAGS=()
+# CUDA platforms also build ONNX Runtime's CUDA provider for docling's device = "gpu" (prebuilt by
+# ort, downloaded on the first build; the server works without the CUDA 13 runtime it needs until a
+# docling model is configured for the GPU), as the release archives do. Apple Silicon: Metal instead
+# of the default CUDA engines, and the unified-memory profile.
+CARGO_FEATURE_FLAGS=(--features docling-cuda)
 if [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ]; then
     CARGO_FEATURE_FLAGS=(--no-default-features --features metal)
     [ -z "${HYPNOS_CONFIG:-}" ] && [ -f "$ROOT_DIR/backend/hypnos.macos.example.toml" ] && BACKEND_CONFIG="hypnos.macos.example.toml"

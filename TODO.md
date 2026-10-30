@@ -50,7 +50,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 4   | 5   | 2   | 6    | 1   | 5     | 5   | 1    |
+| 2  | 4   | 5   | 2   | 6    | 1   | 6     | 5   | 1    |
 
 ---
 
@@ -62,7 +62,30 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       it for `POST /v1/audio/transcriptions` as an alternative to the llama.cpp/mtmd path,
       selected per model in the config. Check its ggml does not clash with llama.cpp's (build
       shared like sd.cpp if needed), then add models to `models.manifest` and the example configs.
-- [ ] ⬛ **BUILD-4** `P3` Ship docling on CUDA in the release archives and the Docker image
+- [ ] ⬛ **BUILD-5** `P2` Publish the website on hypnos.maai.solutions (AWS S3)
+      Serve the static site from DOC-4 (`website/`) at https://hypnos.maai.solutions. An S3
+      bucket alone only gives HTTP on an AWS hostname, so the custom domain with HTTPS needs a
+      private S3 bucket behind CloudFront (origin access control, `index.html` default root,
+      cache policy for the static assets) with an ACM certificate issued in us-east-1 (DNS
+      validation) and a DNS record for `hypnos` in the `maai.solutions` zone (Route 53 alias if
+      the zone is there, otherwise a CNAME at the current DNS provider). Deliverable, one of:
+      (a) Terraform under `infra/website/` (bucket, OAC, CloudFront distribution, ACM cert +
+      validation records, DNS record; variables for domain, zone and region; `terraform output`
+      with the distribution id) plus a `deploy.sh` that runs `aws s3 sync website/ s3://<bucket>
+      --delete` and a CloudFront invalidation; or (b) `docs/website-deploy.md` with the same
+      steps done by hand in the console / AWS CLI. Either way write `docs/website-deploy.md`
+      (prerequisites: AWS account, CLI profile, where the zone lives; first deploy; updating;
+      costs: S3 + CloudFront free tier covers a site this size). Optional follow-up: a
+      `website.yml` GitHub Actions job that syncs on every push to `main` touching `website/`
+      (OIDC role, no long-lived keys).
+
+## In Progress
+
+_No cards yet._
+
+## Done
+
+- [x] ⬛ **BUILD-4** `P3` Ship docling on CUDA in the release archives and the Docker image
       ENG-3 left docling's CUDA path behind the `docling-cuda` feature. ort's prebuilt GPU build of
       ONNX Runtime 1.31 is CUDA 13 only, while llama.cpp / sd.cpp target CUDA 12.8 (driver 570+).
       Shipping it means a CUDA 13 runtime and cuDNN 9 (CUDA 13) beside the CUDA 12 one, driver
@@ -70,12 +93,19 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       package-release.sh, a cuDNN base image for Docker, and Kokoro / GLiNER on that ONNX Runtime.
       Decide the driver floor first (or build ONNX Runtime against CUDA 12), then measure on an
       NVIDIA GPU whether TableFormer-heavy documents gain enough to justify it.
-
-## In Progress
-
-_No cards yet._
-
-## Done
+      Shipped: measured first on an RTX 5090 laptop against its CPU
+      (`docs/bench/docling-cuda-2026-10-30.md`): text pages 133 -> 49 ms, an OCR'd scan 2.1 -> 1.75 s,
+      a page with two tables 0.9 -> 1.07 s (TableFormer's decoder is latency-bound), 5.7 GB VRAM
+      booked. Driver floor unchanged: the provider library (90 MB) is loaded only for a docling
+      model with `device = "gpu"`, which then needs driver 580+, the CUDA 13 runtime and cuDNN 9
+      (verified: CPU path runs with the libraries removed; the GPU path names the missing library).
+      `--features docling-cuda` in the Linux / Windows release jobs, `run.sh` / `run.bat` and the
+      Dockerfile (`--build-arg DOCLING_CUDA=1` adds the CUDA 13 runtime + cuDNN to the image);
+      `package-release.sh` copies `onnxruntime_providers_cuda` + `_shared` and documents the
+      requirements in README.txt; CI links the feature instead of only checking it. Arena growth
+      back to power-of-two under the per-session cap (1.27 -> 1.07 s on table pages). Kokoro and
+      GLiNER checked on the same ONNX Runtime build. Also fixed `fetch-models.sh` skipping every
+      row of a CRLF checkout of `models.manifest`.
 
 - [x] 🟪 **API-3** `P2` Allow enabling and disabling models without removing their config
       Per-model `enabled = true|false` in `[[models]]` (default true): a disabled model keeps its

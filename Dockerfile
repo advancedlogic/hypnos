@@ -10,6 +10,10 @@
 ARG CUDA_VERSION=12.8.1
 # 24.04 or newer: ort's prebuilt static ONNX Runtime needs glibc 2.38+ and GCC 14's libstdc++.
 ARG UBUNTU=ubuntu24.04
+# DOCLING_CUDA=1 adds the CUDA 13 runtime and cuDNN 9 to the image (about 1.5 GB) so a docling
+# model with device = "gpu" can run; the provider library itself is always in the image. The
+# default image converts documents on the CPU, which needs none of this.
+ARG DOCLING_CUDA=0
 
 # --- playground --------------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS frontend
@@ -43,7 +47,7 @@ COPY . .
 RUN ./backend/scripts/vendor.sh
 # CMAKE_CUDA_ARCHITECTURES is left to ggml's portable default (as in the release archives).
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    cd backend && cargo build --release -p hypnos-server ${JOBS:+-j "$JOBS"}
+    cd backend && cargo build --release -p hypnos-server --features docling-cuda ${JOBS:+-j "$JOBS"}
 COPY --from=frontend /src/frontend/dist frontend/dist
 RUN ./backend/scripts/package-release.sh linux-x64-cuda --version "$VERSION" --out /dist \
     && mv "/dist/hypnos-$VERSION-linux-x64-cuda" /dist/hypnos
@@ -59,6 +63,13 @@ LABEL org.opencontainers.image.title="Hypnos" \
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 curl ca-certificates \
         fonts-liberation fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
+# The CUDA images carry NVIDIA's apt repository, which also serves the CUDA 13 packages.
+ARG DOCLING_CUDA
+RUN if [ "$DOCLING_CUDA" = 1 ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            cuda-cudart-13-0 libcublas-13-0 libcudnn9-cuda-13 \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
 COPY --from=build /dist/hypnos /opt/hypnos
 WORKDIR /opt/hypnos
 # Listen on every interface inside the container; publish the port with -p. Without API keys the

@@ -10,6 +10,8 @@
 #
 #   hypnos[.exe]                  server binary
 #   (lib)stable-diffusion.*       sd.cpp shared library, found beside the binary
+#   (lib)onnxruntime_providers_*  CUDA archives: ONNX Runtime's CUDA provider for docling's
+#                                 device = "gpu" (needs the CUDA 13 runtime and cuDNN 9 at run time)
 #   espeak-ng-data/               phoneme data for Kokoro TTS
 #   frontend/                     the built playground, served by hypnos at /
 #   hypnos.toml                   the platform's example config (paths relative to this folder)
@@ -49,6 +51,20 @@ done
 rm -rf "$STAGE"
 mkdir -p "$STAGE/scripts" "$STAGE/licenses" "$STAGE/models"
 cp "$TARGET/$EXE" "$TARGET/$LIB" "$STAGE/"
+# ONNX Runtime's CUDA provider (the `docling-cuda` feature; ort leaves symlinks into its cache next
+# to the binary): loaded only by a docling model with device = "gpu", so the archive works without
+# the CUDA 13 runtime it needs. The TensorRT providers are not used.
+DOCLING_CUDA=0
+case "$PLATFORM" in
+    linux-x64-cuda|windows-x64-cuda)
+        for lib in "$TARGET"/*onnxruntime_providers_cuda.* "$TARGET"/*onnxruntime_providers_shared.*; do
+            [ -e "$lib" ] || continue
+            cp -L "$lib" "$STAGE/"
+            DOCLING_CUDA=1
+        done
+        [ "$DOCLING_CUDA" = 1 ] || echo "note: no ONNX Runtime CUDA provider in $TARGET (built without --features docling-cuda); docling stays CPU-only" >&2
+        ;;
+esac
 cp -R "$TARGET/espeak-ng-data" "$STAGE/espeak-ng-data"
 cp -R "$ROOT/frontend/dist" "$STAGE/frontend"
 cp "$ROOT/backend/$CONFIG" "$STAGE/hypnos.toml"
@@ -86,6 +102,15 @@ fi
             echo "    libcublasLt.so.12 (Ubuntu: apt install cuda-cudart-12-8 libcublas-12-8 from NVIDIA's"
             echo "    repository, or the CUDA toolkit), and libgomp1."
             echo "  - Or use the Docker image: ghcr.io/${GITHUB_REPOSITORY:-advancedlogic/hypnos}"
+            if [ "$DOCLING_CUDA" = 1 ]; then
+            echo "  - Optional, only for docling with device = \"gpu\" (document conversion on the GPU;"
+            echo "    the default device = \"cpu\" needs none of this): NVIDIA driver 580 or newer, the"
+            echo "    CUDA 13 runtime (libcudart.so.13, libcublas.so.13, libcublasLt.so.13) and cuDNN 9 for"
+            echo "    CUDA 13 (libcudnn.so.9) on the loader path (Ubuntu: apt install cuda-cudart-13-0"
+            echo "    libcublas-13-0 libcudnn9-cuda-13 from NVIDIA's repository), plus the fp32 models"
+            echo "    (scripts/fetch-models.sh docling-gpu). libonnxruntime_providers_cuda.so in this"
+            echo "    folder is ONNX Runtime's CUDA provider; it is loaded only for that device."
+            fi
             ;;
         windows-x64-cuda)
             echo "  - Windows 10/11 x64, NVIDIA driver 570 or newer (CUDA 12.8)."
@@ -93,6 +118,16 @@ fi
             echo "    hypnos.exe or on PATH: unpack the matching hypnos-$VERSION-windows-x64-cuda12-runtime.zip"
             echo "    from the same release here, or install the CUDA Toolkit 12.x."
             echo "  - Microsoft Visual C++ Redistributable 2015-2022 (x64)."
+            if [ "$DOCLING_CUDA" = 1 ]; then
+            echo "  - Optional, only for docling with device = \"gpu\" (document conversion on the GPU;"
+            echo "    the default device = \"cpu\" needs none of this): NVIDIA driver 580 or newer, the"
+            echo "    CUDA 13 runtime DLLs (cudart64_13.dll, cublas64_13.dll, cublasLt64_13.dll) and cuDNN 9"
+            echo "    for CUDA 13 (cudnn64_9.dll and its cudnn_*64_9.dll) on PATH or next to hypnos.exe:"
+            echo "    the CUDA Toolkit 13.x plus the cuDNN installer, or the pip wheels nvidia-cuda-runtime-cu13,"
+            echo "    nvidia-cublas-cu13 and nvidia-cudnn-cu13 with their bin folders on PATH. Also the fp32"
+            echo "    models (scripts\\fetch-models.ps1 docling-gpu). onnxruntime_providers_cuda.dll in this"
+            echo "    folder is ONNX Runtime's CUDA provider; it is loaded only for that device."
+            fi
             ;;
         macos-arm64-metal)
             echo "  - Apple Silicon Mac, macOS 14 or newer. Uses Metal and unified memory."

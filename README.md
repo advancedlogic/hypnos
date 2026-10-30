@@ -93,8 +93,8 @@ On Windows: `powershell -ExecutionPolicy Bypass -File scripts\fetch-models.ps1`,
 
 | Archive | Needs |
 | :--- | :--- |
-| `linux-x64-cuda` | glibc 2.39+ (Ubuntu 24.04+), NVIDIA driver 570+, CUDA 12 runtime libraries (`libcudart.so.12`, `libcublas.so.12`, `libcublasLt.so.12`) and `libgomp1` |
-| `windows-x64-cuda` | NVIDIA driver 570+, the release's `windows-x64-cuda12-runtime.zip` unpacked beside `hypnos.exe` (or the CUDA Toolkit 12.x), the MSVC 2015–2022 redistributable |
+| `linux-x64-cuda` | glibc 2.39+ (Ubuntu 24.04+), NVIDIA driver 570+, CUDA 12 runtime libraries (`libcudart.so.12`, `libcublas.so.12`, `libcublasLt.so.12`) and `libgomp1`. Document conversion on the GPU (docling `device = "gpu"`, off by default) also needs driver 580+, the CUDA 13 runtime and cuDNN 9 for CUDA 13 (`apt install cuda-cudart-13-0 libcublas-13-0 libcudnn9-cuda-13`) |
+| `windows-x64-cuda` | NVIDIA driver 570+, the release's `windows-x64-cuda12-runtime.zip` unpacked beside `hypnos.exe` (or the CUDA Toolkit 12.x), the MSVC 2015–2022 redistributable. Document conversion on the GPU also needs driver 580+, the CUDA 13 runtime DLLs and cuDNN 9 for CUDA 13 on `PATH` (CUDA Toolkit 13 + cuDNN, or the pip wheels `nvidia-cuda-runtime-cu13`, `nvidia-cublas-cu13`, `nvidia-cudnn-cu13`) |
 | `macos-arm64-metal` | Apple Silicon, macOS 14+; run `xattr -dr com.apple.quarantine .` once in the folder (the binaries are not notarized) |
 
 The binaries link espeak-ng statically, so the archives are distributed under the GNU GPL v3 or
@@ -470,10 +470,15 @@ Behaviour that matters in production:
   memory is the same for 5 pages or 500; the joined Markdown puts back tables, numbered lists and
   sentences that a page break cut. Images, DOCX, PPTX, XLSX, HTML and Markdown work too.
   `limits.max_document_bytes` (100 MiB) caps the input. `device = "gpu"` runs docling on CoreML
-  (Metal builds) or CUDA (built with `--features docling-cuda`, not part of the release archives:
-  the prebuilt ONNX Runtime GPU build needs CUDA 13 and cuDNN 9) and needs the fp32 models
-  (`./run.sh models docling-gpu`). On Apple Silicon the CPU is faster and lighter; CoreML only
-  frees the CPU cores.
+  (Metal builds) or CUDA (the `docling-cuda` feature: ONNX Runtime's CUDA provider, built by the
+  run scripts, the release archives and the Docker image; at run time it needs driver 580+, the
+  CUDA 13 runtime and cuDNN 9 for CUDA 13, see the release table above, or
+  `docker build --build-arg DOCLING_CUDA=1`) and the fp32 models (`./run.sh models docling-gpu`).
+  Measured on an RTX 5090 laptop against its CPU (`docs/bench/docling-cuda-2026-10-30.md`): pages
+  of text go from 133 to 49 ms, a scanned page through OCR from 2.1 to 1.75 s, but a page with two
+  tables from 0.9 to 1.07 s (TableFormer's decoder is latency-bound), for 5.7 GB of VRAM booked.
+  Worth it for layout- and OCR-heavy documents on a GPU with room to spare; on Apple Silicon the
+  CPU is faster and lighter, CoreML only frees the CPU cores.
 - **Entity extraction** (Hypnos extension): `POST /v1/entities` with `{"model", "input": text or
   [texts], "labels": ["person", "medication", ...], "threshold": 0.5, "flat": true}` returns one
   entity list per text (`text`, `label`, character `start` / `end`, `score`). The labels are free

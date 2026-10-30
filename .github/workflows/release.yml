@@ -48,8 +48,11 @@ jobs:
           # Runtime needs glibc 2.38+ and GCC 14's libstdc++, so 22.04 cannot link. -j 2 caps nvcc at about
           # four processes (cargo -j is also each engine's CMake --parallel); more runs out of the
           # runners' 16 GB on the CUTLASS kernels.
-          - { platform: linux-x64-cuda, os: ubuntu-24.04, cargo: "-j 2" }
-          - { platform: windows-x64-cuda, os: windows-2022, cargo: "-j 2" }
+          # docling-cuda: ONNX Runtime's CUDA provider for docling's device = "gpu" (prebuilt by ort,
+          # no CUDA 13 toolkit needed to build; the provider library ships in the archive and is
+          # loaded only for that device, which then needs the CUDA 13 runtime and cuDNN 9).
+          - { platform: linux-x64-cuda, os: ubuntu-24.04, cargo: "-j 2 --features docling-cuda" }
+          - { platform: windows-x64-cuda, os: windows-2022, cargo: "-j 2 --features docling-cuda" }
           - { platform: macos-arm64-metal, os: macos-15, cargo: "--no-default-features --features metal" }
     steps:
       - uses: actions/checkout@v4
@@ -201,6 +204,9 @@ jobs:
           | \`linux-x64-cuda\` | glibc 2.39+, NVIDIA driver 570+, CUDA 12 runtime (cudart, cuBLAS), libgomp1 |
           | \`windows-x64-cuda\` | NVIDIA driver 570+, plus \`windows-x64-cuda12-runtime.zip\` unpacked beside \`hypnos.exe\` (or the CUDA Toolkit 12.x) |
           | \`macos-arm64-metal\` | Apple Silicon, macOS 14+ |
+
+          Document conversion on the GPU (docling with \`device = "gpu"\`, off by default) additionally
+          needs driver 580+, the CUDA 13 runtime and cuDNN 9 for CUDA 13; see \`README.txt\` in the archive.
 
           Docker (CUDA): \`docker pull ghcr.io/${GITHUB_REPOSITORY}:${GITHUB_REF_NAME#v}\`
 

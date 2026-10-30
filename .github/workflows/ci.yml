@@ -79,11 +79,12 @@ jobs:
         working-directory: backend
         shell: pwsh
         run: cargo test --workspace --no-default-features ${{ matrix.features }}
-      # The docling-cuda path is in no build (its ONNX Runtime needs CUDA 13); keep it compiling.
-      - name: Check the docling-cuda feature
+      # The release archives and the Docker image build with docling-cuda (ONNX Runtime's CUDA
+      # provider, prebuilt by ort): link it here so a broken provider build fails CI, not a release.
+      - name: Build the docling-cuda feature
         if: runner.os == 'Linux'
         working-directory: backend
-        run: cargo check -p hypnos-backends --no-default-features --features docling-cuda
+        run: cargo build -p hypnos-server --no-default-features --features docling-cuda
 
   frontend:
     name: frontend build

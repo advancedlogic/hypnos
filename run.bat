@@ -128,7 +128,9 @@ echo [Hypnos] Building backend ^(%HYPNOS_PROFILE% profile^) -^> %BACKEND_EXE%
 echo          The first build compiles the native engines ^(llama.cpp, stable-diffusion.cpp, espeak-ng^); this takes a while.
 call :ensure_msvc_env
 pushd "%ROOT%\backend"
-%CARGO_CMD% build %CARGO_PROFILE_FLAG% --bin hypnos
+REM --features docling-cuda: ONNX Runtime's CUDA provider for docling's device = "gpu", as in the
+REM release archives (prebuilt by ort; needs the CUDA 13 runtime and cuDNN 9 only when used).
+%CARGO_CMD% build %CARGO_PROFILE_FLAG% --features docling-cuda --bin hypnos
 set "BUILD_RC=!errorlevel!"
 popd
 if not "!BUILD_RC!"=="0" (

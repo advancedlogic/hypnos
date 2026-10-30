@@ -99,7 +99,7 @@ while read -r model repo remote local platform _; do
             ;;
         *) queue "$repo" "$remote" "$MODELS_DIR/$local" ;;
     esac
-done < "$MANIFEST"
+done < <(tr -d '\r' < "$MANIFEST")   # a CRLF checkout must not hide every row behind a stray CR
 
 # Disk space: everything still missing (minus resumable .part data) has to fit, plus a margin.
 if [ "${#Q_DEST[@]}" -gt 0 ]; then

@@ -92,11 +92,14 @@ fn configure_docling(cfg: &ModelConfig) -> Result<PathBuf> {
     }
     set_default_env("DOCLING_RS_EP", provider);
     if provider == "cuda" {
-        // About ten sessions share the booked workspace; cap each arena and stop the power-of-two
-        // growth so the device stays within the booking.
+        // About ten sessions share the booked workspace: cap each arena so the device stays
+        // within the booking. The arena keeps ONNX Runtime's power-of-two growth: growing by
+        // exactly what is asked made the TableFormer decoder, whose KV cache grows every step,
+        // allocate on every step (1270 instead of 1070 ms per two-table page on an RTX 5090
+        // laptop, see docs/bench/docling-cuda-2026-10-30.md).
         let per_session_mb = (cfg.arch.activation_workspace_bytes / 4 / (1024 * 1024)).max(256);
         set_default_env("DOCLING_RS_CUDA_MEM_LIMIT_MB", &per_session_mb.to_string());
-        set_default_env("DOCLING_RS_CUDA_ARENA_EXTEND", "same_as_requested");
+        set_default_env("DOCLING_RS_CUDA_ARENA_EXTEND", "next_power_of_two");
     }
     Ok(dir)
 }

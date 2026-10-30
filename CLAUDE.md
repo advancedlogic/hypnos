@@ -169,9 +169,12 @@ keep that profile in sync with `hypnos.example.toml` when adding models or field
   `DELETE /v1/documents/{id}`, TTL and size cap in `[server]`). docling reads its setup
   from the environment once per process (`configure_docling`: `DOCLING_RS_MODELS_DIR` from
   `weights_path`'s folder, `DOCLING_RS_EP` from `device`, `DOCLING_RS_NO_ARENA=1`), hence one
-  docling model per server. `device = "gpu"`: CoreML in the Metal build, CUDA only with the opt-in
-  `docling-cuda` feature (prebuilt ORT GPU = CUDA 13; `main` calls `prepare_process` before the
-  runtime for its provider-library re-exec). `docling-onnx` is vendored with `PreferCPU`.
+  docling model per server. `device = "gpu"`: CoreML in the Metal build, CUDA with the
+  `docling-cuda` feature, which the run scripts, the release archives and the Docker image build
+  (ort's prebuilt ORT GPU = CUDA 13 + cuDNN 9, loaded only for that device; the provider library
+  ships beside the binary, `main` calls `prepare_process` before the runtime for its
+  provider-library re-exec on Linux; measurements in `docs/bench/docling-cuda-2026-10-30.md`).
+  `docling-onnx` is vendored with `PreferCPU`.
 - `entities.rs`: `gliner` (vendored `gliner25-rs`, `device = "cpu"`). One worker thread owns the
   `BoundaryEngine` from load to unload; more than 8 labels run as families, long texts in windows.
 - `onnx.rs`: ort rc.15 allows one ONNX Runtime environment per process, never rebuilt once
