@@ -167,17 +167,62 @@ spawn() {
     fi
 }
 
-# wait_up <name> <port> <seconds>: waits for the port to be bound; prints the final state.
+# wait_up <name> <port> <seconds>: waits for the port to be bound; prints the final state. Fails
+# when the process exits first (a crash on start, a refused config): a live pid alone is not "up".
 wait_up() {
-    local name="$1" port="$2" secs="$3" pid
+    local name="$1" port="$2" secs="$3" pid bound
+    pid="$(tr -d '[:space:]' < "$RUN_DIR/$name.pid" 2>/dev/null)"
     for _ in $(seq 1 $((secs * 2))); do
-        if pid="$(is_running "$name" "$port")"; then
-            echo "[Hypnos] $name RUNNING (pid $pid) -> http://localhost:$port"
+        bound="$(port_pids "$port" | head -n1)"
+        if [ -n "$bound" ]; then
+            echo "[Hypnos] $name RUNNING (pid $bound) -> http://localhost:$port"
             return 0
+        fi
+        if [ "$IS_WINDOWS" = 0 ] && [ -n "$pid" ] && ! pid_alive "$pid"; then
+            startup_failed "$name"
+            return 1
         fi
         sleep 0.5
     done
     echo "[Hypnos] $name starting in the background -> http://localhost:$port (not bound yet; follow .run/$name.log)"
+}
+
+# startup_failed <name>: the process exited before binding its port; show why.
+startup_failed() {
+    local name="$1" log="$RUN_DIR/$1.log"
+    rm -f "$RUN_DIR/$name.pid"
+    echo "[Hypnos] $name EXITED during startup."
+    if [ -s "$log" ]; then
+        echo "         Last lines of $log:"
+        tail -n 20 "$log" | sed 's/^/         /'
+    else
+        echo "         No output: it was killed before main ran."
+        if [ "$name" = backend ] && [ "$(uname -s)" = Darwin ]; then
+            echo "         On macOS that is usually a code-signature kill of the binary or of"
+            echo "         libstable-diffusion.dylib: see ~/Library/Logs/DiagnosticReports/hypnos-*.ips,"
+            echo "         then ./run.sh build backend."
+        fi
+    fi
+}
+
+# stray_backends: hypnos processes started from this build's binary that do not hold the backend
+# port (an instance left on an old port, or one started by hand). They are not stopped here: a
+# second instance on its own port can be intentional.
+stray_backends() {
+    [ "$IS_WINDOWS" = 1 ] && return 0
+    command -v pgrep >/dev/null 2>&1 || return 0
+    local owner
+    owner="$(port_pids "$BACKEND_PORT" | head -n1)"
+    pgrep -f "^$BACKEND_BIN( |\$)" 2>/dev/null | grep -vx "${owner:-none}"
+}
+
+warn_stray_backends() {
+    local pid
+    for pid in $(stray_backends); do
+        echo "[Hypnos] note: another hypnos from this build is running outside port $BACKEND_PORT (pid $pid):"
+        echo "         $(ps -o args= -p "$pid" 2>/dev/null)"
+        echo "         If it was started by run.sh it still writes to .run/backend.log; stop it with: kill $pid"
+    done
 }
 
 stop_one() {
@@ -258,7 +303,8 @@ start_backend() {
     echo "[Hypnos] backend starting ($HYPNOS_PROFILE build: $BACKEND_BIN)"
     echo "         log: $RUN_DIR/backend.log"
     spawn backend "$ROOT_DIR/backend" "$BACKEND_BIN" "$BACKEND_CONFIG"
-    wait_up backend "$BACKEND_PORT" 5
+    wait_up backend "$BACKEND_PORT" 5 || return 1
+    warn_stray_backends
 }
 
 start_frontend() {
@@ -291,6 +337,7 @@ status_one() {
         else
             echo "[Hypnos] backend binary: not built (./run.sh build backend)"
         fi
+        warn_stray_backends
     fi
 }
 

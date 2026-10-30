@@ -50,7 +50,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 8   | 5   | 4   | 8    | 3   | 7     | 6   | 3    |
+| 2  | 8   | 5   | 4   | 8    | 3   | 8     | 6   | 3    |
 
 ---
 
@@ -88,6 +88,18 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] ⬛ **BUILD-7** `P1` `run.sh` reports a backend that dies on start as running
+      `wait_up` counted a live pid as up, so a backend killed half a second after the spawn
+      printed RUNNING and the UI just said "not connected". It now waits for the port, and a
+      process that exits first prints `EXITED during startup` with the log tail (or, with no
+      output on macOS, the code-signature hint) and fails the command. `start` and `status` name
+      other `hypnos` processes from this build outside the backend port (one left on the old
+      8080 kept writing to `.run/backend.log`). Root cause of the silent kill: the
+      diffusion-rs build script overwrote `libstable-diffusion.dylib` in place, and macOS
+      kills a process that maps a re-written signed file ("Code Signature Invalid", cached per
+      vnode); it now copies beside the target and renames over it
+      (`vendor/patches/diffusion-rs.patch`).
 
 - [x] 🟪 **API-6** `P2` Choose the port on the command line; default 9999
       `hypnos [config.toml] --port N` (also `--port=N`, `-p N`) and `HYPNOS_PORT` override
