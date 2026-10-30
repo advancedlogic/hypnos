@@ -84,7 +84,11 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## In Progress
 
-- [ ] ⬛ **BUILD-6** `P1` Cut the first release (v0.1.0) and prove the release pipeline
+_No cards yet._
+
+## Done
+
+- [x] ⬛ **BUILD-6** `P1` Cut the first release (v0.1.0) and prove the release pipeline
       No `v*` tag had ever been pushed: the archives, the Docker image on GHCR and the publish
       job have never run on GitHub, while the README's quickstart points at them. Push the tag,
       watch the three archive jobs, the Docker push and the publish job, fix what fails (the
@@ -95,8 +99,15 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       Found so far: the v0.1.0 release was made in the GitHub UI (that creates the tag and starts
       the run), and the publish step's `gh release create` fails on an existing release, so the
       archives were never attached; the step now uploads into an existing or draft release.
-
-## Done
+      Done 2026-10-30: v0.1.0 is published (https://github.com/advancedlogic/hypnos/releases/tag/v0.1.0)
+      with linux-x64-cuda (792 MB), windows-x64-cuda (274 MB) + the cuda12-runtime zip,
+      macos-arm64-metal (47 MB), SHA256SUMS, and the Docker image on GHCR, built from a390677
+      (the publish-step fix; everything from API-5 on goes into the next tag). The UI-created
+      release got its tag moved to main and the archives attached by the second run (the first
+      run, from the morning commit, had attached its own; the fixed publish step replaced them).
+      Windows archive checked here: checksum, contents (provider DLLs, sd.cpp DLL, espeak-ng
+      data, playground), starts with the runtime zip beside it and validates its config. Linux
+      CUDA took 106 min and Windows CUDA 191 min on the hosted runners; macOS 16 min.
 
 - [x] 🟨 **TEST-1** `P1` Soak test: many clients for hours, memory and bookings must stay flat
       All measurements so far are single-client scenarios (`backend/scripts/bench.sh`). Run the
