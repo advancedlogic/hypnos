@@ -62,6 +62,13 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       it for `POST /v1/audio/transcriptions` as an alternative to the llama.cpp/mtmd path,
       selected per model in the config. Check its ggml does not clash with llama.cpp's (build
       shared like sd.cpp if needed), then add models to `models.manifest` and the example configs.
+      Decided 2026-10-30: behind an `audio-cpp` Cargo feature, off by default (not in `default`,
+      the run scripts or the release archives at first; a build without it refuses a config that
+      uses it, CI compiles it on one Linux job). Step 1 is a one-day spike before vendoring: build
+      it standalone with CUDA, run one TTS and one STT model, measure quality and speed against
+      Kokoro and Gemma 4 E4B transcription, check the license, the API stability and whether its
+      ggml builds shared cleanly; close the card with the numbers if it does not clearly win.
+      After TEST-1 and TEST-2.
 - [ ] 🟨 **TEST-1** `P1` Soak test: many clients for hours, memory and bookings must stay flat
       All measurements so far are single-client scenarios (`backend/scripts/bench.sh`). Run the
       bench scenarios in a loop with 4-8 concurrent clients across modalities for several hours
