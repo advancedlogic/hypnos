@@ -91,12 +91,31 @@ On Windows: `powershell -ExecutionPolicy Bypass -File scripts\fetch-models.ps1`,
 
 | Archive | Needs |
 | :--- | :--- |
-| `linux-x64-cuda` | glibc 2.35+ (Ubuntu 22.04+), NVIDIA driver 570+, CUDA 12 runtime libraries (`libcudart.so.12`, `libcublas.so.12`, `libcublasLt.so.12`) and `libgomp1` |
+| `linux-x64-cuda` | glibc 2.39+ (Ubuntu 24.04+), NVIDIA driver 570+, CUDA 12 runtime libraries (`libcudart.so.12`, `libcublas.so.12`, `libcublasLt.so.12`) and `libgomp1` |
 | `windows-x64-cuda` | NVIDIA driver 570+, the release's `windows-x64-cuda12-runtime.zip` unpacked beside `hypnos.exe` (or the CUDA Toolkit 12.x), the MSVC 2015–2022 redistributable |
 | `macos-arm64-metal` | Apple Silicon, macOS 14+; run `xattr -dr com.apple.quarantine .` once in the folder (the binaries are not notarized) |
 
 The binaries link espeak-ng statically, so the archives are distributed under the GNU GPL v3 or
 later (see [License](#license)); each one includes the license texts and links its source tag.
+
+### Docker (CUDA)
+
+Linux with an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html):
+
+```bash
+mkdir -p models
+docker run --rm -v ./models:/opt/hypnos/models --entrypoint ./scripts/fetch-models.sh \
+  ghcr.io/advancedlogic/hypnos                       # ~31 GB, or append one model id
+docker run --gpus all -p 8080:8080 -v ./models:/opt/hypnos/models ghcr.io/advancedlogic/hypnos
+```
+
+The playground and API are then on http://127.0.0.1:8080. The image's config is the CUDA example
+(`/opt/hypnos/hypnos.toml`, listening on all interfaces inside the container); mount your own over
+it, or mount one elsewhere and set `-e HYPNOS_CONFIG=/path/in/container.toml`. Set
+`-e HYPNOS_API_KEYS=...` before publishing the port beyond localhost. Build it yourself with
+`docker build -t hypnos .`; `--build-arg JOBS=N` sets the compile parallelism (default 2, which
+fits 16 GB of RAM: some CUDA kernels need several GB each). The image is
+GPL-3.0-or-later as a whole, like the archives; the license texts are in `/opt/hypnos`.
 
 ### From source
 

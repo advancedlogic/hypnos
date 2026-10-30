@@ -58,7 +58,7 @@ jobs:
       - uses: lukka/get-cmake@latest
       - name: Linux build deps
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libclang-dev
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libssl-dev libclang-dev
       - name: MSVC developer environment
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1

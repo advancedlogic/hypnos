@@ -80,11 +80,12 @@ fi
     echo "Requirements:"
     case "$PLATFORM" in
         linux-x64-cuda)
-            echo "  - x86-64 Linux with glibc 2.35 or newer (Ubuntu 22.04+, Debian 12+, RHEL 10+)."
+            echo "  - x86-64 Linux with glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+, RHEL 10+)."
             echo "  - NVIDIA driver 570 or newer (CUDA 12.8)."
             echo "  - CUDA 12 runtime libraries on the loader path: libcudart.so.12, libcublas.so.12,"
             echo "    libcublasLt.so.12 (Ubuntu: apt install cuda-cudart-12-8 libcublas-12-8 from NVIDIA's"
             echo "    repository, or the CUDA toolkit), and libgomp1."
+            echo "  - Or use the Docker image: ghcr.io/${GITHUB_REPOSITORY:-advancedlogic/hypnos}"
             ;;
         windows-x64-cuda)
             echo "  - Windows 10/11 x64, NVIDIA driver 570 or newer (CUDA 12.8)."

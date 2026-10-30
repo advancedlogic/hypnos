@@ -46,8 +46,14 @@ async fn shutdown_signal() {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // The first argument, else HYPNOS_CONFIG (the Docker image), else ./hypnos.toml.
     let config_path = std::env::args()
         .nth(1)
+        .or_else(|| {
+            std::env::var("HYPNOS_CONFIG")
+                .ok()
+                .filter(|p| !p.is_empty())
+        })
         .unwrap_or_else(|| "hypnos.toml".to_string());
 
     // Logging must exist before we can report configuration problems, so read the format first.

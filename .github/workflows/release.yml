@@ -44,9 +44,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ubuntu-22.04 sets the glibc floor of the Linux binary (2.35).
-          - { platform: linux-x64-cuda, os: ubuntu-22.04, cargo: "" }
-          - { platform: windows-x64-cuda, os: windows-2022, cargo: "" }
+          # ubuntu-24.04 sets the glibc floor of the Linux binary (2.39); ort's prebuilt static ONNX
+          # Runtime needs glibc 2.38+ and GCC 14's libstdc++, so 22.04 cannot link. -j 2 caps nvcc at about
+          # four processes (cargo -j is also each engine's CMake --parallel); more runs out of the
+          # runners' 16 GB on the CUTLASS kernels.
+          - { platform: linux-x64-cuda, os: ubuntu-24.04, cargo: "-j 2" }
+          - { platform: windows-x64-cuda, os: windows-2022, cargo: "-j 2" }
           - { platform: macos-arm64-metal, os: macos-15, cargo: "--no-default-features --features metal" }
     steps:
       - uses: actions/checkout@v4
@@ -61,10 +64,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           v="${CUDA_VERSION%.*}"; v="${v/./-}"
-          curl -fsSLO https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          curl -fsSLO https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential pkg-config libclang-dev \
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev libclang-dev \
             "cuda-nvcc-$v" "cuda-cudart-dev-$v" "cuda-cccl-$v" "cuda-driver-dev-$v" "libcublas-dev-$v"
           cuda="/usr/local/cuda-${CUDA_VERSION%.*}"
           [ -e /usr/local/cuda ] || sudo ln -s "$cuda" /usr/local/cuda
@@ -129,6 +132,47 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
+  docker:
+    name: docker (CUDA, GHCR)
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker system prune -af
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
+            type=sha
+      # A manual run builds the image without pushing it.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
@@ -153,9 +197,11 @@ jobs:
 
           | Archive | Needs |
           | :--- | :--- |
-          | \`linux-x64-cuda\` | glibc 2.35+, NVIDIA driver 570+, CUDA 12 runtime (cudart, cuBLAS), libgomp1 |
+          | \`linux-x64-cuda\` | glibc 2.39+, NVIDIA driver 570+, CUDA 12 runtime (cudart, cuBLAS), libgomp1 |
           | \`windows-x64-cuda\` | NVIDIA driver 570+, plus \`windows-x64-cuda12-runtime.zip\` unpacked beside \`hypnos.exe\` (or the CUDA Toolkit 12.x) |
           | \`macos-arm64-metal\` | Apple Silicon, macOS 14+ |
+
+          Docker (CUDA): \`docker pull ghcr.io/${GITHUB_REPOSITORY}:${GITHUB_REF_NAME#v}\`
 
           The binaries link espeak-ng statically, so each archive is distributed under the GNU GPL
           v3 or later (text included); Hypnos's own code is MIT OR Apache-2.0. Corresponding source:

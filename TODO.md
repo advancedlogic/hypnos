@@ -56,11 +56,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Backlog
 
-- [ ] ⬛ **BUILD-2** `P2` Provide a Docker image with CUDA support
-      Multi-stage Dockerfile (build on a CUDA devel image, run on a CUDA runtime image), models
-      mounted as a volume, config via mount or env. Publish to GHCR from the release workflow
-      (BUILD-1) and add a `docker run --gpus all ...` quickstart to the README. Same GPL
-      obligations as BUILD-1 for the image.
 - [ ] 🟩 **ENG-1** `P2` Add Docling document conversion (PDF / images to Markdown)
       Serve Docling-style conversion in-process, without the Python library: run
       `granite-docling-258M` (GGUF + mmproj) through the existing llama.cpp + mtmd path on page
@@ -83,6 +78,21 @@ _No cards yet._
 
 ## Done
 
+- [x] ⬛ **BUILD-2** `P2` Provide a Docker image with CUDA support
+      Multi-stage Dockerfile (build on a CUDA devel image, run on a CUDA runtime image), models
+      mounted as a volume, config via mount or env. Publish to GHCR from the release workflow
+      (BUILD-1) and add a `docker run --gpus all ...` quickstart to the README. Same GPL
+      obligations as BUILD-1 for the image.
+      Shipped: three-stage `Dockerfile` (node frontend build; `nvidia/cuda:12.8.1-devel-ubuntu24.04`
+      runs vendor.sh, the release build and `package-release.sh`; the `-runtime-ubuntu24.04` image
+      holds the archive at `/opt/hypnos`, listens on 0.0.0.0, `VOLUME` models, `HEALTHCHECK`
+      /health). `HYPNOS_CONFIG` selects the config when no path is passed. `release.yml` builds it
+      on every run and pushes `ghcr.io/advancedlogic/hypnos` (semver, `latest`, sha) on tags; the
+      README has the `docker run --gpus all` quickstart. `JOBS=2` / `-j 2` keep nvcc within 16 GB
+      (cargo -j is also each engine's CMake --parallel). Ubuntu 24.04 because ort's prebuilt ONNX
+      Runtime needs glibc 2.38+ and GCC 14's libstdc++ (this also moved the Linux release archive
+      to 24.04). Verified with a local arm64 build: links, serves /health, the playground and an
+      embeddings request (CPU, stub libcuda); not yet run on an NVIDIA host.
 - [x] ⬛ **BUILD-1** `P1` Publish prebuilt release binaries
       The 10-20 min native build plus vendoring, CMake/Ninja and the CUDA host-compiler pin stop
       most people. Release workflow producing archives for Windows x64 (CUDA), Linux x64 (CUDA)
@@ -91,7 +101,7 @@ _No cards yet._
       Archives are GPL-3.0-or-later as a whole (espeak-ng, see `THIRD-PARTY-NOTICES.md`): ship
       `LICENSE-*`, the GPL-3.0 text and the notices, and link the tagged source.
       Shipped: `release.yml` (tag `v*` publishes, manual run only builds) for linux-x64-cuda
-      (ubuntu-22.04 + NVIDIA apt CUDA 12.8), windows-x64-cuda (Jimver CUDA 12.8, plus a separate
+      (ubuntu-24.04 + NVIDIA apt CUDA 12.8), windows-x64-cuda (Jimver CUDA 12.8, plus a separate
       cudart/cuBLAS DLL zip) and macos-arm64-metal, packaged by `backend/scripts/package-release.sh`
       with SHA256SUMS. Archives run in place: hypnos serves the bundled playground at `/`
       (`server.frontend_dir` or `frontend/` beside the binary), espeak-ng-data is found beside the

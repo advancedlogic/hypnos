@@ -1,0 +1,12 @@
+# Keep the build context small: engines are vendored and compiled inside the image.
+.git
+.run
+dist
+backend/target
+backend/models
+backend/tools
+backend/vendor/*
+!backend/vendor/patches
+frontend/node_modules
+frontend/dist
+**/.DS_Store
