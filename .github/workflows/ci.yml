@@ -91,6 +91,48 @@ jobs:
         working-directory: backend
         run: cargo build -p hypnos-server --no-default-features --features docling-cuda
 
+  # The three client SDKs against the mock server (the real router with mock engines).
+  sdk:
+    name: SDKs (Python, JavaScript, Rust)
+    runs-on: ubuntu-latest
+    env:
+      HYPNOS_MOCK_SERVER: ${{ github.workspace }}/backend/target/debug/examples/mock_server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: lukka/get-cmake@latest
+      - name: Linux build deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libssl-dev libclang-dev
+      - name: Vendor engine sources
+        run: ./backend/scripts/vendor.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            backend -> target
+            sdk/rust -> target
+          key: sdk
+      - name: Build the mock server
+        working-directory: backend
+        run: cargo build -p hypnos-server --example mock_server --no-default-features
+      - uses: astral-sh/setup-uv@v5
+      - name: Python SDK
+        working-directory: sdk/python
+        run: uv sync && uv run pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sdk/javascript/package-lock.json
+      - name: JavaScript SDK
+        working-directory: sdk/javascript
+        run: npm ci && npm test
+      - name: Rust SDK
+        working-directory: sdk/rust
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+
   frontend:
     name: frontend build
     runs-on: ubuntu-latest

@@ -50,7 +50,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 8   | 5   | 4   | 8    | 4   | 8     | 6   | 3    |
+| 2  | 9   | 5   | 4   | 8    | 5   | 8     | 6   | 3    |
 
 ---
 
@@ -70,9 +70,28 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       ggml builds shared cleanly; close the card with the numbers if it does not clearly win.
       After TEST-1 and TEST-2.
 
+- [ ] 🟪 **API-8** `P2` Publish the SDKs to PyPI, npm and crates.io
+      `sdk/python` (`hypnos-client`), `sdk/javascript` (`@hypnos/client`) and `sdk/rust`
+      (`hypnos-client`) are ready to publish but never were: claim the names (the npm scope
+      `@hypnos` included), add the tokens as repository secrets (`PYPI_TOKEN` or trusted
+      publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
+      `ci`, versioned with the tag. Then point the README's quick start at the packages.
+
 ## In Progress
 
-- [ ] 🟪 **API-7** `P2` Client SDKs in Python, Rust and JavaScript
+_No cards yet._
+
+## Done
+
+- [x] 🟥 **BUG-4** `P1` A second server on the same machine deletes the first one's pictures
+      Every instance without `server.document_pictures_dir` stores pictures under
+      `<tmp>/hypnos-pictures`, and opening the store removed every document directory there, so
+      starting a second instance (`--port`, API-6) wiped the pictures the first was still
+      serving (404 on `/v1/documents/{id}/pictures/{n}`). Found by the Rust SDK's tests, which
+      run one mock server per test in parallel. The store now removes only documents older
+      than the TTL at open; test `a_second_store_on_the_same_directory_keeps_live_documents`.
+
+- [x] 🟪 **API-7** `P2` Client SDKs in Python, Rust and JavaScript
       One package per language, generated from `docs/api.md`, published from this repo
       (`sdk/python`, `sdk/rust`, `sdk/javascript`): typed requests and responses for every route
       (OpenAI ones and the Hypnos extensions: documents and pictures, entities, memory status
@@ -84,16 +103,17 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       JavaScript/TypeScript: `fetch` + `ReadableStream`, npm `@hypnos/client`, works in Node
       and browsers. Each ships examples for all seven default models and a test suite against
       the mock-backend server (`backend/crates/hypnos-server/tests`) run in CI.
-      Started 2026-10-30. Shared test target: `cargo run -p hypnos-server --example
-      mock_server`, the real router, scheduler and auth in front of mock engines for the default
-      lineup, with `/mock/fail`, `/mock/ready` and `/mock/reset` to inject errors and flip
-      readiness. Python done (`sdk/python`: sync client generated from the async one by
-      `scripts/unasync.py`, 35 tests, examples for every model). Found on the way: the speech
-      headers spelled the tier `Tier3NvmeSsd` (now `tier3_nvme_ssd`, as in the JSON), and
-      docs/api.md did not say that a document stream's last event has empty `pages` and is
-      followed by `[DONE]`.
-
-## Done
+      Done 2026-10-30. Shared test target: `cargo run -p hypnos-server --example mock_server`,
+      the real router, scheduler and auth in front of mock engines for the default lineup, with
+      `/mock/fail`, `/mock/ready` and `/mock/reset` to inject errors and flip readiness; the CI
+      job `sdk` (run for releases) tests the three SDKs against it. Python (`hypnos-client`,
+      httpx, sync generated from async by `scripts/unasync.py`, 35 tests), JavaScript
+      (`@hypnos/client`, TypeScript to ESM, no runtime dependencies, AbortSignal on every call,
+      35 tests), Rust (`hypnos-client`, reqwest + tokio, builder requests, dropping a stream
+      cancels it, 36 tests); an example per default model in each. Found on the way: the speech
+      headers spelled the tier `Tier3NvmeSsd`; docs/api.md did not say that a document stream's
+      last event has empty `pages` and ends with `[DONE]`; and a server starting next to another
+      one deleted the other's stored pictures (BUG-4). Publishing to the registries is API-8.
 
 - [x] 🟥 **BUG-3** `P1` An engine that runs out of device memory mid-request answers 500
       Seen in the TEST-1 confirmation soak (PERF-7): sd.cpp found 0 MB free for a 518 MB

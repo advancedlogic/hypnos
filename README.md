@@ -439,6 +439,10 @@ which knob to turn for which symptom, reading the telemetry and `/metrics`, ever
 fix, log levels and redaction, upgrades, and the Docker / systemd / Windows service recipes.
 [docs/api.md](docs/api.md) is the HTTP API reference for client and SDK authors: every route,
 field, streaming format, error code and the retry and cancellation behaviour a client needs.
+Client SDKs implement it for [Python](sdk/python), [JavaScript/TypeScript](sdk/javascript) and
+[Rust](sdk/rust): every route, streaming with cancellation, typed errors, the retry policy and
+readiness polling, with an example per default model. They are not on the package registries
+yet; install them from the repository.
 
 | Endpoint | Purpose |
 | :--- | :--- |
@@ -569,6 +573,7 @@ hypnos/
 │       ├── hypnos-scheduler/    # Lease-based Admission Control, Partial Offload & Eviction
 │       ├── hypnos-backends/     # Native llama.cpp+mtmd, stable-diffusion.cpp, ONNX Runtime, docling & GLiNER engines
 │       └── hypnos-server/       # Axum HTTP/SSE OpenAI Server & Multi-Modal Lifecycle Tests
+├── sdk/                         # Client SDKs: python/, javascript/, rust/ (tested against a mock server)
 └── frontend/                    # Svelte 5 (Runes) + Tailwind CSS Interactive Playground
     ├── package.json
     ├── vite.config.js
