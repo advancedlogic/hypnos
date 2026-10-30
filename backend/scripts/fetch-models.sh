@@ -30,6 +30,12 @@ AUTH=()
 PROGRESS=(-sS)
 [ -t 1 ] && PROGRESS=(-#)
 
+# The manifest's column layout is versioned; a newer layout needs newer scripts.
+mv="$(grep -m1 -E '^# manifest-version:' "$MANIFEST" | tr -dc '0-9')"
+if [ -n "$mv" ] && [ "$mv" -gt 1 ]; then
+    echo "[models] $MANIFEST is manifest-version $mv; these scripts read version 1. Update Hypnos." >&2
+    exit 1
+fi
 ids="$(grep -vE '^[[:space:]]*(#|$)' "$MANIFEST" | awk '{print $1}' | sort -u)"
 if [ "$WANT" != all ] && ! printf '%s\n' "$ids" | grep -qx -- "$WANT"; then
     echo "[models] unknown model '$WANT'. Known: all $(printf '%s ' $ids)"

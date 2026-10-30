@@ -143,7 +143,10 @@ reason in `/v1/memory/status`).
 ### Configuration
 
 `HypnosConfig` (`hypnos-core/src/config.rs`): `[server]`, `[limits]`, `[hardware]`, `[[models]]` with
-nested `[models.arch]`. `HypnosConfig::validate` runs at startup and aborts on any error (missing
+nested `[models.arch]`. `config_version` (absent = 1, `CONFIG_VERSION` in `config.rs`): a newer file is refused by
+`from_toml_str`, an older one goes through `HypnosConfig::migrate` (add a step per bump); keys no
+field consumes are collected in `unknown_keys` and reported as warnings. `hypnos --check-config
+[file]` runs detection and validation and exits. `HypnosConfig::validate` runs at startup and aborts on any error (missing
 weights, duplicate ids, impossible budgets, bad engine/modality combos; a model with
 `enabled = false` may have missing weights). A disabled model keeps its block but is skipped by
 `initialize_startup_tiers`, refused by `acquire_model` with `ModelDisabled` (404) and hidden from

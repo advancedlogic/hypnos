@@ -217,6 +217,26 @@ On Windows: `set HYPNOS_CONFIG=my.toml` and then `run.bat start backend`.
 
 ---
 
+### Config versions and `--check-config`
+
+`config_version = 1` at the top of `hypnos.toml` names the schema the file was written for
+(absent means 1). A file for a newer Hypnos is refused at startup with a message naming both
+versions; an older file is migrated in memory, one step per version, and each step is logged, so a
+breaking change to a key never breaks a running deployment silently. Keys no field reads (typos,
+or keys a later version removed) are reported as warnings instead of being ignored.
+
+```bash
+hypnos --check-config hypnos.toml     # what startup would do: GGUF detection notes, warnings,
+                                      # errors, then one summary line; exit code 1 on errors
+```
+
+`backend/models.manifest` carries `# manifest-version: 1` the same way: the fetch scripts refuse a
+manifest with a newer layout than they read.
+
+| Config version | Introduced | Migration |
+| :--- | :--- | :--- |
+| 1 | v0.1.0 | first versioned schema; files without `config_version` are version 1 |
+
 ## Default model lineup
 
 Every engine runs **inside the `hypnos` process**: llama.cpp + libmtmd, stable-diffusion.cpp,

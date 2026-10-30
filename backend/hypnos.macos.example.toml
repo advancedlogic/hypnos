@@ -32,6 +32,10 @@
 # Paths are relative to the working directory (run from `backend/`).
 # =============================================================================
 
+# Schema version of this file (absent = 1). A newer Hypnos migrates older files and says so;
+# `hypnos --check-config hypnos.toml` validates a file without starting the server.
+config_version = 1
+
 [server]
 # Loopback by default. Before "0.0.0.0", set api_keys (or HYPNOS_API_KEYS) and [server.tls] below.
 host = "127.0.0.1"

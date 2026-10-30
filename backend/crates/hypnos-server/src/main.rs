@@ -55,9 +55,29 @@ fn main() -> Result<()> {
 }
 
 async fn run() -> Result<()> {
-    // The first argument, else HYPNOS_CONFIG (the Docker image), else ./hypnos.toml.
-    let config_path = std::env::args()
-        .nth(1)
+    // `hypnos [config.toml]`, `hypnos --check-config [config.toml]`, `hypnos --version`.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("--version" | "-V") => {
+            println!("hypnos {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Some("--help" | "-h") => {
+            println!(
+                "usage: hypnos [config.toml]            start the server (default: $HYPNOS_CONFIG, then ./hypnos.toml)\n       hypnos --check-config [config.toml]   validate the config and exit (1 on errors)\n       hypnos --version"
+            );
+            return Ok(());
+        }
+        _ => {}
+    }
+    let check_only = args.first().map(String::as_str) == Some("--check-config");
+    let config_arg = if check_only {
+        args.get(1).cloned()
+    } else {
+        args.first().cloned()
+    };
+    // The argument, else HYPNOS_CONFIG (the Docker image), else ./hypnos.toml.
+    let config_path = config_arg
         .or_else(|| {
             std::env::var("HYPNOS_CONFIG")
                 .ok()
@@ -82,7 +102,11 @@ async fn run() -> Result<()> {
     let log_format =
         std::env::var("HYPNOS_LOG_FORMAT").unwrap_or_else(|_| config.server.log_format.clone());
     init_logging(&log_format);
-    info!(config = %source, version = env!("CARGO_PKG_VERSION"), "Hypnos starting");
+    if check_only {
+        info!(config = %source, version = env!("CARGO_PKG_VERSION"), "Hypnos checking the configuration");
+    } else {
+        info!(config = %source, version = env!("CARGO_PKG_VERSION"), "Hypnos starting");
+    }
 
     // Keys from the environment replace the config list, so they can stay out of the file.
     config
@@ -111,6 +135,24 @@ async fn run() -> Result<()> {
     }
     for w in &report.warnings {
         warn!(config_warning = %w);
+    }
+    if check_only {
+        // What `validate` and the GGUF detection would do, without starting the server.
+        for e in &report.errors {
+            error!(config_error = %e);
+        }
+        println!(
+            "{source}: config_version {}, {} model(s) ({} enabled), {} warning(s), {} error(s)",
+            config.config_version,
+            config.models.len(),
+            config.models.iter().filter(|m| m.enabled).count(),
+            report.warnings.len(),
+            report.errors.len()
+        );
+        if !report.is_ok() {
+            std::process::exit(1);
+        }
+        return Ok(());
     }
     if !report.is_ok() {
         for e in &report.errors {

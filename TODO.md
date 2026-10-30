@@ -78,12 +78,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       A C++ abort inside llama.cpp / sd.cpp takes the whole process down: document the
       supervisor expectation (run scripts, Docker restart policy, systemd unit) and add a
       per-engine crash counter to `/metrics` so restarts are visible.
-- [ ] 🟫 **MEM-3** `P3` Version the config and the model manifest with a migration path
-      `HypnosConfig` has no schema version; the first breaking change to a field or to
-      `models.manifest` will break every deployed `hypnos.toml`. Add `config_version` (absent =
-      1) with per-version migration notes in the README, warnings for deprecated keys instead of
-      silent acceptance, and a `hypnos --check-config` mode that prints what `validate` and the
-      GGUF detection would do without starting the server.
 - [ ] ⬜ **DOC-5** `P2` Write an operator's guide (sizing, knobs, telemetry, errors)
       `docs/operating.md` for people who run Hypnos rather than build it: sizing a box for a
       lineup (VRAM / pinned RAM budgets, slots x context), which knob to turn for which symptom
@@ -117,6 +111,22 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       archives were never attached; the step now uploads into an existing or draft release.
 
 ## Done
+
+- [x] 🟫 **MEM-3** `P3` Version the config and the model manifest with a migration path
+      `HypnosConfig` has no schema version; the first breaking change to a field or to
+      `models.manifest` will break every deployed `hypnos.toml`. Add `config_version` (absent =
+      1) with per-version migration notes in the README, warnings for deprecated keys instead of
+      silent acceptance, and a `hypnos --check-config` mode that prints what `validate` and the
+      GGUF detection would do without starting the server.
+      Shipped: `config_version` on `HypnosConfig` (absent = 1, `CONFIG_VERSION` = 1): a newer
+      file is refused by `from_toml_str` with both versions named, an older one goes through
+      `HypnosConfig::migrate` (one step per version, notes returned; none yet). Keys no field
+      consumes are found by diffing the raw TOML against the parsed config serialized back
+      (`unknown_keys`, dotted paths with model indices) and reported as validation warnings.
+      `hypnos --check-config [file]` runs the GGUF detection and validation, prints one summary
+      line and exits 1 on errors; `--version` and `--help` too. `models.manifest` carries
+      `# manifest-version: 1`, which both fetch scripts refuse when newer. README "Config
+      versions" section with the migration table; example configs start with `config_version`.
 
 - [x] 🟫 **MEM-2** `P3` Expose GPU device health on /metrics (utilisation, temperature, errors)
       `/metrics` covers bookings and placements but not the device itself. Through the existing

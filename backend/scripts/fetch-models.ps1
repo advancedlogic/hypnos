@@ -35,6 +35,12 @@ if ($IsMacOS -and [System.Runtime.InteropServices.RuntimeInformation]::OSArchite
 $auth = @()
 if ($env:HF_TOKEN) { $auth = @("-H", "Authorization: Bearer $($env:HF_TOKEN)") }
 
+# The manifest's column layout is versioned; a newer layout needs newer scripts.
+$mv = (Get-Content $manifest | Select-String -Pattern '^# manifest-version:\s*(\d+)' | Select-Object -First 1)
+if ($mv -and [int]$mv.Matches[0].Groups[1].Value -gt 1) {
+    Write-Error "$manifest is manifest-version $($mv.Matches[0].Groups[1].Value); this script reads version 1. Update Hypnos."
+    exit 1
+}
 $entries = Get-Content $manifest | Where-Object { $_ -notmatch '^\s*(#|$)' } | ForEach-Object {
     $c = $_.Trim() -split '\s+'
     [pscustomobject]@{ Model = $c[0]; Repo = $c[1]; Remote = $c[2]; Local = $c[3]; Platform = $c[4] }

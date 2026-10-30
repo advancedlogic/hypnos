@@ -686,6 +686,14 @@ impl Default for LimitsConfig {
 /// Top-level configuration file (`hypnos.toml`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HypnosConfig {
+    /// Schema version of the file (`config_version`); absent means 1. A file written for a newer
+    /// Hypnos is refused; an older one is migrated in memory and the steps are reported.
+    #[serde(default = "default_config_version")]
+    pub config_version: u32,
+    /// Keys the file set that no field consumes (`server.foo`, `models[1].bar`): typos or keys a
+    /// later version removed. Filled by [`HypnosConfig::from_toml_str`], reported by `validate`.
+    #[serde(skip)]
+    pub unknown_keys: Vec<String>,
     #[serde(default)]
     pub server: ServerConfig,
     #[serde(default)]
@@ -694,6 +702,42 @@ pub struct HypnosConfig {
     pub limits: LimitsConfig,
     #[serde(default)]
     pub models: Vec<ModelConfig>,
+}
+
+/// The config schema this build writes and reads. Bump it when a key is renamed, removed or
+/// changes meaning, and add the migration to [`HypnosConfig::migrate`].
+pub const CONFIG_VERSION: u32 = 1;
+
+fn default_config_version() -> u32 {
+    1
+}
+
+/// Keys in `raw` (what the file says) that `known` (the parsed config, serialized back) has no
+/// field for, as dotted paths. Arrays of tables are indexed (`models[0].arch.foo`).
+fn unknown_keys(raw: &toml::Value, known: &toml::Value, prefix: &str, out: &mut Vec<String>) {
+    match (raw, known) {
+        (toml::Value::Table(r), toml::Value::Table(k)) => {
+            for (key, value) in r {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                match k.get(key) {
+                    None => out.push(path),
+                    Some(kv) => unknown_keys(value, kv, &path, out),
+                }
+            }
+        }
+        (toml::Value::Array(r), toml::Value::Array(k)) => {
+            for (i, value) in r.iter().enumerate() {
+                if let Some(kv) = k.get(i) {
+                    unknown_keys(value, kv, &format!("{prefix}[{i}]"), out);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Outcome of [`HypnosConfig::validate`]: hard errors abort startup, warnings are logged.
@@ -713,9 +757,26 @@ impl HypnosConfig {
     pub fn from_toml_str(content: &str) -> crate::error::Result<Self> {
         let err = |e: toml::de::Error| crate::error::HypnosError::Config(e.to_string());
         let mut config: Self = toml::from_str(content).map_err(err)?;
+        if config.config_version > CONFIG_VERSION {
+            return Err(crate::error::HypnosError::Config(format!(
+                "config_version = {} was written for a newer Hypnos; this build reads version {CONFIG_VERSION} (see README, \"Config versions\")",
+                config.config_version
+            )));
+        }
+        if config.config_version == 0 {
+            return Err(crate::error::HypnosError::Config(
+                "config_version must be 1 or higher".into(),
+            ));
+        }
         // Serde fills defaults silently; remember which arch keys the file actually wrote so GGUF
         // detection can fill the rest without overriding them.
         let raw: toml::Table = toml::from_str(content).map_err(err)?;
+        // Keys no field consumed: serde ignores them, which hides typos and removed keys.
+        if let Ok(known) = toml::Value::try_from(&config) {
+            let mut unknown = Vec::new();
+            unknown_keys(&toml::Value::Table(raw.clone()), &known, "", &mut unknown);
+            config.unknown_keys = unknown;
+        }
         let raw_models = raw.get("models").and_then(|m| m.as_array());
         for (i, model) in config.models.iter_mut().enumerate() {
             let keys = raw_models
@@ -726,7 +787,19 @@ impl HypnosConfig {
                 .unwrap_or_default();
             model.arch.configured_keys = Some(keys);
         }
+        config.migrate();
         Ok(config)
+    }
+
+    /// Brings a config written for an older `config_version` up to [`CONFIG_VERSION`], one step
+    /// per version, and returns a note per step taken (none so far: version 1 is the first).
+    pub fn migrate(&mut self) -> Vec<String> {
+        let mut notes = Vec::new();
+        while self.config_version < CONFIG_VERSION {
+            // Future steps go here as `match self.config_version { 1 => { ...; notes.push(...) } }`.
+            self.config_version += 1;
+        }
+        notes
     }
 
     /// Fills `[models.arch]` fields the config left unset from each model's GGUF metadata
@@ -843,6 +916,11 @@ impl HypnosConfig {
 
         if self.models.is_empty() {
             r.errors.push("no [[models]] configured".into());
+        }
+        for key in &self.unknown_keys {
+            r.warnings.push(format!(
+                "unknown key `{key}` is ignored (a typo, or a key this version no longer has; see README \"Config versions\")"
+            ));
         }
         let mut seen = std::collections::HashSet::new();
         for m in &self.models {
@@ -1138,6 +1216,52 @@ weights_path = "{weights}"
 num_layers = 4
 "#
         )
+    }
+
+    #[test]
+    fn unknown_keys_and_versions_are_reported() {
+        let toml = format!(
+            "[server]
+prot = 8080
+[limits]
+max_queue = 4
+{}",
+            minimal_toml("w.gguf")
+        );
+        let cfg = HypnosConfig::from_toml_str(&toml).unwrap();
+        assert_eq!(cfg.config_version, 1, "absent means 1");
+        assert_eq!(cfg.unknown_keys, vec!["server.prot", "limits.max_queue"]);
+        let report = cfg.validate(std::path::Path::new("."));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|w| w.contains("unknown key `server.prot`")));
+        // A key inside a model block is reported with its index.
+        let cfg = HypnosConfig::from_toml_str(&minimal_toml("w.gguf").replace(
+            "[models.arch]\n",
+            "weihgts = 1\n[models.arch]\nnum_layerz = 4\n",
+        ))
+        .unwrap();
+        assert_eq!(
+            cfg.unknown_keys,
+            vec!["models[0].weihgts", "models[0].arch.num_layerz"]
+        );
+        // Versions: newer than this build is refused, 0 is refused, current passes.
+        let newer = format!(
+            "config_version = {}\n{}",
+            CONFIG_VERSION + 1,
+            minimal_toml("w.gguf")
+        );
+        assert!(HypnosConfig::from_toml_str(&newer).is_err());
+        assert!(HypnosConfig::from_toml_str("config_version = 0\n").is_err());
+        let same = format!(
+            "config_version = {CONFIG_VERSION}\n{}",
+            minimal_toml("w.gguf")
+        );
+        assert_eq!(
+            HypnosConfig::from_toml_str(&same).unwrap().config_version,
+            CONFIG_VERSION
+        );
     }
 
     #[test]

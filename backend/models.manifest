@@ -1,3 +1,4 @@
+# manifest-version: 1   (the column layout below; the fetch scripts refuse a newer one)
 # Model files for the default lineup, downloaded by `./run.sh models` / `run.bat models`
 # (backend/scripts/fetch-models.sh / .ps1) into backend/models/. All repositories are public.
 #

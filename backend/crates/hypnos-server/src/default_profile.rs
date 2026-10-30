@@ -18,6 +18,8 @@ pub fn default_six_model_config() -> HypnosConfig {
     let mb: u64 = 1024 * 1024;
 
     HypnosConfig {
+        config_version: hypnos_core::config::CONFIG_VERSION,
+        unknown_keys: Vec::new(),
         server: ServerConfig {
             host: "127.0.0.1".to_string(),
             port: 8080,
