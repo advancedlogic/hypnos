@@ -261,6 +261,7 @@ impl Metrics {
         status: &MemoryHierarchyStatus,
         sched: &SchedulerStats,
         uptime: Duration,
+        keys: &[crate::quota::KeyStats],
     ) -> String {
         let mut out = String::with_capacity(8192);
         let _ = writeln!(
@@ -454,6 +455,57 @@ impl Metrics {
             let _ = writeln!(out, "# TYPE {}_last gauge", metric.name);
             for (model, h) in series {
                 h.render(&mut out, metric.name, &model.replace('"', ""));
+            }
+        }
+
+        if !keys.is_empty() {
+            let _ = writeln!(
+                out,
+                "# HELP hypnos_api_key_requests_total Requests admitted per API key."
+            );
+            let _ = writeln!(out, "# TYPE hypnos_api_key_requests_total counter");
+            let _ = writeln!(
+                out,
+                "# HELP hypnos_api_key_rejections_total Requests refused per API key and limit."
+            );
+            let _ = writeln!(out, "# TYPE hypnos_api_key_rejections_total counter");
+            let _ = writeln!(
+                out,
+                "# HELP hypnos_api_key_tokens_total Prompt + completion tokens per API key since start."
+            );
+            let _ = writeln!(out, "# TYPE hypnos_api_key_tokens_total counter");
+            let _ = writeln!(
+                out,
+                "# HELP hypnos_api_key_tokens_today Tokens spent per API key in the current UTC day."
+            );
+            let _ = writeln!(out, "# TYPE hypnos_api_key_tokens_today gauge");
+            for k in keys {
+                let label = k.label.replace('"', "");
+                let _ = writeln!(
+                    out,
+                    "hypnos_api_key_requests_total{{key=\"{label}\"}} {}",
+                    k.admitted
+                );
+                for (reason, n) in [
+                    ("requests_per_minute", k.rejected_requests_per_minute),
+                    ("max_concurrent", k.rejected_max_concurrent),
+                    ("tokens_per_day", k.rejected_tokens_per_day),
+                ] {
+                    let _ = writeln!(
+                        out,
+                        "hypnos_api_key_rejections_total{{key=\"{label}\",reason=\"{reason}\"}} {n}"
+                    );
+                }
+                let _ = writeln!(
+                    out,
+                    "hypnos_api_key_tokens_total{{key=\"{label}\"}} {}",
+                    k.tokens_total
+                );
+                let _ = writeln!(
+                    out,
+                    "hypnos_api_key_tokens_today{{key=\"{label}\"}} {}",
+                    k.tokens_today
+                );
             }
         }
         out

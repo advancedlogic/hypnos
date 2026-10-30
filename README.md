@@ -438,6 +438,18 @@ Behaviour that matters in production:
     logged with route and reason, never the key. Keys are held only as SHA-256 digests and compared
     in constant time. `/health` and `/ready` stay open for probes; `/metrics` too unless
     `server.metrics_require_auth = true`.
+  - `[[server.keys]]` adds labelled keys with limits: `requests_per_minute`, `max_concurrent` (a
+    stream counts until it ends) and `tokens_per_day` (prompt + completion, UTC day); unset ones
+    take `[server.api_key_defaults]`, which also covers the plain `api_keys`. Over a limit the
+    call gets HTTP 429 `rate_limit_error` with `Retry-After` and a log line naming the key's label
+    and the limit. The label is on every request-log record (`GET /v1/logs?key=team-a`) and on
+    `/metrics` (`hypnos_api_key_requests_total`, `_rejections_total{reason}`, `_tokens_total`,
+    `_tokens_today`). A plain key is labelled `key-<8 hex of its digest>`.
+  - `server.request_log_redact` keeps prompts and completions out of the request log: regular
+    expressions whose matches become `[redacted]`, or `["all"]`. Keep the log level at `info` for
+    anything exposed beyond a trusted group; `debug` and `trace` store what users send.
+  - For quotas per user or organisation, billing, or anything beyond one key per client, put an
+    API gateway in front: Hypnos authenticates and limits per key, nothing finer.
   - `[server.tls]` with `cert_path` / `key_path` (PEM) to serve HTTPS in-process (rustls); plain
     HTTP when absent. A bad certificate stops startup before any model loads.
 

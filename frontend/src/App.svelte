@@ -1816,6 +1816,7 @@
                     <th class="py-1.5 px-2">time</th>
                     <th class="py-1.5 px-2">route</th>
                     <th class="py-1.5 px-2">model</th>
+                    <th class="py-1.5 px-2">key</th>
                     <th class="py-1.5 px-2">status</th>
                     <th class="py-1.5 px-2 text-right">ms</th>
                     <th class="py-1.5 px-2 text-right">in</th>
@@ -1836,6 +1837,7 @@
                         {r.route.replace('/v1/', '')}{r.stream ? ' ⇢' : ''}
                       </td>
                       <td class="py-1 px-2 text-slate-300 whitespace-nowrap">{r.model ?? '–'}</td>
+                      <td class="py-1 px-2 text-slate-400 whitespace-nowrap">{r.key ?? '–'}</td>
                       <td class="py-1 px-2">
                         <span class="px-1.5 py-0.5 rounded {logStatusClass(r.status)}">{r.status}</span>
                       </td>
@@ -1872,6 +1874,7 @@
                 </div>
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-2 font-mono text-[11px] text-slate-300">
                   <span>model: <strong class="text-white">{logSelected.model ?? '–'}</strong></span>
+                  <span>key: <strong class="text-white">{logSelected.key ?? '–'}</strong></span>
                   <span>duration: <strong class="text-white">{logNum(logSelected.duration_ms)} ms</strong></span>
                   <span>inference: <strong class="text-white">{logNum(logSelected.inference_ms)} ms</strong></span>
                   <span>tier switch: <strong class="text-white">{logNum(logSelected.tier_switch_ms)} ms</strong></span>

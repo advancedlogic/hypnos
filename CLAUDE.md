@@ -97,7 +97,11 @@ on them.
    and flips `AppState::ready`; until then `require_ready` answers 503 `model_not_available` on
    the inference and placement routes (`/health`, `/ready` (503), `/v1/memory/status`,
    `GET /v1/models` and `/v1/logs` stay open). With `server.api_keys` (or `HYPNOS_API_KEYS`) set, `auth::require_api_key` answers 401 for any
-   `/v1/*` request without a matching `Authorization: Bearer` key (it runs inside CORS and
+   `/v1/*` request without a matching `Authorization: Bearer` key, then applies the key's limits
+   from `quota.rs` (requests per minute, concurrency held through the response body, tokens per
+   UTC day: 429 with `Retry-After`; the key's label travels as `ApiKeyLabel` on the request and
+   the response, into the request log and `/metrics`; `server.request_log_redact` is applied in
+   `RequestLog`) (it runs inside CORS and
    `observe_request`; `/health`, `/ready` and, by default, `/metrics` stay open). `[server.tls]`
    makes `main.rs` serve HTTPS through axum-server + rustls (ring provider).
 1. A `hypnos-server` handler builds a `RequestContext` (limits, cancellation token tied to client

@@ -444,6 +444,17 @@ pub struct ServerConfig {
     /// Also require a key on `/metrics`. `/health` and `/ready` always stay open for probes.
     #[serde(default)]
     pub metrics_require_auth: bool,
+    /// `[[server.keys]]`: labelled keys with their own limits, next to the plain `api_keys`.
+    #[serde(default)]
+    pub keys: Vec<ApiKeyProfile>,
+    /// `[server.api_key_defaults]`: limits for every key that does not set its own (0 = none).
+    #[serde(default)]
+    pub api_key_defaults: ApiKeyLimits,
+    /// Redaction of what the request log captures at `debug` and `trace`: regular expressions
+    /// whose matches in prompts, completions and payload strings become `[redacted]`, or the
+    /// single entry `"all"` to keep no text or payloads at any level.
+    #[serde(default)]
+    pub request_log_redact: Vec<String>,
     /// Directory with the built playground (`frontend/` after `npm run build`, i.e. `dist/`) to
     /// serve at `/`. Unset: a `frontend/` directory next to the executable is served if it has an
     /// `index.html` (release archives and the Docker image ship it there), otherwise nothing.
@@ -474,6 +485,48 @@ fn default_document_pictures_ttl_secs() -> u64 {
 }
 fn default_document_pictures_max_bytes() -> u64 {
     1024 * 1024 * 1024
+}
+
+/// Per-key limits (`[server.api_key_defaults]`, and the fields of `[[server.keys]]`): 0 = none.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ApiKeyLimits {
+    /// Requests admitted per key in a wall-clock minute; beyond it 429 with `Retry-After`.
+    #[serde(default)]
+    pub requests_per_minute: u32,
+    /// Requests of the key in flight at once (a streaming response counts until it ends).
+    #[serde(default)]
+    pub max_concurrent: u32,
+    /// Prompt + completion tokens per UTC day; once spent, requests get 429 until midnight.
+    #[serde(default)]
+    pub tokens_per_day: u64,
+}
+
+/// `[[server.keys]]`: a labelled API key. The label names it in the request log, on `/metrics`
+/// and in audit lines; a limit left unset takes `[server.api_key_defaults]`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyProfile {
+    pub label: String,
+    /// The bearer token itself.
+    pub key: String,
+    #[serde(default)]
+    pub requests_per_minute: Option<u32>,
+    #[serde(default)]
+    pub max_concurrent: Option<u32>,
+    #[serde(default)]
+    pub tokens_per_day: Option<u64>,
+}
+
+impl ApiKeyProfile {
+    /// This key's limits, with `defaults` for what it leaves unset.
+    pub fn limits(&self, defaults: &ApiKeyLimits) -> ApiKeyLimits {
+        ApiKeyLimits {
+            requests_per_minute: self
+                .requests_per_minute
+                .unwrap_or(defaults.requests_per_minute),
+            max_concurrent: self.max_concurrent.unwrap_or(defaults.max_concurrent),
+            tokens_per_day: self.tokens_per_day.unwrap_or(defaults.tokens_per_day),
+        }
+    }
 }
 
 /// `[server.tls]`: PEM files, relative paths resolved from the working directory.
@@ -537,6 +590,9 @@ impl Default for ServerConfig {
             request_log_capacity: default_request_log_capacity(),
             api_keys: Vec::new(),
             metrics_require_auth: false,
+            keys: Vec::new(),
+            api_key_defaults: ApiKeyLimits::default(),
+            request_log_redact: Vec::new(),
             frontend_dir: None,
             document_pictures_dir: None,
             document_pictures_ttl_secs: default_document_pictures_ttl_secs(),
@@ -972,6 +1028,36 @@ impl HypnosConfig {
         if self.server.api_keys.iter().any(|k| k.trim().len() < 16) {
             r.warnings.push(
                 "server.api_keys has a key shorter than 16 characters; use long random keys (e.g. `openssl rand -hex 32`)".into(),
+            );
+        }
+        let mut labels = std::collections::HashSet::new();
+        for k in &self.server.keys {
+            let label = k.label.trim();
+            if label.is_empty() {
+                r.errors
+                    .push("a [[server.keys]] entry has an empty label".into());
+            } else if !labels.insert(label.to_string()) {
+                r.errors
+                    .push(format!("duplicate [[server.keys]] label '{label}'"));
+            }
+            if k.key.trim().is_empty() {
+                r.errors
+                    .push(format!("[[server.keys]] '{label}' has an empty key"));
+            } else if k.key.trim().len() < 16 {
+                r.warnings.push(format!(
+                    "[[server.keys]] '{label}' is shorter than 16 characters; use long random keys"
+                ));
+            }
+        }
+        if self.server.request_log_redact.len() > 1
+            && self
+                .server
+                .request_log_redact
+                .iter()
+                .any(|p| p.trim() == "all")
+        {
+            r.warnings.push(
+                "server.request_log_redact contains \"all\" next to patterns; \"all\" wins".into(),
             );
         }
         if let Some(dir) = &self.server.frontend_dir {

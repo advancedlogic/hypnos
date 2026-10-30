@@ -28,6 +28,9 @@ pub fn default_six_model_config() -> HypnosConfig {
             log_format: "pretty".to_string(),
             api_keys: Vec::new(), // HYPNOS_API_KEYS
             metrics_require_auth: false,
+            keys: Vec::new(),
+            api_key_defaults: Default::default(),
+            request_log_redact: Vec::new(),
             frontend_dir: None,
             document_pictures_dir: None,
             document_pictures_ttl_secs: 3600,

@@ -4,6 +4,7 @@ mod documents;
 mod entities;
 pub mod metrics;
 pub mod pictures;
+pub mod quota;
 pub mod request_log;
 
 use axum::{
@@ -65,8 +66,10 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
     /// Bounded ring of recent API calls (`GET /v1/logs`).
     pub request_log: Arc<RequestLog>,
-    /// Bearer keys guarding `/v1/*` (`server.api_keys`); open when empty.
+    /// Bearer keys guarding `/v1/*` (`server.api_keys`, `[[server.keys]]`); open when empty.
     pub auth: Arc<auth::ApiAuth>,
+    /// Per-key limits (requests per minute, concurrency, tokens per day).
+    pub quota: Arc<quota::KeyLimiter>,
     /// Pictures kept for `return_pictures` document conversions (`/v1/documents/{id}/pictures`).
     pub pictures: Arc<pictures::PictureStore>,
     /// Flipped once startup tier initialization has finished (`/ready`).
@@ -91,8 +94,14 @@ impl AppState {
         let log_level = LogLevel::parse(&config.server.request_log_level).unwrap_or(LogLevel::Info);
         let auth = Arc::new(auth::ApiAuth::new(
             &config.server.api_keys,
+            &config.server.keys,
+            &config.server.api_key_defaults,
             config.server.metrics_require_auth,
         ));
+        let quota = Arc::new(quota::KeyLimiter::new(auth.key_limits()));
+        let request_log = RequestLog::new(log_level, config.server.request_log_capacity)
+            .with_redaction(&config.server.request_log_redact)
+            .map_err(|e| HypnosError::Config(format!("server.request_log_redact: {e}")))?;
         let pictures = pictures::PictureStore::open(
             config.server.document_pictures_dir.as_deref(),
             Duration::from_secs(config.server.document_pictures_ttl_secs.max(1)),
@@ -113,11 +122,9 @@ impl AppState {
             scheduler,
             limits: config.limits,
             metrics: Arc::new(Metrics::default()),
-            request_log: Arc::new(RequestLog::new(
-                log_level,
-                config.server.request_log_capacity,
-            )),
+            request_log: Arc::new(request_log),
             auth,
+            quota,
             pictures: Arc::new(pictures),
             ready: Arc::new(AtomicBool::new(false)),
             started_at: Instant::now(),
@@ -334,18 +341,33 @@ async fn observe_request(State(state): State<AppState>, mut req: Request, next: 
         resp.headers_mut().insert("x-request-id", v);
     }
     let details = resp.extensions_mut().remove::<LogDetails>();
+    let key = resp
+        .extensions_mut()
+        .remove::<auth::ApiKeyLabel>()
+        .map(|k| k.0);
+    // Tokens of a plain response count against the key's day here; a chat stream reports its
+    // own when it ends (see ChatSseState::key_usage).
+    if let (Some(label), Some(d)) = (&key, &details) {
+        if !d.stream {
+            if let Some(u) = &d.usage {
+                state.quota.add_tokens(
+                    label,
+                    u64::from(u.prompt_tokens) + u64::from(u.completion_tokens),
+                );
+            }
+        }
+    }
     if is_logged_route(&route) {
-        state.request_log.record(
-            RequestRecord::new(
-                request_id.clone(),
-                route.clone(),
-                method,
-                status.as_u16(),
-                started_at,
-                start.elapsed().as_secs_f64() * 1000.0,
-            ),
-            details,
+        let mut record = RequestRecord::new(
+            request_id.clone(),
+            route.clone(),
+            method,
+            status.as_u16(),
+            started_at,
+            start.elapsed().as_secs_f64() * 1000.0,
         );
+        record.key = key;
+        state.request_log.record(record, details);
     }
     if status.is_server_error() {
         warn!(route = %route, status = status.as_u16(), elapsed_ms = start.elapsed().as_millis() as u64, request_id = %request_id, "request failed");
@@ -378,9 +400,12 @@ async fn ready_check(State(state): State<AppState>) -> Response {
 
 async fn metrics_endpoint(State(state): State<AppState>) -> Response {
     let status = state.scheduler.status();
-    let body = state
-        .metrics
-        .render(&status, state.scheduler.stats(), state.started_at.elapsed());
+    let body = state.metrics.render(
+        &status,
+        state.scheduler.stats(),
+        state.started_at.elapsed(),
+        &state.quota.stats(),
+    );
     (
         [(
             header::CONTENT_TYPE,
@@ -526,6 +551,8 @@ struct ChatSseState {
     capture_text: bool,
     capture_payloads: bool,
     text: String,
+    /// Charges the stream's tokens to the key's daily quota when it ends.
+    key_usage: Option<(Arc<quota::KeyLimiter>, String)>,
     _cancel_guard: CancelOnDrop,
     id: String,
     model: String,
@@ -557,8 +584,10 @@ fn sse_chunk(
 async fn chat_completions(
     State(state): State<AppState>,
     Extension(rid): Extension<RequestId>,
+    key: Option<Extension<auth::ApiKeyLabel>>,
     Json(req): Json<ChatCompletionRequest>,
 ) -> Response {
+    let key_label = key.map(|k| k.0 .0);
     let mut details = LogDetails {
         model: Some(req.model.clone()),
         stream: req.stream.unwrap_or(false),
@@ -572,7 +601,7 @@ async fn chat_completions(
             .then(|| serde_json::to_value(&req).unwrap_or(serde_json::Value::Null)),
         ..Default::default()
     };
-    match chat_completions_inner(&state, &rid.0, &req, &mut details).await {
+    match chat_completions_inner(&state, &rid.0, key_label, &req, &mut details).await {
         Ok(resp) => with_log(resp, details),
         Err(e) => {
             let message = e.0.to_string();
@@ -584,6 +613,7 @@ async fn chat_completions(
 async fn chat_completions_inner(
     state: &AppState,
     request_id: &str,
+    key_label: Option<String>,
     req: &ChatCompletionRequest,
     details: &mut LogDetails,
 ) -> std::result::Result<Response, ApiError> {
@@ -645,6 +675,7 @@ async fn chat_completions_inner(
             capture_text: state.request_log.capture_text(),
             capture_payloads: state.request_log.capture_payloads(),
             text: String::new(),
+            key_usage: key_label.map(|label| (state.quota.clone(), label)),
             _cancel_guard: guard,
             queued: VecDeque::new(),
             finished: false,
@@ -703,6 +734,12 @@ async fn chat_completions_inner(
                     st.request_log.update(&st.request_id, |r, level| {
                         r.apply_details(log_details, level)
                     });
+                    if let Some((quota, label)) = &st.key_usage {
+                        quota.add_tokens(
+                            label,
+                            u64::from(usage.prompt_tokens) + u64::from(usage.completion_tokens),
+                        );
+                    }
                     let mut extra = serde_json::Map::new();
                     extra.insert(
                         "usage".into(),

@@ -40,6 +40,7 @@ tokio-stream = "0.1"
 uuid = { version = "1.8", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
+regex = "1"
 
 # --- Native inference engines (all linked in-process, no external runtime) ---
 # llama.cpp + libmtmd (Gemma 4 text/vision/audio, EmbeddingGemma 2). The vendored copy under

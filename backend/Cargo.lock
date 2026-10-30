@@ -1964,6 +1964,7 @@ dependencies = [
  "hypnos-memory",
  "hypnos-scheduler",
  "parking_lot",
+ "regex",
  "ring",
  "rustls",
  "serde",

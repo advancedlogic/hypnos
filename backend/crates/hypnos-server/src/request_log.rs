@@ -105,6 +105,9 @@ pub struct RequestRecord {
     pub route: String,
     pub method: String,
     pub status: u16,
+    /// Label of the API key that made the call (`[[server.keys]].label`, or `key-<digest>`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
     /// RFC 3339 timestamp of the request's arrival.
     pub started_at: String,
     pub duration_ms: f64,
@@ -150,6 +153,7 @@ impl RequestRecord {
             status,
             started_at,
             duration_ms,
+            key: None,
             model: None,
             stream: false,
             tokens_in: None,
@@ -238,6 +242,9 @@ impl RequestRecord {
 pub struct LogFilter {
     #[serde(default)]
     pub model: Option<String>,
+    /// Exact key label.
+    #[serde(default)]
+    pub key: Option<String>,
     #[serde(default)]
     pub route: Option<String>,
     /// `ok`, `error` (any 4xx/5xx), `4xx` or `5xx`.
@@ -259,6 +266,11 @@ impl LogFilter {
                 return false;
             }
         }
+        if let Some(key) = self.key.as_deref().filter(|s| !s.is_empty()) {
+            if r.key.as_deref() != Some(key) {
+                return false;
+            }
+        }
         match self.status.as_deref().map(str::trim) {
             Some("ok") => r.status < 400,
             Some("error") => r.status >= 400,
@@ -269,11 +281,91 @@ impl LogFilter {
     }
 }
 
+/// What `server.request_log_redact` asks for.
+#[derive(Debug)]
+enum Redactor {
+    /// Keep no text or payloads at any level.
+    All,
+    /// Replace every match with `[redacted]` in text and payload strings.
+    Patterns(Vec<regex::Regex>),
+}
+
+const REDACTED: &str = "[redacted]";
+
+impl Redactor {
+    fn parse(patterns: &[String]) -> Result<Option<Self>, String> {
+        let patterns: Vec<&str> = patterns
+            .iter()
+            .map(|p| p.trim())
+            .filter(|p| !p.is_empty())
+            .collect();
+        if patterns.is_empty() {
+            return Ok(None);
+        }
+        if patterns.iter().any(|p| *p == "all") {
+            return Ok(Some(Self::All));
+        }
+        let compiled = patterns
+            .iter()
+            .map(|p| regex::Regex::new(p).map_err(|e| format!("pattern {p:?}: {e}")))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(Self::Patterns(compiled)))
+    }
+
+    fn text(&self, s: &str) -> String {
+        match self {
+            Self::All => REDACTED.to_string(),
+            Self::Patterns(res) => {
+                let mut out = s.to_string();
+                for re in res {
+                    out = re.replace_all(&out, REDACTED).into_owned();
+                }
+                out
+            }
+        }
+    }
+
+    fn payload(&self, v: &mut Value) {
+        match v {
+            Value::String(s) => *s = self.text(s),
+            Value::Array(items) => items.iter_mut().for_each(|i| self.payload(i)),
+            Value::Object(map) => map.values_mut().for_each(|i| self.payload(i)),
+            _ => {}
+        }
+    }
+
+    fn apply(&self, r: &mut RequestRecord) {
+        match self {
+            Self::All => {
+                r.input = None;
+                r.output = None;
+                r.request_payload = None;
+                r.response_payload = None;
+            }
+            Self::Patterns(_) => {
+                if let Some(s) = &r.input {
+                    r.input = Some(self.text(s));
+                }
+                if let Some(s) = &r.output {
+                    r.output = Some(self.text(s));
+                }
+                if let Some(v) = r.request_payload.as_mut() {
+                    self.payload(v);
+                }
+                if let Some(v) = r.response_payload.as_mut() {
+                    self.payload(v);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct RequestLog {
     capacity: usize,
     level: AtomicU8,
     records: Mutex<VecDeque<RequestRecord>>,
+    redactor: Option<Redactor>,
 }
 
 impl RequestLog {
@@ -282,7 +374,18 @@ impl RequestLog {
             capacity,
             level: AtomicU8::new(level as u8),
             records: Mutex::new(VecDeque::with_capacity(capacity.min(1024))),
+            redactor: None,
         }
+    }
+
+    /// Applies `server.request_log_redact` (regular expressions, or `"all"`) to every record.
+    pub fn with_redaction(mut self, patterns: &[String]) -> Result<Self, String> {
+        self.redactor = Redactor::parse(patterns)?;
+        Ok(self)
+    }
+
+    pub fn redacts(&self) -> bool {
+        self.redactor.is_some()
     }
 
     pub fn level(&self) -> LogLevel {
@@ -321,6 +424,9 @@ impl RequestLog {
         if let Some(d) = details {
             record.apply_details(d, level);
         }
+        if let Some(redactor) = &self.redactor {
+            redactor.apply(&mut record);
+        }
         let mut records = self.records.lock();
         records.push_front(record);
         while records.len() > self.capacity {
@@ -334,6 +440,9 @@ impl RequestLog {
         let mut records = self.records.lock();
         if let Some(r) = records.iter_mut().find(|r| r.id == id) {
             f(r, level);
+            if let Some(redactor) = &self.redactor {
+                redactor.apply(r);
+            }
         }
     }
 
@@ -421,6 +530,7 @@ mod tests {
 
     fn rec(id: &str, status: u16, model: &str) -> RequestRecord {
         RequestRecord {
+            key: None,
             id: id.into(),
             route: "/v1/chat/completions".into(),
             method: "POST".into(),
@@ -532,5 +642,56 @@ mod tests {
         let (same, changed) = truncate_text("short", 100);
         assert!(!changed);
         assert_eq!(same, "short");
+    }
+    #[test]
+    fn redaction_patterns_and_all() {
+        fn record() -> RequestRecord {
+            RequestRecord::new(
+                "r".into(),
+                "/v1/chat/completions".into(),
+                "POST".into(),
+                200,
+                String::new(),
+                1.0,
+            )
+        }
+        fn details() -> LogDetails {
+            LogDetails {
+                input: Some("user: my card is 4111 1111 1111 1111 and token sk-abc123".into()),
+                output: Some("ok sk-zzz".into()),
+                request_payload: Some(
+                    serde_json::json!({"messages": [{"content": "sk-abc123 here"}]}),
+                ),
+                ..Default::default()
+            }
+        }
+        let log = RequestLog::new(LogLevel::Trace, 10)
+            .with_redaction(&["sk-[A-Za-z0-9]+".into(), r"\d{4}( \d{4}){3}".into()])
+            .unwrap();
+        log.record(record(), Some(details()));
+        let r = log.get("r").unwrap();
+        assert_eq!(
+            r.input.as_deref(),
+            Some("user: my card is [redacted] and token [redacted]")
+        );
+        assert_eq!(r.output.as_deref(), Some("ok [redacted]"));
+        assert_eq!(
+            r.request_payload.unwrap()["messages"][0]["content"],
+            "[redacted] here"
+        );
+
+        let log = RequestLog::new(LogLevel::Trace, 10)
+            .with_redaction(&["all".into()])
+            .unwrap();
+        log.record(record(), Some(details()));
+        let r = log.get("r").unwrap();
+        assert!(r.input.is_none() && r.output.is_none() && r.request_payload.is_none());
+        // An update (streaming handlers) is redacted too.
+        log.update("r", |r, level| r.apply_details(details(), level));
+        assert!(log.get("r").unwrap().output.is_none());
+
+        assert!(RequestLog::new(LogLevel::Info, 1)
+            .with_redaction(&["(unclosed".into()])
+            .is_err());
     }
 }

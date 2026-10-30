@@ -62,22 +62,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       it for `POST /v1/audio/transcriptions` as an alternative to the llama.cpp/mtmd path,
       selected per model in the config. Check its ggml does not clash with llama.cpp's (build
       shared like sd.cpp if needed), then add models to `models.manifest` and the example configs.
-- [ ] ⬛ **BUILD-5** `P2` Publish the website on hypnos.maai.solutions (AWS S3)
-      Serve the static site from DOC-4 (`website/`) at https://hypnos.maai.solutions. An S3
-      bucket alone only gives HTTP on an AWS hostname, so the custom domain with HTTPS needs a
-      private S3 bucket behind CloudFront (origin access control, `index.html` default root,
-      cache policy for the static assets) with an ACM certificate issued in us-east-1 (DNS
-      validation) and a DNS record for `hypnos` in the `maai.solutions` zone (Route 53 alias if
-      the zone is there, otherwise a CNAME at the current DNS provider). Deliverable, one of:
-      (a) Terraform under `infra/website/` (bucket, OAC, CloudFront distribution, ACM cert +
-      validation records, DNS record; variables for domain, zone and region; `terraform output`
-      with the distribution id) plus a `deploy.sh` that runs `aws s3 sync website/ s3://<bucket>
-      --delete` and a CloudFront invalidation; or (b) `docs/website-deploy.md` with the same
-      steps done by hand in the console / AWS CLI. Either way write `docs/website-deploy.md`
-      (prerequisites: AWS account, CLI profile, where the zone lives; first deploy; updating;
-      costs: S3 + CloudFront free tier covers a site this size). Optional follow-up: a
-      `website.yml` GitHub Actions job that syncs on every push to `main` touching `website/`
-      (OIDC role, no long-lived keys).
 - [ ] 🟨 **TEST-1** `P1` Soak test: many clients for hours, memory and bookings must stay flat
       All measurements so far are single-client scenarios (`backend/scripts/bench.sh`). Run the
       bench scenarios in a loop with 4-8 concurrent clients across modalities for several hours
@@ -94,13 +78,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       A C++ abort inside llama.cpp / sd.cpp takes the whole process down: document the
       supervisor expectation (run scripts, Docker restart policy, systemd unit) and add a
       per-engine crash counter to `/metrics` so restarts are visible.
-- [ ] 🟪 **API-5** `P2` Per-key rate limits and quotas, and redaction in the request log
-      API keys are all-or-nothing. Add per-key limits in `[server]` (requests per minute,
-      concurrent requests, tokens per day) enforced in `auth::require_api_key` with 429 and
-      `Retry-After`, a key label in the request log and `/metrics`, and an audit line per
-      rejected call. The request log captures prompts and completions at `debug`: add
-      `request_log_redact` (patterns or "all") and keep `info` the documented level for anything
-      exposed beyond a trusted group. Until then the README should say to put a gateway in front.
 - [ ] 🟫 **MEM-2** `P3` Expose GPU device health on /metrics (utilisation, temperature, errors)
       `/metrics` covers bookings and placements but not the device itself. Through the existing
       probe path (`GpuMemoryProbe`, NVML / `nvidia-smi` on CUDA, IOKit on Apple Silicon) export
@@ -145,6 +122,45 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       archives were never attached; the step now uploads into an existing or draft release.
 
 ## Done
+
+- [x] 🟪 **API-5** `P2` Per-key rate limits and quotas, and redaction in the request log
+      API keys are all-or-nothing. Add per-key limits in `[server]` (requests per minute,
+      concurrent requests, tokens per day) enforced in `auth::require_api_key` with 429 and
+      `Retry-After`, a key label in the request log and `/metrics`, and an audit line per
+      rejected call. The request log captures prompts and completions at `debug`: add
+      `request_log_redact` (patterns or "all") and keep `info` the documented level for anything
+      exposed beyond a trusted group. Until then the README should say to put a gateway in front.
+      Shipped: `[[server.keys]]` (label, key, `requests_per_minute`, `max_concurrent`,
+      `tokens_per_day`) and `[server.api_key_defaults]` for every key incl. plain `api_keys`
+      (labelled `key-<8 hex of digest>`); `quota.rs` `KeyLimiter` (minute window, semaphore held
+      through the response body via a guarded stream, UTC-day token quota fed by `observe_request`
+      for plain responses and by the chat stream at its end); `require_api_key` answers 429
+      `rate_limit_error` + `Retry-After` and logs an audit line with label and reason; the label
+      is on every request-log record (`?key=`), in the playground's log table and on `/metrics`
+      (`hypnos_api_key_requests_total`, `_rejections_total{reason}`, `_tokens_total`,
+      `_tokens_today`). `server.request_log_redact` (patterns or `"all"`) applied in `RequestLog`
+      on record and update. Tests: limiter, redaction, labelled keys, router test `tests/keys.rs`.
+      README says to put a gateway in front for anything finer than per key.
+
+- [x] ⬛ **BUILD-5** `P2` Publish the website on hypnos.maai.solutions (AWS S3)
+      Serve the static site from DOC-4 (`website/`) at https://hypnos.maai.solutions. An S3
+      bucket alone only gives HTTP on an AWS hostname, so the custom domain with HTTPS needs a
+      private S3 bucket behind CloudFront (origin access control, `index.html` default root,
+      cache policy for the static assets) with an ACM certificate issued in us-east-1 (DNS
+      validation) and a DNS record for `hypnos` in the `maai.solutions` zone (Route 53 alias if
+      the zone is there, otherwise a CNAME at the current DNS provider). Deliverable, one of:
+      (a) Terraform under `infra/website/` (bucket, OAC, CloudFront distribution, ACM cert +
+      validation records, DNS record; variables for domain, zone and region; `terraform output`
+      with the distribution id) plus a `deploy.sh` that runs `aws s3 sync website/ s3://<bucket>
+      --delete` and a CloudFront invalidation; or (b) `docs/website-deploy.md` with the same
+      steps done by hand in the console / AWS CLI. Either way write `docs/website-deploy.md`
+      (prerequisites: AWS account, CLI profile, where the zone lives; first deploy; updating;
+      costs: S3 + CloudFront free tier covers a site this size). Optional follow-up: a
+      `website.yml` GitHub Actions job that syncs on every push to `main` touching `website/`
+      (OIDC role, no long-lived keys).
+      Done 2026-10-30: https://hypnos.maai.solutions answers over HTTPS. Set up outside the
+      repository (no Terraform or `docs/website-deploy.md` checked in); add them if the deploy
+      is to be reproducible from the tree.
 
 - [x] 🟪 **API-4** `P2` Listen before startup pre-staging so /ready answers 503 instead of nothing
       `main.rs` runs `initialize_startup_tiers` before binding the port: with the 26B model
