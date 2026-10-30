@@ -3,12 +3,12 @@
 Re-records `assets/demo.gif` (the README's playground demo) with headless Chromium.
 
 ```bash
-./run.sh start            # backend on :8080 with the default lineup, playground on :5173
+./run.sh start            # backend on :8888 with the default lineup, playground on :5173
 cd tools/demo-gif
 npm install               # Playwright + Chromium, the GIF encoder, a PNG decoder
 python make_pictures_pdf.py pictures.pdf     # a two-page PDF with a picture per page
 # optional: start the 26B in pinned RAM so the first chat shows a promotion
-curl -X POST localhost:8080/v1/memory/tier -H 'Content-Type: application/json' \
+curl -X POST localhost:8888/v1/memory/tier -H 'Content-Type: application/json' \
      -d '{"model":"gemma4:26b-q4","target_tier":"tier2_pinned_ram"}'
 npm run record            # about two minutes of real time; writes ../../assets/demo.gif
 ```

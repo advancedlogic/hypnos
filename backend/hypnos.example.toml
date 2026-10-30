@@ -22,7 +22,7 @@ config_version = 1
 [server]
 # Loopback by default. Before "0.0.0.0", set api_keys (or HYPNOS_API_KEYS) and [server.tls] below.
 host = "127.0.0.1"
-port = 8080
+port = 8888                             # `hypnos --port N` or HYPNOS_PORT override this
 kv_idle_timeout_secs = 300
 # CORS: exact origins or "http://localhost:*" / "http://127.0.0.1:*" wildcards. Empty = any loopback origin.
 allowed_origins = []

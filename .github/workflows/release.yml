@@ -197,7 +197,7 @@ jobs:
           sha256sum -- *.tar.gz *.zip > SHA256SUMS
           cat > notes.md <<EOF
           Prebuilt archives for ${GITHUB_REF_NAME}. Unpack, then follow \`README.txt\` inside
-          (download models with \`scripts/fetch-models\`, run \`hypnos\`, open http://127.0.0.1:8080).
+          (download models with \`scripts/fetch-models\`, run \`hypnos\`, open http://127.0.0.1:8888).
 
           | Archive | Needs |
           | :--- | :--- |

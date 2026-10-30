@@ -55,8 +55,33 @@ fn main() -> Result<()> {
 }
 
 async fn run() -> Result<()> {
-    // `hypnos [config.toml]`, `hypnos --check-config [config.toml]`, `hypnos --version`.
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // `hypnos [config.toml] [--port N]`, `hypnos --check-config [config.toml]`, `hypnos --version`.
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // `--port N` / `--port=N` anywhere on the line overrides `server.port` (and `HYPNOS_PORT`).
+    let mut port_arg: Option<u16> = None;
+    let mut i = 0;
+    while i < args.len() {
+        let (is_port, value) = match args[i].as_str() {
+            "--port" | "-p" => (true, args.get(i + 1).cloned()),
+            a if a.starts_with("--port=") => (true, Some(a["--port=".len()..].to_string())),
+            _ => (false, None),
+        };
+        if !is_port {
+            i += 1;
+            continue;
+        }
+        let value =
+            value.ok_or_else(|| anyhow::anyhow!("--port needs a number, e.g. --port 8888"))?;
+        port_arg = Some(
+            value
+                .parse::<u16>()
+                .ok()
+                .filter(|p| *p > 0)
+                .ok_or_else(|| anyhow::anyhow!("--port: {value:?} is not a port (1-65535)"))?,
+        );
+        let consumed = if args[i].starts_with("--port=") { 1 } else { 2 };
+        args.drain(i..i + consumed);
+    }
     match args.first().map(String::as_str) {
         Some("--version" | "-V") => {
             println!("hypnos {}", env!("CARGO_PKG_VERSION"));
@@ -64,7 +89,7 @@ async fn run() -> Result<()> {
         }
         Some("--help" | "-h") => {
             println!(
-                "usage: hypnos [config.toml]            start the server (default: $HYPNOS_CONFIG, then ./hypnos.toml)\n       hypnos --check-config [config.toml]   validate the config and exit (1 on errors)\n       hypnos --version"
+                "usage: hypnos [config.toml] [--port N]   start the server (config: $HYPNOS_CONFIG, then ./hypnos.toml;\n                                         port: --port, then $HYPNOS_PORT, then server.port, default 8888)\n       hypnos --check-config [config.toml]   validate the config and exit (1 on errors)\n       hypnos --version"
             );
             return Ok(());
         }
@@ -112,6 +137,21 @@ async fn run() -> Result<()> {
     config
         .server
         .apply_env_api_keys(std::env::var("HYPNOS_API_KEYS").ok().as_deref());
+    // The port: --port on the command line, then HYPNOS_PORT, then the file.
+    let env_port = std::env::var("HYPNOS_PORT")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .map(|v| {
+            v.trim()
+                .parse::<u16>()
+                .ok()
+                .filter(|p| *p > 0)
+                .ok_or_else(|| anyhow::anyhow!("HYPNOS_PORT={v:?} is not a port (1-65535)"))
+        })
+        .transpose()?;
+    if let Some(port) = port_arg.or(env_port) {
+        config.server.port = port;
+    }
 
     // Fill unset [models.arch] fields from the GGUF headers before validating them.
     let base_dir = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());

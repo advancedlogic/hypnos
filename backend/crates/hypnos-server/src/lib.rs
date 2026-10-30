@@ -1419,7 +1419,7 @@ mod tests {
     #[test]
     fn loopback_origins() {
         assert!(is_loopback_origin("http://localhost:5173"));
-        assert!(is_loopback_origin("http://127.0.0.1:8080"));
+        assert!(is_loopback_origin("http://127.0.0.1:8888"));
         assert!(is_loopback_origin("http://[::1]:3000"));
         assert!(!is_loopback_origin("http://evil.example"));
         assert!(!is_loopback_origin("http://localhost.evil.example"));

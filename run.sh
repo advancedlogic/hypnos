@@ -17,7 +17,7 @@
 #  Set HYPNOS_PROFILE=debug to build/start the dev profile instead of release, and
 #  HYPNOS_CONFIG=<file> (relative to backend/) to start the backend with your own config.
 #
-#  Backend : Rust server on http://localhost:8080  (compiled hypnos binary)
+#  Backend : Rust server on http://localhost:8888  (compiled hypnos binary)
 #  Frontend: Vite dev server on http://localhost:5173 (npm run dev)
 #  Output goes to .run/*.log. On Linux/macOS each service runs in its own process group
 #  (pid in .run/*.pid); on Windows (Git Bash) the listening port is the source of truth.
@@ -28,7 +28,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_DIR="$ROOT_DIR/.run"
 mkdir -p "$RUN_DIR"
 
-BACKEND_PORT=8080
+BACKEND_PORT=8888
 FRONTEND_PORT=5173
 BACKEND_CONFIG="${HYPNOS_CONFIG:-hypnos.example.toml}"
 

@@ -30,15 +30,15 @@ HYPNOS_PROFILE=debug ./run.sh build backend   # dev profile instead of release
 run.bat <same actions>                 # Windows; auto-loads vcvars64 when rc.exe is missing
 
 # Manual
-cd backend && cargo run --bin hypnos -- hypnos.example.toml     # port 8080
-cd frontend && npm run dev                                       # port 5173, proxies /v1 and /health to 8080
+cd backend && cargo run --bin hypnos -- hypnos.example.toml     # port 8888
+cd frontend && npm run dev                                       # port 5173, proxies /v1 and /health to 8888
 
 # Tests (engine-free: mock backend, no weights needed)
 cd backend && cargo test --workspace
 cd backend && cargo test -p hypnos-scheduler --test scheduler            # scheduler integration tests
 cd backend && cargo test -p hypnos-scheduler --test scheduler <name>     # one test by name
 cd backend && cargo test -- --ignored                                     # GPU lifecycle test, needs real weights in backend/models/
-./backend/scripts/smoke_test.sh [http://localhost:8080]                   # one real request per modality against a running server
+./backend/scripts/smoke_test.sh [http://localhost:8888]                   # one real request per modality against a running server
 ./backend/scripts/bench.sh [--host ...] [--out docs/bench/baseline-YYYY-MM-DD.md] [--scenarios 1,2,3]
 
 # CPU-only build (no CUDA toolkit, what CI did)

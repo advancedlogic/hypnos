@@ -50,7 +50,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 6   | 5   | 4   | 8    | 3   | 7     | 6   | 3    |
+| 2  | 7   | 5   | 4   | 8    | 3   | 7     | 6   | 3    |
 
 ---
 
@@ -75,6 +75,14 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🟪 **API-6** `P2` Choose the port on the command line; default 8888
+      `hypnos [config.toml] --port N` (also `--port=N`, `-p N`) and `HYPNOS_PORT` override
+      `server.port`, so one config file can serve several instances. The default port moved from
+      8080 to 8888 everywhere: `server.port`, the built-in profile, both example configs, the run
+      scripts, the Vite proxy, the playground's backend URL, the Dockerfile, the scripts
+      (smoke, bench, soak, package), `backend.http`, the README, the website and the docs.
+      Done 2026-10-30.
 
 - [x] 🟧 **PERF-7** `P2` Gemma 4 26B decodes at 12 tokens/s on the RTX 5090 laptop; VRAM is full
       The request log and the soak show 12 tok/s for `gemma4:26b-q4` (README: ~100 tok/s on a

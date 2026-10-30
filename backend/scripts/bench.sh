@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Execution-efficiency benchmark against a running Hypnos server (see docs/execution-efficiency-plan.md).
 #
-#   ./backend/scripts/bench.sh [--host http://127.0.0.1:8080] [--out docs/bench/baseline-$(date +%F).md] [--scenarios 1,2,3] [--chart out.svg]
+#   ./backend/scripts/bench.sh [--host http://127.0.0.1:8888] [--out docs/bench/baseline-$(date +%F).md] [--scenarios 1,2,3] [--chart out.svg]
 #
 # Thin wrapper around bench.py (stdlib-only Python, same interpreter smoke_test.sh uses).
 set -euo pipefail

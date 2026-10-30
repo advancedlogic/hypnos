@@ -220,7 +220,7 @@
         <div class="code-pair">
           <figure class="code">
             <figcaption>curl</figcaption>
-            <pre><code>curl http://localhost:8080/v1/chat/completions \
+            <pre><code>curl http://localhost:8888/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "gemma4:e4b-q4",
        "messages": [{"role": "user", "content": "Hello!"}]}'</code></pre>
@@ -229,7 +229,7 @@
           <figure class="code">
             <figcaption>Python</figcaption>
             <pre><code>from openai import OpenAI
-client = OpenAI(base_url="http://localhost:8080/v1", api_key="unused")
+client = OpenAI(base_url="http://localhost:8888/v1", api_key="unused")
 print(client.chat.completions.create(
     model="gemma4:e4b-q4",
     messages=[{"role": "user", "content": "Hello!"}],
@@ -299,7 +299,7 @@ kv_dtype = "q8_0"                   # f16 | q8_0 | q4_0</code></pre>
             <figure class="code">
               <figcaption>shell</figcaption>
               <pre><code>./scripts/fetch-models.sh   # the default lineup, ~33 GB into models/ (or one model id)
-./hypnos                    # reads hypnos.toml; API and playground on http://127.0.0.1:8080</code></pre>
+./hypnos                    # reads hypnos.toml; API and playground on http://127.0.0.1:8888</code></pre>
               <button class="copy" type="button" aria-label="Copy">Copy</button>
             </figure>
             <p class="fine">Windows: <code>powershell -ExecutionPolicy Bypass -File scripts\fetch-models.ps1</code>, then <code>.\hypnos.exe</code>. Linux needs glibc 2.39+, an NVIDIA driver 570+ and the CUDA 12 runtime libraries; macOS needs Apple Silicon and macOS 14+.</p>
@@ -311,7 +311,7 @@ kv_dtype = "q8_0"                   # f16 | q8_0 | q4_0</code></pre>
               <pre><code>mkdir -p models
 docker run --rm -v ./models:/opt/hypnos/models --entrypoint ./scripts/fetch-models.sh \
   ghcr.io/advancedlogic/hypnos                 # ~33 GB, or append one model id
-docker run --gpus all -p 8080:8080 -v ./models:/opt/hypnos/models ghcr.io/advancedlogic/hypnos</code></pre>
+docker run --gpus all -p 8888:8888 -v ./models:/opt/hypnos/models ghcr.io/advancedlogic/hypnos</code></pre>
               <button class="copy" type="button" aria-label="Copy">Copy</button>
             </figure>
             <p class="fine">Mount your own config over <code>/opt/hypnos/hypnos.toml</code> or point <code>HYPNOS_CONFIG</code> at one. Set <code>HYPNOS_API_KEYS</code> before publishing the port beyond localhost.</p>
@@ -325,7 +325,7 @@ docker run --gpus all -p 8080:8080 -v ./models:/opt/hypnos/models ghcr.io/advanc
 ./backend/scripts/vendor.sh            # pinned engine sources into backend/vendor/
 ./run.sh models                        # the default lineup into backend/models/
 ./run.sh build                         # backend + playground (Metal picked on Apple Silicon)
-./run.sh start                         # API on :8080, playground on :5173</code></pre>
+./run.sh start                         # API on :8888, playground on :5173</code></pre>
               <button class="copy" type="button" aria-label="Copy">Copy</button>
             </figure>
             <p class="fine">Windows: <code>setup-build-env.ps1</code> and <code>run.bat</code> with the same arguments. Design notes for Apple Silicon live in <a href="https://github.com/advancedlogic/hypnos/blob/main/docs/apple-silicon.md" rel="noopener">docs/apple-silicon.md</a>.</p>

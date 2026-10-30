@@ -260,7 +260,7 @@ def gb(v):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--host", default="http://127.0.0.1:8080")
+    ap.add_argument("--host", default="http://127.0.0.1:8888")
     ap.add_argument("--duration", type=float, default=60.0, help="minutes")
     ap.add_argument("--warmup", type=float, default=5.0, help="minutes excluded from the growth verdict")
     ap.add_argument("--clients", type=int, default=6)

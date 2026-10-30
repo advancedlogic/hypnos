@@ -565,7 +565,7 @@ fn default_host() -> String {
     "127.0.0.1".to_string()
 }
 fn default_port() -> u16 {
-    8080
+    8888
 }
 fn default_idle_timeout() -> u64 {
     300
