@@ -1130,8 +1130,6 @@ dependencies = [
 [[package]]
 name = "docling-onnx"
 version = "2.55.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "016d23fb34db57a3030e133b6f6698f06e0834344b32d18e998f7d46de8f0a92"
 dependencies = [
  "docling-core",
  "ort",

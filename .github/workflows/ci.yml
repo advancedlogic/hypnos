@@ -79,6 +79,11 @@ jobs:
         working-directory: backend
         shell: pwsh
         run: cargo test --workspace --no-default-features ${{ matrix.features }}
+      # The docling-cuda path is in no build (its ONNX Runtime needs CUDA 13); keep it compiling.
+      - name: Check the docling-cuda feature
+        if: runner.os == 'Linux'
+        working-directory: backend
+        run: cargo check -p hypnos-backends --no-default-features --features docling-cuda
 
   frontend:
     name: frontend build

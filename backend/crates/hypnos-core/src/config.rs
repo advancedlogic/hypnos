@@ -821,11 +821,7 @@ impl HypnosConfig {
                             "'{id}': docling engine only implements document_conversion"
                         ));
                     }
-                    if m.device != ExecutionDevice::Cpu {
-                        r.errors.push(format!(
-                            "'{id}': docling runs on the CPU in this build; set device = \"cpu\""
-                        ));
-                    }
+                    // `device = "gpu"` depends on how the server was built; it checks that itself.
                 }
                 EngineKind::GgmlWhisper => {
                     r.errors.push(format!("'{id}': ggml_whisper is not compiled into this build; use ggml_llama with a Gemma 4 model for speech_to_text"));
@@ -836,7 +832,7 @@ impl HypnosConfig {
                 && m.arch.activation_workspace_bytes < 1024 * 1024 * 1024
             {
                 r.warnings.push(format!(
-                    "'{id}': arch.activation_workspace_bytes is under 1 GiB; docling needs about 3.5 GiB per page while converting, which this booking does not cover"
+                    "'{id}': arch.activation_workspace_bytes is under 1 GiB; docling needs about 1.5 GiB while converting on the CPU (about 5 GiB with device = \"gpu\"), which this booking does not cover"
                 ));
             }
             if m.engine == EngineKind::Gliner {
@@ -1158,13 +1154,8 @@ activation_workspace_bytes = 3758096384
         let r = cfg.validate(&dir);
         assert!(r.is_ok(), "{:?}", r.errors);
 
-        // On the GPU (not in this build), two of them, or the wrong engine: refused.
-        let cfg = HypnosConfig::from_toml_str(&docling("doc", "")).unwrap();
-        assert!(cfg
-            .validate(&dir)
-            .errors
-            .iter()
-            .any(|e| e.contains("device = \"cpu\"")));
+        // Two of them, or the wrong engine: refused. Whether `device = "gpu"` works depends on the
+        // build, which the server checks at startup.
         let two = docling("a", "device = \"cpu\"") + &docling("b", "device = \"cpu\"");
         let cfg = HypnosConfig::from_toml_str(&two).unwrap();
         assert!(cfg

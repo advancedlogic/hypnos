@@ -119,6 +119,25 @@ fn apple_performance_cores() -> Option<usize> {
         .filter(|&n| n > 0)
 }
 
+/// The ONNX Runtime provider a docling model with `device = "gpu"` runs on in this build: CUDA with
+/// the `docling-cuda` feature, CoreML in the Metal build, none otherwise.
+pub fn docling_gpu_provider() -> Option<&'static str> {
+    if cfg!(feature = "docling-cuda") {
+        Some("cuda")
+    } else if cfg!(all(target_os = "macos", feature = "metal")) {
+        Some("coreml")
+    } else {
+        None
+    }
+}
+
+/// Process setup that must happen before any thread starts. On Linux with the `docling-cuda`
+/// feature, ONNX Runtime finds its CUDA provider library relative to `argv[0]`, so a binary started
+/// by bare name re-executes itself under its absolute path; a no-op everywhere else.
+pub fn prepare_process() {
+    docling_onnx::reexec_for_provider_libraries();
+}
+
 /// Server-wide settings the engines need beyond their own [`ModelConfig`].
 #[derive(Debug, Clone)]
 pub struct EngineOptions {

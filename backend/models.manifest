@@ -33,3 +33,6 @@ docling          https://github.com/docling-project/docling.rs/releases/download
 docling          https://github.com/docling-project/docling.rs/releases/download/models-v1  ocr_rec_v6_dict.txt      docling/ocr_rec_v6_dict.txt              all
 # GLiNER2.5 multilingual, the fp32 graphs (the CPU variant gliner25-rs runs).
 gliner2.5-multi  jugaadsrl/gliner2.5-multi-v1-onnx      fp32_25/                              gliner2.5-multi/                         all
+# fp32 layout and TableFormer encoder for docling with device = "gpu" (the GPU providers skip int8).
+docling-gpu      https://github.com/docling-project/docling.rs/releases/download/models-v1  layout_heron.onnx        docling/layout_heron.onnx                all
+docling-gpu      https://github.com/docling-project/docling.rs/releases/download/models-v1  encoder.onnx             docling/tableformer/encoder.onnx         all

@@ -44,8 +44,17 @@ async fn shutdown_signal() {
     info!("Shutdown signal received; finishing in-flight requests");
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    // Before any thread exists (the async runtime starts several).
+    hypnos_backends::prepare_process();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("starting the async runtime")?
+        .block_on(run())
+}
+
+async fn run() -> Result<()> {
     // The first argument, else HYPNOS_CONFIG (the Docker image), else ./hypnos.toml.
     let config_path = std::env::args()
         .nth(1)
@@ -67,7 +76,7 @@ async fn main() -> Result<()> {
     } else {
         (
             default_six_model_config(),
-            "<built-in 5-model profile>".to_string(),
+            "<built-in default profile>".to_string(),
         )
     };
     let log_format =
@@ -87,7 +96,19 @@ async fn main() -> Result<()> {
     }
 
     // Fail fast on a broken configuration instead of on the first request.
-    let report = config.validate(&base_dir);
+    let mut report = config.validate(&base_dir);
+    if hypnos_backends::docling_gpu_provider().is_none() {
+        for m in config
+            .models
+            .iter()
+            .filter(|m| m.engine == hypnos_core::config::EngineKind::Docling && !m.runs_on_cpu())
+        {
+            report.errors.push(format!(
+                "'{}': device = \"gpu\" needs a build with a docling GPU provider (Metal, or the docling-cuda feature); use device = \"cpu\"",
+                m.id
+            ));
+        }
+    }
     for w in &report.warnings {
         warn!(config_warning = %w);
     }

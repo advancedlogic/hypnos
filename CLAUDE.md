@@ -158,8 +158,12 @@ keep that profile in sync with `hypnos.example.toml` when adding models or field
   `device = "cpu"`: the planner books its Tier 1 placement in host RAM only (`runs_on_cpu`), and
   a CPU model short of RAM pushes idle RAM-only models to Tier 3. PDFs go one page per conversion
   through a `WarmPipeline` (a whole document at once keeps every page's data until the end);
-  `join_pages` mends tables, numbered lists and sentences across breaks. `$DOCLING_RS_MODELS_DIR`
-  is set from `weights_path`'s folder, hence one docling model per server.
+  `join_pages` mends tables, numbered lists and sentences across breaks. docling reads its setup
+  from the environment once per process (`configure_docling`: `DOCLING_RS_MODELS_DIR` from
+  `weights_path`'s folder, `DOCLING_RS_EP` from `device`, `DOCLING_RS_NO_ARENA=1`), hence one
+  docling model per server. `device = "gpu"`: CoreML in the Metal build, CUDA only with the opt-in
+  `docling-cuda` feature (prebuilt ORT GPU = CUDA 13; `main` calls `prepare_process` before the
+  runtime for its provider-library re-exec). `docling-onnx` is vendored with `PreferCPU`.
 - `entities.rs`: `gliner` (vendored `gliner25-rs`, `device = "cpu"`). One worker thread owns the
   `BoundaryEngine` from load to unload; more than 8 labels run as families, long texts in windows.
 - `onnx.rs`: ort rc.15 allows one ONNX Runtime environment per process, never rebuilt once
@@ -171,7 +175,7 @@ keep that profile in sync with `hypnos.example.toml` when adding models or field
 
 Git-ignored except `patches/`. `scripts/vendor.sh` is the source of truth for pins (llama.cpp
 b11982, sd.cpp master-1024, llama-cpp-rs 0.1.160, diffusion-rs commit, espeak-rs-sys 0.2.0,
-gliner25-rs 0.5.6) and
+gliner25-rs 0.5.6, docling-onnx 2.55.4) and
 `vendor/VENDOR.md` explains each patch and how to bump a pin. Never edit vendor sources without
 regenerating the corresponding patch file.
 

@@ -12,6 +12,7 @@ DIFFUSION_RS_COMMIT="89dcf933f754a173c31b2db30ca3df14ec899dac"   # newfla/diffus
 SD_CPP_TAG="master-1024-77b72a2"                  # leejet/stable-diffusion.cpp (MOSS-Image)
 ESPEAK_RS_SYS_VERSION="0.2.0"                     # crates.io (vendored to drop the debug-CRT link)
 GLINER25_RS_VERSION="0.5.6"                       # crates.io (vendored: ort rc.15, CPU-only ort features)
+DOCLING_ONNX_VERSION="2.55.4"                     # crates.io (vendored: CPU sessions really on the CPU)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -99,6 +100,21 @@ if [ ! -f "$VENDOR/gliner25-rs/Cargo.toml" ] || [ "$FORCE" = 1 ]; then
     echo "[patch] applied gliner25-rs.patch"
 else
     echo "[keep] $VENDOR/gliner25-rs"
+fi
+
+# 5. docling-onnx from crates.io: PreferCPU, so ort's default policy does not put CoreML under the
+#    CPU choice on macOS ------------------------------------------------------------------------
+if [ ! -f "$VENDOR/docling-onnx/Cargo.toml" ] || [ "$FORCE" = 1 ]; then
+    rm -rf "$VENDOR/docling-onnx"
+    tmp="$(mktemp -d)"
+    echo "[fetch] docling-onnx $DOCLING_ONNX_VERSION from crates.io"
+    curl -sSL -A "hypnos-vendor" "https://crates.io/api/v1/crates/docling-onnx/$DOCLING_ONNX_VERSION/download" | tar xz -C "$tmp"
+    mv "$tmp/docling-onnx-$DOCLING_ONNX_VERSION" "$VENDOR/docling-onnx"
+    rm -f "$VENDOR/docling-onnx/.cargo_vcs_info.json" "$VENDOR/docling-onnx/Cargo.toml.orig"
+    (cd "$VENDOR/docling-onnx" && patch -p1 --forward < "$PATCHES/docling-onnx.patch")
+    echo "[patch] applied docling-onnx.patch"
+else
+    echo "[keep] $VENDOR/docling-onnx"
 fi
 
 echo "[done] vendor tree ready under ${VENDOR#$ROOT/}"

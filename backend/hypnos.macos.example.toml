@@ -234,6 +234,10 @@ activation_workspace_bytes = 3221225472
 #    layout model, and the other model files sit in the same folder (`./run.sh models docling`).
 #    Pages are converted one at a time, so this booking (models + working memory, all host RAM)
 #    holds for documents of any length. OCR runs only on pages without a text layer.
+#    device = "gpu" runs the models on CoreML (Metal build) or CUDA (`docling-cuda` feature) with
+#    the fp32 graphs (`./run.sh models docling-gpu`) and books VRAM; give it ~5 GiB of
+#    activation_workspace_bytes. On an M5 Max the CPU is faster: 15 pages in 2.5 s and 1.3 GB,
+#    against 6.4 s and 5.2 GB on CoreML, which only saves CPU time for other work.
 # -----------------------------------------------------------------------------
 [[models]]
 id = "docling"
@@ -243,12 +247,12 @@ device = "cpu"                          # Tier 1 books host RAM, not VRAM
 weights_path = "models/docling/layout_heron_int8.onnx"
 total_weight_bytes = 335544320          # every docling model file (~310 MiB)
 initial_tier = "tier3_nvme_ssd"
-keep_warm_in_ram = false                # unloading frees the models; reloading takes ~12 s
+keep_warm_in_ram = false                # unloading frees the models; reloading takes ~0.3 s
 priority = "normal"
 
 [models.arch]
 num_layers = 1
-activation_workspace_bytes = 3758096384 # 3.5 GiB peak while converting a page
+activation_workspace_bytes = 1610612736 # 1.5 GiB: 1.3-1.6 GB measured while converting
 
 # -----------------------------------------------------------------------------
 # 7. gliner2.5-multi — Entity extraction (/v1/entities), zero-shot: labels chosen per request

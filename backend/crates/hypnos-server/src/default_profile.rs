@@ -230,7 +230,7 @@ pub fn default_six_model_config() -> HypnosConfig {
                 device: ExecutionDevice::Cpu,
                 arch: ModelArchitectureParams {
                     num_layers: 1,
-                    activation_workspace_bytes: 3584 * mb,
+                    activation_workspace_bytes: 1536 * mb,
                     ..ModelArchitectureParams::default()
                 },
             },

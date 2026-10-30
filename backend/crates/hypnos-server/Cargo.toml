@@ -15,6 +15,8 @@ default = ["cuda"]
 # the GPU backend without reaching into the dependency's features.
 cuda = ["hypnos-backends/cuda"]
 metal = ["hypnos-backends/metal"]
+# docling on the GPU through ONNX Runtime's CUDA provider (opt-in, see hypnos-backends).
+docling-cuda = ["hypnos-backends/docling-cuda"]
 
 [dependencies]
 hypnos-core.workspace = true

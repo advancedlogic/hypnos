@@ -1,0 +1,18 @@
+diff --color -ruN a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs	2006-07-23 21:21:28
++++ b/src/lib.rs	2026-10-30 07:46:29
+@@ -146,7 +146,13 @@
+ /// `load-dynamic` build runs whatever library the machine provides. A
+ /// document converter does not report its users' models to anyone.
+ pub fn session_builder() -> Result<SessionBuilder, String> {
+-    Session::builder(environment()?).map_err(|e| e.to_string())
++    // Hypnos: ort's default device policy registers CoreML on macOS for every session, so the
++    // CPU choice would quietly split each graph across CoreML partitions. Execution providers
++    // registered by `apply` (DOCLING_RS_EP) still take precedence over this policy.
++    Session::builder(environment()?)
++        .map_err(|e| e.to_string())?
++        .with_auto_device(ort::session::builder::AutoDevicePolicy::PreferCPU)
++        .map_err(|e| e.to_string())
+ }
+ 
+ /// The process's one ONNX Runtime [`Environment`] (ort 2.0.0-rc.14 made

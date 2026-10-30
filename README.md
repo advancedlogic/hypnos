@@ -220,7 +220,7 @@ LM Studio or Python sidecar is involved.
 | **`kokoro-82m-q4`** | **Text-to-Speech** (`/v1/audio/speech`) | `onnx_runtime` | `kokoro/model_fp16.onnx` (155 MiB) + `kokoro/voices/*.bin` | `RealtimePinned` (always resident; runs on CPU) |
 | **`gemmaembedding2`** | **Vector Embeddings** (`/v1/embeddings`) | `ggml_llama` | `embeddinggemma-2-Q8_0.gguf` (295 MiB) | `RealtimePinned` (always hot in Tier 1 VRAM) |
 | **`moss-image`** | **Image Generation** (`/v1/images/generations`) | `ggml_diffusion` | `MOSS-Image-SFT-Q4_K.gguf` (3.3 GiB) + `Qwen3.5-9B-Q4_K_M.gguf` (5.7 GiB) + `flux2-vae.safetensors` + `moss_tokenizer.json` | `Low` (promoted to Tier 1 VRAM on demand, evicts idle models) |
-| **`docling`** | **Document Conversion** (`/v1/documents/convert`) | `docling` | `docling/` (310 MiB: layout, TableFormer, OCR) | `Normal`, `device = "cpu"` (loaded on demand into host RAM, ~4 GiB booked, no VRAM) |
+| **`docling`** | **Document Conversion** (`/v1/documents/convert`) | `docling` | `docling/` (310 MiB: layout, TableFormer, OCR) | `Normal`, `device = "cpu"` (loaded on demand into host RAM in ~0.3 s, ~1.8 GiB booked, no VRAM) |
 | **`gliner2.5-multi`** | **Entity Extraction** (`/v1/entities`) | `gliner` | `gliner2.5-multi/` (1.15 GiB: encoder, boundary heads, tokenizer) | `Normal`, `device = "cpu"` (loaded on demand in under a second, ~3.2 GiB booked, no VRAM) |
 
 ### Model files
@@ -458,10 +458,14 @@ Behaviour that matters in production:
   `output_format` (`json` adds each page's docling document), `stream` (one server-sent event per
   page, then the joined document) and `describe_pictures` (a vision model such as `gemma4:e4b-q4`
   writes a description under every picture). PDFs are converted one page at a time through models
-  that stay loaded (about 0.25 s a page on an M5 Max; the first table loads TableFormer), so memory
-  is the same for 5 pages or 500; the joined Markdown puts back tables, numbered lists and
+  that stay loaded (about 0.1 s a page on an M5 Max CPU; the first table loads TableFormer), so
+  memory is the same for 5 pages or 500; the joined Markdown puts back tables, numbered lists and
   sentences that a page break cut. Images, DOCX, PPTX, XLSX, HTML and Markdown work too.
-  `limits.max_document_bytes` (100 MiB) caps the input.
+  `limits.max_document_bytes` (100 MiB) caps the input. `device = "gpu"` runs docling on CoreML
+  (Metal builds) or CUDA (built with `--features docling-cuda`, not part of the release archives:
+  the prebuilt ONNX Runtime GPU build needs CUDA 13 and cuDNN 9) and needs the fp32 models
+  (`./run.sh models docling-gpu`). On Apple Silicon the CPU is faster and lighter; CoreML only
+  frees the CPU cores.
 - **Entity extraction** (Hypnos extension): `POST /v1/entities` with `{"model", "input": text or
   [texts], "labels": ["person", "medication", ...], "threshold": 0.5, "flat": true}` returns one
   entity list per text (`text`, `label`, character `start` / `end`, `score`). The labels are free

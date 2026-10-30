@@ -80,6 +80,10 @@ espeak-rs-sys = { path = "vendor/espeak-rs-sys" }
 # trimmed to the CPU build Hypnos links: upstream enables ort's `load-dynamic` and every GPU
 # provider, which would turn the whole binary's ONNX Runtime into a dynamically loaded one.
 gliner25-rs = { path = "vendor/gliner25-rs" }
+# docling-onnx 2.55.4 with `PreferCPU` on every session: ort's default device policy otherwise
+# registers CoreML on macOS under docling's CPU choice (4.2 GB and ~240 ms a page instead of
+# 1.6 GB and ~90 ms). Execution providers docling registers itself (DOCLING_RS_EP) still win.
+docling-onnx = { path = "vendor/docling-onnx" }
 
 [profile.dev]
 # Native engines are compiled in Release by their build scripts; keep Rust-side debug fast enough.

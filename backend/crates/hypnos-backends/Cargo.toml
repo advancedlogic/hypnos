@@ -13,7 +13,12 @@ default = ["cuda"]
 cuda = ["llama-cpp-2/cuda", "llama-cpp-2/openmp", "diffusion-rs-sys/cuda"]
 # Apple Silicon: `--no-default-features --features metal`. The vendored crates already turn Metal on
 # for aarch64 macOS; the feature makes that explicit and keeps `cuda` (and its nvcc probe) out.
-metal = ["llama-cpp-2/metal", "diffusion-rs-sys/metal"]
+metal = ["llama-cpp-2/metal", "diffusion-rs-sys/metal", "docling-pdf/coreml"]
+# docling's `device = "gpu"` on NVIDIA: ONNX Runtime's CUDA provider. Opt-in and not part of the
+# release builds: the prebuilt ONNX Runtime GPU build is CUDA 13 only (driver 580+, cuDNN 9 for
+# CUDA 13, provider libraries beside the binary), while the llama.cpp / sd.cpp engines target
+# CUDA 12.8. Turning it on switches every ONNX engine (Kokoro, GLiNER) to that ONNX Runtime.
+docling-cuda = ["docling-pdf/cuda"]
 
 [dependencies]
 hypnos-core.workspace = true

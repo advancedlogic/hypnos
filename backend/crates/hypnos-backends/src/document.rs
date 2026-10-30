@@ -43,12 +43,21 @@ impl DoclingBackend {
     }
 }
 
-/// docling.rs finds its models through `$DOCLING_RS_MODELS_DIR` (the layout the release ships:
-/// `layout_heron_int8.onnx`, `tableformer/`, `ocr_*.onnx`). The configured `weights_path` is the
-/// layout model, so its directory is that root. Set before the first model loads, while no
-/// conversion is running; validation allows one docling model per process for this reason.
-fn point_docling_at_models(weights_path: &Path) -> Result<PathBuf> {
-    let dir = weights_path
+/// Sets `name` unless the operator already did (every docling knob stays overridable).
+fn set_default_env(name: &str, value: &str) {
+    if std::env::var_os(name).is_none() {
+        std::env::set_var(name, value);
+    }
+}
+
+/// Points docling.rs at its models and execution provider, which it reads from the process
+/// environment: `$DOCLING_RS_MODELS_DIR` (the release layout: `layout_heron_int8.onnx`,
+/// `tableformer/`, `ocr_*.onnx`) is `weights_path`'s folder, and `DOCLING_RS_EP` follows
+/// `device`. Set before the first model loads, while no conversion runs; docling resolves the
+/// provider once per process, which is why validation allows one docling model per server.
+fn configure_docling(cfg: &ModelConfig) -> Result<PathBuf> {
+    let dir = cfg
+        .weights_path
         .parent()
         .filter(|d| !d.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
@@ -57,6 +66,35 @@ fn point_docling_at_models(weights_path: &Path) -> Result<PathBuf> {
     })?;
     if std::env::var_os("DOCLING_RS_MODELS_DIR").as_deref() != Some(dir.as_os_str()) {
         std::env::set_var("DOCLING_RS_MODELS_DIR", &dir);
+    }
+    // ONNX Runtime's CPU arena keeps a slab for every tensor shape it has seen and never gives it
+    // back, so a server's memory would ratchet up with the largest page ever converted.
+    set_default_env("DOCLING_RS_NO_ARENA", "1");
+    if cfg.runs_on_cpu() {
+        set_default_env("DOCLING_RS_EP", "cpu");
+        return Ok(dir);
+    }
+    let provider = crate::docling_gpu_provider().ok_or_else(|| {
+        HypnosError::Config(format!(
+            "'{}': device = \"gpu\" needs a build with a docling GPU provider (Metal, or the docling-cuda feature)",
+            cfg.id
+        ))
+    })?;
+    // The GPU providers run the fp32 graphs (the int8 ones are calibrated for CPU kernels).
+    if !dir.join("layout_heron.onnx").is_file() {
+        return Err(HypnosError::Config(format!(
+            "'{}': device = \"gpu\" needs the fp32 layout model {} (./run.sh models docling-gpu)",
+            cfg.id,
+            dir.join("layout_heron.onnx").display()
+        )));
+    }
+    set_default_env("DOCLING_RS_EP", provider);
+    if provider == "cuda" {
+        // About ten sessions share the booked workspace; cap each arena and stop the power-of-two
+        // growth so the device stays within the booking.
+        let per_session_mb = (cfg.arch.activation_workspace_bytes / 4 / (1024 * 1024)).max(256);
+        set_default_env("DOCLING_RS_CUDA_MEM_LIMIT_MB", &per_session_mb.to_string());
+        set_default_env("DOCLING_RS_CUDA_ARENA_EXTEND", "same_as_requested");
     }
     Ok(dir)
 }
@@ -260,16 +298,17 @@ impl ModelBackend for DoclingBackend {
         if self.pipeline.lock().is_some() {
             return Ok(());
         }
-        let weights = self.config.weights_path.clone();
+        let cfg = self.config.clone();
         let id = self.config.id.clone();
         let pipeline = tokio::task::spawn_blocking(move || -> Result<WarmPipeline> {
             let started = Instant::now();
-            let dir = point_docling_at_models(&weights)?;
+            let dir = configure_docling(&cfg)?;
             let pipeline = WarmPipeline::new();
             warm_up(&pipeline)?;
             info!(
                 model = %id,
                 models_dir = %dir.display(),
+                provider = %std::env::var("DOCLING_RS_EP").unwrap_or_default(),
                 load_secs = format!("{:.2}", started.elapsed().as_secs_f32()),
                 "docling models resident"
             );

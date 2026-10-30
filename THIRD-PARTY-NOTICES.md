@@ -17,7 +17,7 @@ package (the GPL-3.0-or-later notice is in each source file's header).
 | [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) | image generation | MIT |
 | [diffusion-rs](https://github.com/newfla/diffusion-rs) | Rust bindings for stable-diffusion.cpp | MIT |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) via [`ort`](https://github.com/pykeio/ort) | Kokoro TTS, docling | MIT / MIT OR Apache-2.0 |
-| [docling.rs](https://github.com/docling-project/docling.rs) (`docling`, `docling-pdf`, `docling-onnx`, crates.io) | document conversion | MIT |
+| [docling.rs](https://github.com/docling-project/docling.rs) (`docling`, `docling-pdf`, crates.io; `docling-onnx` vendored with `vendor/patches/docling-onnx.patch`) | document conversion | MIT |
 | [gliner25-rs](https://github.com/dariofinardi/gliner25-rs) 0.5.6, vendored with `vendor/patches/gliner25-rs.patch` (ort rc.15, CPU only) | entity extraction | Apache-2.0 |
 | [espeak-ng](https://github.com/espeak-ng/espeak-ng) via `espeak-rs-sys` | grapheme-to-phoneme for TTS | **GPL-3.0-or-later** |
 

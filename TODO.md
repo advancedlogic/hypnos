@@ -50,30 +50,49 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 2   | 5   | 2   | 6    | 1   | 4     | 4   | 1    |
+| 2  | 2   | 5   | 2   | 6    | 1   | 5     | 4   | 1    |
 
 ---
 
 ## Backlog
 
-- [ ] 🟩 **ENG-3** `P3` Run document conversion on the GPU (Core ML, CUDA)
-      Follow-up to ENG-1, opt-in per model. macOS: docling's `coreml` feature (unified memory,
-      nothing extra to book). CUDA: create the ORT session on load and drop it on unload, book a
-      measured VRAM size and cap the arena with `gpu_mem_limit`; ships ORT as shared libraries
-      plus cuDNN 9 in the CUDA archives and the Docker image, and moves Kokoro to the same ORT.
-      Measure first how much of a page is model inference versus parsing and rendering.
 - [ ] 🟩 **ENG-4** `P2` Add audio.cpp for text-to-speech and optional speech-to-text
       Vendor https://github.com/0xShug0/audio.cpp (pin + patches in `scripts/vendor.sh`) and link
       it in-process as a new engine for `POST /v1/audio/speech`, next to Kokoro. Optionally offer
       it for `POST /v1/audio/transcriptions` as an alternative to the llama.cpp/mtmd path,
       selected per model in the config. Check its ggml does not clash with llama.cpp's (build
       shared like sd.cpp if needed), then add models to `models.manifest` and the example configs.
+- [ ] ⬛ **BUILD-4** `P3` Ship docling on CUDA in the release archives and the Docker image
+      ENG-3 left docling's CUDA path behind the `docling-cuda` feature. ort's prebuilt GPU build of
+      ONNX Runtime 1.31 is CUDA 13 only, while llama.cpp / sd.cpp target CUDA 12.8 (driver 570+).
+      Shipping it means a CUDA 13 runtime and cuDNN 9 (CUDA 13) beside the CUDA 12 one, driver
+      580+, the provider libraries (`libonnxruntime_providers_cuda.so`, `_shared`) copied by
+      package-release.sh, a cuDNN base image for Docker, and Kokoro / GLiNER on that ONNX Runtime.
+      Decide the driver floor first (or build ONNX Runtime against CUDA 12), then measure on an
+      NVIDIA GPU whether TableFormer-heavy documents gain enough to justify it.
 
 ## In Progress
 
 _No cards yet._
 
 ## Done
+
+- [x] 🟩 **ENG-3** `P3` Run document conversion on the GPU (Core ML, CUDA)
+      Follow-up to ENG-1, opt-in per model. macOS: docling's `coreml` feature (unified memory,
+      nothing extra to book). CUDA: create the ORT session on load and drop it on unload, book a
+      measured VRAM size and cap the arena with `gpu_mem_limit`; ships ORT as shared libraries
+      plus cuDNN 9 in the CUDA archives and the Docker image, and moves Kokoro to the same ORT.
+      Measure first how much of a page is model inference versus parsing and rendering.
+      Shipped: measured first (M5 Max, 15-page PDF). Inference is 25-60% of a page (layout,
+      TableFormer), the rest PDF rendering and image decoding. ENG-1's macOS "CPU" path was in fact
+      ort's default policy putting CoreML under docling: 12 s to load, ~240 ms a page, 4.2 GB.
+      docling-onnx is now vendored with `PreferCPU` and `DOCLING_RS_NO_ARENA=1` is set: 0.3 s to
+      load, ~90 ms a page (release), 1.3-1.6 GB, booking cut to 1.8 GiB. `device = "gpu"` for docling:
+      CoreML in the Metal build (fp32 models, `./run.sh models docling-gpu`; 2 s load, 6.4 s for
+      the 15 pages, 5.2 GB: slower than the CPU, only frees its cores), CUDA behind the opt-in
+      `docling-cuda` feature (`DOCLING_RS_EP=cuda`, per-arena cap from the booking,
+      same_as_requested growth, provider-library re-exec before the runtime starts), compile-checked
+      in CI. Not shipped in the archives / Docker image: see BUILD-4.
 
 - [x] 🟩 **ENG-2** `P2` Add GLiNER zero-shot named-entity extraction
       Run GLiNER ONNX exports on CPU through ONNX Runtime, like Kokoro (`onnx_runtime` engine,
