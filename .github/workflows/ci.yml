@@ -1,13 +1,10 @@
 name: ci
 
 on:
-  # Changes that only touch prose build nothing. A required status check stays pending on such a
-  # PR; run the workflow by hand (workflow_dispatch) if one is ever needed.
-  push:
-    branches: [main]
-    paths-ignore: ["docs/**", "website/**", "**/*.md"]
-  pull_request:
-    paths-ignore: ["docs/**", "website/**", "**/*.md"]
+  # Runs for a release only: release.yml calls it on a `v*` tag and publishes nothing unless it
+  # passes. Pushes and PRs start nothing; run it by hand (Actions > ci > Run workflow) to check a
+  # branch before tagging.
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
