@@ -31,3 +31,5 @@ docling          https://github.com/docling-project/docling.rs/releases/download
 docling          https://github.com/docling-project/docling.rs/releases/download/models-v1  ocr_det.onnx             docling/ocr_det.onnx                     all
 docling          https://github.com/docling-project/docling.rs/releases/download/models-v1  ocr_rec_v6.onnx          docling/ocr_rec_v6.onnx                  all
 docling          https://github.com/docling-project/docling.rs/releases/download/models-v1  ocr_rec_v6_dict.txt      docling/ocr_rec_v6_dict.txt              all
+# GLiNER2.5 multilingual, the fp32 graphs (the CPU variant gliner25-rs runs).
+gliner2.5-multi  jugaadsrl/gliner2.5-multi-v1-onnx      fp32_25/                              gliner2.5-multi/                         all

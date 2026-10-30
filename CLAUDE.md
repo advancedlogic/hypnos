@@ -160,13 +160,18 @@ keep that profile in sync with `hypnos.example.toml` when adding models or field
   through a `WarmPipeline` (a whole document at once keeps every page's data until the end);
   `join_pages` mends tables, numbered lists and sentences across breaks. `$DOCLING_RS_MODELS_DIR`
   is set from `weights_path`'s folder, hence one docling model per server.
+- `entities.rs`: `gliner` (vendored `gliner25-rs`, `device = "cpu"`). One worker thread owns the
+  `BoundaryEngine` from load to unload; more than 8 labels run as families, long texts in windows.
 - `onnx.rs`: ort rc.15 allows one ONNX Runtime environment per process, never rebuilt once
   dropped. Every ONNX engine takes `docling_onnx::environment()`; never call `ort::init().build()`.
+  ort's default device policy registers CoreML on macOS: CPU engines set `PreferCPU` (Kokoro,
+  gliner; GLiNER took 7 GB and 5 s to load without it, 3 GB and 0.7 s with it).
 
 ### Vendored engines (`backend/vendor/`)
 
 Git-ignored except `patches/`. `scripts/vendor.sh` is the source of truth for pins (llama.cpp
-b11982, sd.cpp master-1024, llama-cpp-rs 0.1.160, diffusion-rs commit, espeak-rs-sys 0.2.0) and
+b11982, sd.cpp master-1024, llama-cpp-rs 0.1.160, diffusion-rs commit, espeak-rs-sys 0.2.0,
+gliner25-rs 0.5.6) and
 `vendor/VENDOR.md` explains each patch and how to bump a pin. Never edit vendor sources without
 regenerating the corresponding patch file.
 

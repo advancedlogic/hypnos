@@ -26,8 +26,9 @@ the big ones come in when asked for, and nothing is evicted while a request is u
   layers on the GPU (CUDA).
 - **Drop-in for OpenAI clients.** `/v1/chat/completions` (streaming, images, audio), `/v1/embeddings`,
   `/v1/audio/transcriptions`, `/v1/audio/speech` (streaming), `/v1/images/generations`, with
-  optional API keys and in-process HTTPS. Plus `/v1/documents/convert`: PDFs, images and office
-  documents to Markdown with docling, page by page.
+  optional API keys and in-process HTTPS. Plus `/v1/documents/convert` (PDFs, images and office
+  documents to Markdown with docling, page by page) and `/v1/entities` (zero-shot named-entity
+  extraction with GLiNER2.5, labels chosen per request).
 - **Observable.** A live playground shows each model's tier as requests come in, every response
   carries its placement and timing, `/metrics` is Prometheus, and a request log keeps recent calls.
 - **Runs on CUDA (Windows, Linux) and Apple Silicon (Metal).**
@@ -209,7 +210,7 @@ On Windows: `set HYPNOS_CONFIG=my.toml` and then `run.bat start backend`.
 ## Default model lineup
 
 Every engine runs **inside the `hypnos` process**: llama.cpp + libmtmd, stable-diffusion.cpp,
-ONNX Runtime + espeak-ng and docling.rs are compiled and linked natively (CUDA or Metal). No Ollama,
+ONNX Runtime + espeak-ng, docling.rs and GLiNER2.5 are compiled and linked natively (CUDA or Metal). No Ollama,
 LM Studio or Python sidecar is involved.
 
 | Model ID | Modalities Served | Engine | Files (under `backend/models/`) | Default Tier Policy |
@@ -220,11 +221,12 @@ LM Studio or Python sidecar is involved.
 | **`gemmaembedding2`** | **Vector Embeddings** (`/v1/embeddings`) | `ggml_llama` | `embeddinggemma-2-Q8_0.gguf` (295 MiB) | `RealtimePinned` (always hot in Tier 1 VRAM) |
 | **`moss-image`** | **Image Generation** (`/v1/images/generations`) | `ggml_diffusion` | `MOSS-Image-SFT-Q4_K.gguf` (3.3 GiB) + `Qwen3.5-9B-Q4_K_M.gguf` (5.7 GiB) + `flux2-vae.safetensors` + `moss_tokenizer.json` | `Low` (promoted to Tier 1 VRAM on demand, evicts idle models) |
 | **`docling`** | **Document Conversion** (`/v1/documents/convert`) | `docling` | `docling/` (310 MiB: layout, TableFormer, OCR) | `Normal`, `device = "cpu"` (loaded on demand into host RAM, ~4 GiB booked, no VRAM) |
+| **`gliner2.5-multi`** | **Entity Extraction** (`/v1/entities`) | `gliner` | `gliner2.5-multi/` (1.15 GiB: encoder, boundary heads, tokenizer) | `Normal`, `device = "cpu"` (loaded on demand in under a second, ~3.2 GiB booked, no VRAM) |
 
 ### Model files
 
 `./run.sh models` (Linux / macOS) or `run.bat models` (Windows) downloads everything below into
-`backend/models/` with `curl`, about 31 GB. Files already present are skipped, an interrupted download
+`backend/models/` with `curl`, about 33 GB. Files already present are skipped, an interrupted download
 resumes on the next run, and `./run.sh models moss-image` fetches a single model. The file list lives
 in [backend/models.manifest](backend/models.manifest); on Apple Silicon it picks the fp32 Kokoro graph.
 
@@ -241,6 +243,7 @@ Download sources (public Hugging Face repositories, and one GitHub release):
 | `flux2-vae.safetensors` | `Comfy-Org/MOSS-Image` (`vae/`) |
 | `moss_tokenizer.json` | `OpenMOSS-Team/MOSS-Image-Base` (`tokenizer/tokenizer.json`) |
 | `docling/` (`layout_heron_int8.onnx`, `tableformer/`, `ocr_*`) | `docling-project/docling.rs` GitHub release `models-v1` |
+| `gliner2.5-multi/` | `jugaadsrl/gliner2.5-multi-v1-onnx` (`fp32_25/` folder) |
 
 Notes:
 - Kokoro's quantized exports (`model_q8f16.onnx`, `model_q4.onnx`) crash the statically linked
@@ -459,6 +462,12 @@ Behaviour that matters in production:
   is the same for 5 pages or 500; the joined Markdown puts back tables, numbered lists and
   sentences that a page break cut. Images, DOCX, PPTX, XLSX, HTML and Markdown work too.
   `limits.max_document_bytes` (100 MiB) caps the input.
+- **Entity extraction** (Hypnos extension): `POST /v1/entities` with `{"model", "input": text or
+  [texts], "labels": ["person", "medication", ...], "threshold": 0.5, "flat": true}` returns one
+  entity list per text (`text`, `label`, character `start` / `end`, `score`). The labels are free
+  text: GLiNER2.5 is zero-shot and multilingual. More than 8 labels run as separate passes so they
+  do not compete for the same spans, and texts longer than 512 words are read in overlapping
+  windows (1,700 words with 11 labels: 1.5 s on an M5 Max CPU).
 - **Benchmark**: `backend/scripts/bench.sh [--host URL] [--out docs/bench/<name>.md]` runs the
   fixed execution scenarios from `docs/execution-efficiency-plan.md` (cold chat, five-turn chat,
   vision chat, concurrent clients, TTS, voice round trip) against a running server and prints a
@@ -480,7 +489,7 @@ hypnos/
 │       ├── hypnos-core/         # Config, KV-Cache + Gemma 4 SWA Estimator, OpenAI Schemas
 │       ├── hypnos-memory/       # CUDA / ROCm / Metal UMA Topology & OS Pinned RAM Manager
 │       ├── hypnos-scheduler/    # Lease-based Admission Control, Partial Offload & Eviction
-│       ├── hypnos-backends/     # Native llama.cpp+mtmd, stable-diffusion.cpp, ONNX Runtime & docling engines
+│       ├── hypnos-backends/     # Native llama.cpp+mtmd, stable-diffusion.cpp, ONNX Runtime, docling & GLiNER engines
 │       └── hypnos-server/       # Axum HTTP/SSE OpenAI Server & Multi-Modal Lifecycle Tests
 └── frontend/                    # Svelte 5 (Runes) + Tailwind CSS Interactive Playground
     ├── package.json

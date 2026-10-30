@@ -12,7 +12,8 @@ use crate::openai::{
     AudioSpeechOutput, AudioSpeechRequest, AudioStreamEvent, AudioTranscriptionRequest,
     AudioTranscriptionResponse, ChatCompletionRequest, ChatCompletionResponse, ChatStreamEvent,
     DocumentConversionRequest, DocumentStreamEvent, EmbeddingRequest, EmbeddingResponse,
-    ImageGenerationRequest, ImageGenerationResponse,
+    EntityExtractionRequest, EntityExtractionResponse, ImageGenerationRequest,
+    ImageGenerationResponse,
 };
 use crate::request::RequestContext;
 use async_trait::async_trait;
@@ -161,6 +162,19 @@ pub trait ModelBackend: Send + Sync {
             model: self.config().id.clone(),
             expected: self.modality(),
             actual: Modality::DocumentConversion,
+        })
+    }
+
+    /// Extracts entities of the requested labels (`/v1/entities`).
+    async fn extract_entities(
+        &self,
+        _req: &EntityExtractionRequest,
+        _ctx: &RequestContext,
+    ) -> Result<EntityExtractionResponse> {
+        Err(crate::error::HypnosError::ModalityMismatch {
+            model: self.config().id.clone(),
+            expected: self.modality(),
+            actual: Modality::EntityExtraction,
         })
     }
 

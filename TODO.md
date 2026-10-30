@@ -56,15 +56,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Backlog
 
-- [ ] 🟩 **ENG-2** `P2` Add GLiNER zero-shot named-entity extraction
-      Run GLiNER ONNX exports on CPU through ONNX Runtime, like Kokoro (`onnx_runtime` engine,
-      `realtime_pinned`): tokenizer via the `tokenizers` crate, span decoding and thresholding
-      (`gline-rs`, Apache-2.0, is a reference or a dependency). New modality
-      (`entity_extraction`) and endpoint (e.g. `POST /v1/entities` with `model`, `text` or a
-      list, `labels`, `threshold`) returning spans with label, offsets and score. Add a
-      playground tab, the model to `models.manifest` and the example configs.
-      `gliner25-rs` (Apache-2.0, crates.io, used by idu) runs GLiNER2.5 boundary checkpoints and
-      accepts our ort; it uses `tokenizers` 0.23 (docling 0.20): check both build together.
 - [ ] 🟩 **ENG-3** `P3` Run document conversion on the GPU (Core ML, CUDA)
       Follow-up to ENG-1, opt-in per model. macOS: docling's `coreml` feature (unified memory,
       nothing extra to book). CUDA: create the ORT session on load and drop it on unload, book a
@@ -83,6 +74,25 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🟩 **ENG-2** `P2` Add GLiNER zero-shot named-entity extraction
+      Run GLiNER ONNX exports on CPU through ONNX Runtime, like Kokoro (`onnx_runtime` engine,
+      `realtime_pinned`): tokenizer via the `tokenizers` crate, span decoding and thresholding
+      (`gline-rs`, Apache-2.0, is a reference or a dependency). New modality
+      (`entity_extraction`) and endpoint (e.g. `POST /v1/entities` with `model`, `text` or a
+      list, `labels`, `threshold`) returning spans with label, offsets and score. Add a
+      playground tab, the model to `models.manifest` and the example configs.
+      `gliner25-rs` (Apache-2.0, crates.io, used by idu) runs GLiNER2.5 boundary checkpoints and
+      accepts our ort; it uses `tokenizers` 0.23 (docling 0.20): check both build together.
+      Shipped: `gliner` engine (`hypnos-backends/src/entities.rs`) on `gliner25-rs` 0.5.6, vendored
+      with `vendor/patches/gliner25-rs.patch`: ported to ort rc.15 (shared environment,
+      `AllocationDevice<'static>`), ort features cut to the static CPU build (upstream turned on
+      `load-dynamic` and every GPU provider, which would have made the whole binary load ONNX
+      Runtime dynamically), `PreferCPU` (macOS CoreML took 7 GB and 5 s to load the encoder; now
+      3 GB and 0.7 s). `POST /v1/entities` (`input` text or list, `labels`, `threshold`, `flat`)
+      returns character offsets; more than 8 labels run as families, long texts in windows (1,700
+      words, 11 labels: 1.5 s). Model `gliner2.5-multi` (fp32, `device = "cpu"`, ~3.2 GiB booked,
+      on demand rather than pinned: the encoder is 1.1 GB). Playground tab 7, smoke test step 10.
 
 - [x] 🟩 **ENG-1** `P2` Add document conversion with docling.rs (PDF / images to Markdown)
       Use the `docling` crate (docling-project's Rust port, MIT; ~2.55, all `docling-*` crates on

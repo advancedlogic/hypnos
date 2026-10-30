@@ -1,0 +1,124 @@
+diff --color -ruN a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml	2026-10-30 07:37:14
++++ b/Cargo.toml	2026-10-30 07:37:15
+@@ -99,15 +99,6 @@
+ features = [
+     "std",
+     "ndarray",
+-    "load-dynamic",
+-    "cuda",
+-    "rocm",
+-    "coreml",
+-    "openvino",
+-    "directml",
+-    "tensorrt",
+-    "xnnpack",
+-    "qnn",
+     "half",
+ ]
+ default-features = false
+diff --color -ruN a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs	2026-10-30 07:37:14
++++ b/src/lib.rs	2026-10-30 07:37:15
+@@ -64,13 +64,11 @@
+ pub use processor::{ProcessedRecord, SchemaTask, SchemaTransformer, TaskMapping, TaskType};
+ pub use runtime::Precision;
+ 
+-/// Initialises the ONNX Runtime environment. Call once per process; later calls
+-/// are ignored.
+-///
+-/// In `ort` rc.13 `commit()` returns `bool` rather than `Result`: `false` means
+-/// an environment already existed, not that anything failed.
+-pub fn init(name: &str) -> bool {
+-    ort::init().with_name(name.to_string()).commit()
++/// Hypnos: hands the crate the process's ONNX Runtime environment, which the host
++/// owns (ort rc.15 allows one per process and never rebuilds it). Call once before
++/// creating an engine; `false` means one was already set.
++pub fn init(environment: &'static ort::environment::Environment) -> bool {
++    runtime::set_environment(environment)
+ }
+ 
+ #[cfg(feature = "test-support")]
+diff --color -ruN a/src/runtime.rs b/src/runtime.rs
+--- a/src/runtime.rs	2026-10-30 07:37:14
++++ b/src/runtime.rs	2026-10-30 07:41:40
+@@ -20,7 +20,8 @@
+ 
+ use anyhow::{Context, Result, anyhow};
+ use half::f16;
+-use ort::ep::{self, ExecutionProviderDispatch};
++use ort::environment::Environment;
++use ort::ep::ExecutionProviderDispatch;
+ use ort::session::Session;
+ use ort::session::builder::SessionBuilder;
+ use ort::value::{DynValue, Tensor};
+@@ -192,20 +193,12 @@
+         None => (requested.clone(), 0),
+     };
+ 
++    // Hypnos links ONNX Runtime statically without the GPU providers: CPU only.
++    let _ = device_id;
+     match name.trim().to_lowercase().as_str() {
+-        "cpu" => Vec::new(),
+-        "cuda" | "auto" => vec![ep::CUDA::default().with_device_id(device_id).build()],
+-        "tensorrt" => vec![
+-            ep::TensorRT::default().build(),
+-            ep::CUDA::default().with_device_id(device_id).build(),
+-        ],
+-        "rocm" => vec![ep::ROCm::default().build()],
+-        "coreml" => vec![ep::CoreML::default().build()],
+-        "directml" => vec![ep::DirectML::default().build()],
+-        "openvino" => vec![ep::OpenVINO::default().build()],
+-        "xnnpack" => vec![ep::XNNPACK::default().build()],
++        "cpu" | "auto" => Vec::new(),
+         other => {
+-            eprintln!("GLINER2_DEVICE={other} not recognised, running on CPU");
++            eprintln!("GLINER2_DEVICE={other} is not available in this build, running on CPU");
+             Vec::new()
+         }
+     }
+@@ -213,7 +206,7 @@
+ 
+ /// Parses `GLINER2_DEVICE` once, into `(provider, device id)`.
+ fn requested_device() -> (String, i32) {
+-    let requested = std::env::var("GLINER2_DEVICE").unwrap_or_else(|_| "auto".into());
++    let requested = std::env::var("GLINER2_DEVICE").unwrap_or_else(|_| "cpu".into());
+     match requested.split_once(':') {
+         Some((n, id)) => (n.trim().to_lowercase(), id.parse::<i32>().unwrap_or(0)),
+         None => (requested.trim().to_lowercase(), 0),
+@@ -238,7 +231,7 @@
+ }
+ 
+ /// The ORT allocation device matching the configured provider.
+-pub fn allocation_device() -> ort::memory::AllocationDevice {
++pub fn allocation_device() -> ort::memory::AllocationDevice<'static> {
+     use ort::memory::AllocationDevice;
+     match requested_device().0.as_str() {
+         "rocm" => AllocationDevice::HIP,
+@@ -254,11 +247,25 @@
+ /// `ort::init()` is the caller's responsibility and is not repeated here:
+ /// in rc.13 `commit()` returns `bool` and a second call would simply be
+ /// ignored.
++static ENVIRONMENT: std::sync::OnceLock<&'static Environment> = std::sync::OnceLock::new();
++
++/// Stores the host's environment for every session this crate builds.
++pub fn set_environment(environment: &'static Environment) -> bool {
++    ENVIRONMENT.set(environment).is_ok()
++}
++
+ pub fn build_session(path: &Path, intra_threads: usize) -> Result<Session> {
+     if !path.exists() {
+         return Err(anyhow!("missing ONNX fragment: {}", path.display()));
+     }
+-    let mut builder: SessionBuilder = Session::builder()?
++    let environment = ENVIRONMENT
++        .get()
++        .ok_or_else(|| anyhow!("gliner25_rs::init was not called"))?;
++    // ort's default device policy registers CoreML on macOS, which splits the encoder into a
++    // hundred-odd partitions and multiplies the memory a CPU session needs.
++    let mut builder: SessionBuilder = Session::builder(environment)?
++        .with_auto_device(ort::session::builder::AutoDevicePolicy::PreferCPU)
++        .map_err(ort::Error::<()>::from)?
+         .with_intra_threads(intra_threads)
+         .map_err(ort::Error::<()>::from)?;
+ 

@@ -27,6 +27,7 @@
 #   4. gemmaembedding2 (Vector Embeddings)                  llama.cpp
 #   5. moss-image      (Image Generation)                   stable-diffusion.cpp
 #   6. docling         (Document Conversion)                docling.rs on ONNX Runtime (CPU)
+#   7. gliner2.5-multi (Entity Extraction)                  gliner25-rs on ONNX Runtime (CPU)
 #
 # Paths are relative to the working directory (run from `backend/`).
 # =============================================================================
@@ -248,3 +249,24 @@ priority = "normal"
 [models.arch]
 num_layers = 1
 activation_workspace_bytes = 3758096384 # 3.5 GiB peak while converting a page
+
+# -----------------------------------------------------------------------------
+# 7. gliner2.5-multi — Entity extraction (/v1/entities), zero-shot: labels chosen per request
+#    jugaadsrl/gliner2.5-multi-v1-onnx (Apache-2.0, multilingual), the fp32 graphs, on the CPU
+#    through gliner25-rs. weights_path is the encoder; the heads, classifier and tokenizer sit in
+#    the same folder. More than 8 labels run as several passes; long texts are read in windows.
+# -----------------------------------------------------------------------------
+[[models]]
+id = "gliner2.5-multi"
+modality = "entity_extraction"
+engine = "gliner"
+device = "cpu"                          # Tier 1 books host RAM, not VRAM
+weights_path = "models/gliner2.5-multi/encoder_fp32.onnx"
+total_weight_bytes = 1228931072         # every file in the folder (~1.15 GiB)
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = false                # reloading takes under a second
+priority = "normal"
+
+[models.arch]
+num_layers = 1
+activation_workspace_bytes = 2147483648 # 3.0 GB measured after load and a 1,700-word request

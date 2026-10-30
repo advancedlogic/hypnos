@@ -12,6 +12,7 @@ use std::path::PathBuf;
 /// 4. `gemmaembedding2` — Embeddings (llama.cpp, EmbeddingGemma 2)
 /// 5. `moss-image`      — Image Generation (stable-diffusion.cpp)
 /// 6. `docling`         — Document Conversion (docling.rs on ONNX Runtime, CPU)
+/// 7. `gliner2.5-multi` — Entity Extraction (gliner25-rs on ONNX Runtime, CPU)
 pub fn default_six_model_config() -> HypnosConfig {
     let gb: u64 = 1024 * 1024 * 1024;
     let mb: u64 = 1024 * 1024;
@@ -230,6 +231,31 @@ pub fn default_six_model_config() -> HypnosConfig {
                 arch: ModelArchitectureParams {
                     num_layers: 1,
                     activation_workspace_bytes: 3584 * mb,
+                    ..ModelArchitectureParams::default()
+                },
+            },
+            // 7. GLiNER2.5 multilingual — Entity Extraction on the CPU
+            ModelConfig {
+                id: "gliner2.5-multi".to_string(),
+                modality: Modality::EntityExtraction,
+                additional_modalities: vec![],
+                engine: EngineKind::Gliner,
+                weights_path: PathBuf::from("models/gliner2.5-multi/encoder_fp32.onnx"),
+                aux_weights_path: None,
+                text_encoder_path: None,
+                tokenizer_path: None,
+                voices_path: None,
+                total_weight_bytes: 1_228_931_072,
+                min_gpu_layer_ratio: 0.25,
+                initial_tier: MemoryTier::Tier3NvmeSsd,
+                keep_warm_in_ram: false,
+                priority: ModelPriority::Normal,
+                slots: 1,
+                prefix_cache: true,
+                device: ExecutionDevice::Cpu,
+                arch: ModelArchitectureParams {
+                    num_layers: 1,
+                    activation_workspace_bytes: 2 * gb,
                     ..ModelArchitectureParams::default()
                 },
             },

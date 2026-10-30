@@ -3,7 +3,7 @@
 # The vendor directory is git-ignored (over 1 GB of engine sources); this script is the source of truth.
 #
 #   ./backend/scripts/vendor.sh          # (re)create everything that is missing
-#   ./backend/scripts/vendor.sh --force  # delete and recreate all three crates
+#   ./backend/scripts/vendor.sh --force  # delete and recreate every vendored crate
 #
 # Pins (see backend/vendor/VENDOR.md):
 LLAMA_CPP_RS_TAG="0.1.160"                        # utilityai/llama-cpp-rs (bindings)
@@ -11,6 +11,7 @@ LLAMA_CPP_TAG="b11982"                            # ggml-org/llama.cpp (gemma4 a
 DIFFUSION_RS_COMMIT="89dcf933f754a173c31b2db30ca3df14ec899dac"   # newfla/diffusion-rs (bindings)
 SD_CPP_TAG="master-1024-77b72a2"                  # leejet/stable-diffusion.cpp (MOSS-Image)
 ESPEAK_RS_SYS_VERSION="0.2.0"                     # crates.io (vendored to drop the debug-CRT link)
+GLINER25_RS_VERSION="0.5.6"                       # crates.io (vendored: ort rc.15, CPU-only ort features)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -84,6 +85,20 @@ if [ ! -f "$VENDOR/espeak-rs-sys/Cargo.toml" ] || [ "$FORCE" = 1 ]; then
     echo "[patch] applied espeak-rs-sys.patch"
 else
     echo "[keep] $VENDOR/espeak-rs-sys"
+fi
+
+# 4. gliner25-rs from crates.io, ported to ort rc.15 and trimmed to CPU ort features --------------
+if [ ! -f "$VENDOR/gliner25-rs/Cargo.toml" ] || [ "$FORCE" = 1 ]; then
+    rm -rf "$VENDOR/gliner25-rs"
+    tmp="$(mktemp -d)"
+    echo "[fetch] gliner25-rs $GLINER25_RS_VERSION from crates.io"
+    curl -sSL -A "hypnos-vendor" "https://crates.io/api/v1/crates/gliner25-rs/$GLINER25_RS_VERSION/download" | tar xz -C "$tmp"
+    mv "$tmp/gliner25-rs-$GLINER25_RS_VERSION" "$VENDOR/gliner25-rs"
+    rm -f "$VENDOR/gliner25-rs/.cargo_vcs_info.json" "$VENDOR/gliner25-rs/Cargo.toml.orig"
+    (cd "$VENDOR/gliner25-rs" && patch -p1 --forward < "$PATCHES/gliner25-rs.patch")
+    echo "[patch] applied gliner25-rs.patch"
+else
+    echo "[keep] $VENDOR/gliner25-rs"
 fi
 
 echo "[done] vendor tree ready under ${VENDOR#$ROOT/}"

@@ -58,6 +58,8 @@ espeak-rs = "0.2.0"
 docling = { version = "=2.55.4", default-features = false, features = ["pdf"] }
 docling-pdf = { version = "=2.55.4", default-features = false, features = ["ml"] }
 docling-onnx = { version = "=2.55.4" }
+# GLiNER2.5 entity extraction on ONNX Runtime (vendored and patched, see [patch.crates-io]).
+gliner25-rs = { version = "=0.5.6", default-features = false, features = ["families"] }
 hound = "3.5"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 encoding_rs = "0.8"
@@ -74,6 +76,10 @@ hypnos-backends = { path = "crates/hypnos-backends", default-features = false }
 # Local copy of espeak-rs-sys 0.2.0 with the debug-CRT (`msvcrtd`) link directive removed; see
 # vendor/espeak-rs-sys/build.rs. Everything else about the crate is unchanged.
 espeak-rs-sys = { path = "vendor/espeak-rs-sys" }
+# gliner25-rs 0.5.6 ported to ort rc.15 (one shared environment, `AllocationDevice<'static>`) and
+# trimmed to the CPU build Hypnos links: upstream enables ort's `load-dynamic` and every GPU
+# provider, which would turn the whole binary's ONNX Runtime into a dynamically loaded one.
+gliner25-rs = { path = "vendor/gliner25-rs" }
 
 [profile.dev]
 # Native engines are compiled in Release by their build scripts; keep Rust-side debug fast enough.

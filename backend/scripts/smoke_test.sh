@@ -136,7 +136,21 @@ print(f"pages={pages} found={found}")
 echo "     -> $res  ($(( $(date +%s) - t0 ))s)"
 echo "$res" | grep -q 'found=True' && ok "document conversion" || bad "document conversion"
 
-# 10. memory status --------------------------------------------------------------------------
+# 10. entity extraction ---------------------------------------------------------------------
+echo "-- entities (gliner2.5-multi) ..."
+curl -s -m 600 "$HOST/v1/entities" -H 'Content-Type: application/json' \
+  -d '{"model":"gliner2.5-multi","input":"Mario Rossi works in Milan for Ferrari.","labels":["person","city","company"]}' > "$OUT/entities.json"
+res=$(json '
+import sys,json
+d=json.load(open(sys.argv[1]))
+if "data" not in d: print("ERR", d.get("error",{}).get("message")); sys.exit()
+found = sorted((e["label"], e["text"]) for e in d["data"][0]["entities"])
+print(" ".join(f"{label}={text}" for label, text in found))
+' "$OUT/entities.json" 2>/dev/null)
+echo "     -> $res"
+echo "$res" | grep -q 'person=Mario Rossi' && ok "entity extraction" || bad "entity extraction"
+
+# 11. memory status --------------------------------------------------------------------------
 curl -s -m 10 "$HOST/v1/memory/status" > "$OUT/memory_status.json"
 json 'import sys,json; d=json.load(open(sys.argv[1])); print("   VRAM used %.1f GiB / free %.1f GiB; models: %s" % (d["tier1_vram_used_bytes"]/2**30, d["tier1_vram_free_bytes"]/2**30, ", ".join(f"{m[\"id\"]}={m[\"current_tier\"]}" for m in d["models"])))' "$OUT/memory_status.json" 2>/dev/null
 

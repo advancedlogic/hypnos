@@ -60,6 +60,8 @@ pub enum Modality {
     ImageGeneration,
     /// PDF / image / office documents to Markdown or JSON (/v1/documents/convert)
     DocumentConversion,
+    /// Zero-shot named-entity extraction with caller-chosen labels (/v1/entities)
+    EntityExtraction,
 }
 
 /// Underlying inference engine runtime used for a model.
@@ -76,6 +78,8 @@ pub enum EngineKind {
     OnnxRuntime,
     /// docling.rs on ONNX Runtime: layout, TableFormer and OCR models (document conversion)
     Docling,
+    /// GLiNER2.5 boundary models on ONNX Runtime (entity extraction)
+    Gliner,
 }
 
 /// Where a model computes. GPU models are booked in Tier 1 VRAM; a CPU model's Tier 1 placement
@@ -826,13 +830,30 @@ impl HypnosConfig {
                 EngineKind::GgmlWhisper => {
                     r.errors.push(format!("'{id}': ggml_whisper is not compiled into this build; use ggml_llama with a Gemma 4 model for speech_to_text"));
                 }
-                EngineKind::GgmlLlama => {}
+                EngineKind::GgmlLlama | EngineKind::Gliner => {}
             }
             if m.engine == EngineKind::Docling
                 && m.arch.activation_workspace_bytes < 1024 * 1024 * 1024
             {
                 r.warnings.push(format!(
                     "'{id}': arch.activation_workspace_bytes is under 1 GiB; docling needs about 3.5 GiB per page while converting, which this booking does not cover"
+                ));
+            }
+            if m.engine == EngineKind::Gliner {
+                if m.modality != Modality::EntityExtraction {
+                    r.errors.push(format!(
+                        "'{id}': gliner engine only implements entity_extraction"
+                    ));
+                }
+                if m.device != ExecutionDevice::Cpu {
+                    r.errors.push(format!(
+                        "'{id}': gliner runs on the CPU in this build; set device = \"cpu\""
+                    ));
+                }
+            }
+            if m.modality == Modality::EntityExtraction && m.engine != EngineKind::Gliner {
+                r.errors.push(format!(
+                    "'{id}': entity_extraction needs engine = \"gliner\""
                 ));
             }
             if m.modality == Modality::DocumentConversion && m.engine != EngineKind::Docling {
@@ -1159,5 +1180,38 @@ activation_workspace_bytes = 3758096384
             .errors
             .iter()
             .any(|e| e.contains("document_conversion needs engine")));
+    }
+
+    #[test]
+    fn validate_checks_gliner_models() {
+        let dir = std::env::temp_dir().join(format!("hypnos-gliner-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("encoder.onnx"), b"onnx").unwrap();
+        let toml = |modality: &str, device: &str| {
+            format!(
+                r#"
+[[models]]
+id = "ner"
+modality = "{modality}"
+engine = "gliner"
+device = "{device}"
+weights_path = "encoder.onnx"
+"#
+            )
+        };
+        let ok = HypnosConfig::from_toml_str(&toml("entity_extraction", "cpu")).unwrap();
+        assert!(ok.validate(&dir).is_ok(), "{:?}", ok.validate(&dir).errors);
+        let gpu = HypnosConfig::from_toml_str(&toml("entity_extraction", "gpu")).unwrap();
+        assert!(gpu
+            .validate(&dir)
+            .errors
+            .iter()
+            .any(|e| e.contains("gliner runs on the CPU")));
+        let wrong = HypnosConfig::from_toml_str(&toml("embeddings", "cpu")).unwrap();
+        assert!(wrong
+            .validate(&dir)
+            .errors
+            .iter()
+            .any(|e| e.contains("only implements entity_extraction")));
     }
 }

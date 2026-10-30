@@ -35,6 +35,7 @@ espeak-rs.workspace = true
 docling.workspace = true
 docling-pdf.workspace = true
 docling-onnx.workspace = true
+gliner25-rs.workspace = true
 
 # Media / codec helpers
 hound.workspace = true

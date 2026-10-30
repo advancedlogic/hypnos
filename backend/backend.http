@@ -119,3 +119,17 @@ Content-Type: application/pdf
 
 < ./sample.pdf
 ------HypnosBoundary--
+
+
+### 8. Entity Extraction (gliner2.5-multi, Hypnos extension)
+# Zero-shot: any labels. `input` takes one text or a list; threshold defaults to 0.5.
+POST {{host}}/v1/entities
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "model": "gliner2.5-multi",
+  "input": ["Mario Rossi works in Milan for Ferrari.", "Tim Cook announced the iPhone 17 in Cupertino."],
+  "labels": ["person", "city", "company", "product"],
+  "threshold": 0.5
+}

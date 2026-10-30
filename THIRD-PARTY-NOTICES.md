@@ -18,6 +18,7 @@ package (the GPL-3.0-or-later notice is in each source file's header).
 | [diffusion-rs](https://github.com/newfla/diffusion-rs) | Rust bindings for stable-diffusion.cpp | MIT |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) via [`ort`](https://github.com/pykeio/ort) | Kokoro TTS, docling | MIT / MIT OR Apache-2.0 |
 | [docling.rs](https://github.com/docling-project/docling.rs) (`docling`, `docling-pdf`, `docling-onnx`, crates.io) | document conversion | MIT |
+| [gliner25-rs](https://github.com/dariofinardi/gliner25-rs) 0.5.6, vendored with `vendor/patches/gliner25-rs.patch` (ort rc.15, CPU only) | entity extraction | Apache-2.0 |
 | [espeak-ng](https://github.com/espeak-ng/espeak-ng) via `espeak-rs-sys` | grapheme-to-phoneme for TTS | **GPL-3.0-or-later** |
 
 ### espeak-ng and the GPL
@@ -52,5 +53,6 @@ Face repositories and docling.rs's `models-v1` GitHub release (listed in the REA
 `backend/models.manifest`), and each is governed by the license or terms of use published there.
 The docling models are ONNX exports of docling-project's layout model (`docling-layout-heron`,
 Apache-2.0) and TableFormer (`docling-models`, CDLA-Permissive-2.0 / Apache-2.0), plus RapidOCR's
-PP-OCRv6 detector and recognizer (Apache-2.0). Check them before using a model commercially or
+PP-OCRv6 detector and recognizer (Apache-2.0). `gliner2.5-multi` is
+`jugaadsrl/gliner2.5-multi-v1-onnx` (Apache-2.0). Check them before using a model commercially or
 redistributing it.

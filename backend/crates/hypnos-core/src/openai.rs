@@ -628,6 +628,61 @@ pub enum DocumentStreamEvent {
     Error(String),
 }
 
+// ============================================================================
+// Entity extraction (Hypnos extension: POST /v1/entities)
+// ============================================================================
+
+/// Finds spans of the given entity types in one text or a list of texts (zero-shot: the labels are
+/// free text, e.g. `"person"`, `"medication"`, `"programming language"`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityExtractionRequest {
+    pub model: String,
+    pub input: EmbeddingInput,
+    pub labels: Vec<String>,
+    /// Minimum score for a span (default 0.5).
+    #[serde(default)]
+    pub threshold: Option<f32>,
+    /// `true` keeps only non-overlapping spans (the highest-scoring wins); `false` also returns
+    /// nested ones. Unset uses what the model was trained for.
+    #[serde(default)]
+    pub flat: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Entity {
+    pub text: String,
+    pub label: String,
+    /// Character (Unicode scalar) offsets `[start, end)` in the input text.
+    pub start: usize,
+    pub end: usize,
+    pub score: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityResult {
+    /// Always `"entities"`.
+    pub object: String,
+    pub index: usize,
+    pub entities: Vec<Entity>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EntityUsage {
+    pub texts: u32,
+    pub characters: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityExtractionResponse {
+    /// Always `"list"`.
+    pub object: String,
+    pub model: String,
+    pub data: Vec<EntityResult>,
+    pub usage: EntityUsage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hypnos_telemetry: Option<ExecutionTelemetry>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenAiModelList {
     pub object: String,

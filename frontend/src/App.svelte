@@ -124,6 +124,33 @@
   let docResult = $state(null);
 
   // -------------------------------------------------------------------------
+  // Entities (POST /v1/entities): zero-shot named-entity extraction, labels chosen per request
+  // -------------------------------------------------------------------------
+  let nerModel = $state('gliner2.5-multi');
+  let nerText = $state(
+    'Tim Cook announced the iPhone 17 at the Steve Jobs Theater in Cupertino on September 9. Mario Rossi, who works in Milan for Ferrari, watched the stream with a cappuccino.'
+  );
+  let nerLabels = $state('person, company, product, city, venue, date, drink');
+  let nerThreshold = $state(0.5);
+  let nerResult = $state(null);
+  const nerPalette = ['bg-sky-500/25 text-sky-200', 'bg-emerald-500/25 text-emerald-200', 'bg-amber-500/25 text-amber-200', 'bg-rose-500/25 text-rose-200', 'bg-violet-500/25 text-violet-200', 'bg-teal-500/25 text-teal-200', 'bg-orange-500/25 text-orange-200', 'bg-fuchsia-500/25 text-fuchsia-200'];
+
+  // The text cut into plain and entity pieces (non-overlapping, in order) for highlighting.
+  function nerSegments(text, entities, labels) {
+    const chars = Array.from(text);
+    const out = [];
+    let pos = 0;
+    for (const e of [...entities].sort((a, b) => a.start - b.start || b.end - a.end)) {
+      if (e.start < pos) continue;
+      if (e.start > pos) out.push({ text: chars.slice(pos, e.start).join('') });
+      out.push({ text: chars.slice(e.start, e.end).join(''), entity: e, color: nerPalette[Math.max(0, labels.indexOf(e.label)) % nerPalette.length] });
+      pos = e.end;
+    }
+    if (pos < chars.length) out.push({ text: chars.slice(pos).join('') });
+    return out;
+  }
+
+  // -------------------------------------------------------------------------
   // 6. Request Logs (GET /v1/logs): every API call the server recorded
   // -------------------------------------------------------------------------
   const LOG_LEVELS = ['off', 'error', 'warn', 'info', 'debug', 'trace'];
@@ -820,6 +847,29 @@
     }
   }
 
+  async function runEntityExtraction(e) {
+    e?.preventDefault();
+    isLoading = true;
+    lastError = '';
+    try {
+      const labels = nerLabels.split(',').map((l) => l.trim()).filter(Boolean);
+      const res = await apiFetch(`/v1/entities`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: nerModel, input: nerText, labels, threshold: Number(nerThreshold) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+      nerResult = { ...data, text: nerText, labels };
+      recordTelemetry(nerModel, 'entity_extraction', data.hypnos_telemetry);
+      await fetchMemoryStatus();
+    } catch (err) {
+      lastError = err.message;
+    } finally {
+      isLoading = false;
+    }
+  }
+
   async function runImageGeneration(e) {
     e?.preventDefault();
     isLoading = true;
@@ -1193,10 +1243,16 @@
             6. Documents (docling)
           </button>
           <button
+            onclick={() => (activeTab = 'entities')}
+            class="px-3.5 py-2 rounded-lg text-xs font-semibold transition {activeTab === 'entities' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/25' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'}"
+          >
+            7. Entities (gliner2.5-multi)
+          </button>
+          <button
             onclick={() => (activeTab = 'logs')}
             class="px-3.5 py-2 rounded-lg text-xs font-semibold transition {activeTab === 'logs' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/25' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'}"
           >
-            7. Request Logs
+            8. Request Logs
           </button>
         </div>
 
@@ -1985,6 +2041,66 @@
                 </a>
               </div>
               <pre class="font-mono text-emerald-100 bg-slate-900 p-3 rounded border border-slate-800 whitespace-pre-wrap max-h-[32rem] overflow-y-auto">{docResult.markdown}</pre>
+            </div>
+          {/if}
+
+        <!-- TAB 7: ENTITY EXTRACTION (gliner2.5-multi) -->
+        {:else if activeTab === 'entities'}
+          <form onsubmit={runEntityExtraction} class="space-y-4">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs text-slate-400 mb-1" for="ner-model">Entity Model</label>
+                <input id="ner-model" type="text" bind:value={nerModel}
+                  class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white" />
+              </div>
+              <div class="sm:col-span-2">
+                <label class="block text-xs text-slate-400 mb-1" for="ner-labels">Labels (comma-separated, any you like)</label>
+                <input id="ner-labels" type="text" bind:value={nerLabels}
+                  class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white" />
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1" for="ner-text">Text</label>
+              <textarea id="ner-text" rows="4" bind:value={nerText}
+                class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs text-white"></textarea>
+            </div>
+            <div class="flex items-center gap-3">
+              <label class="text-xs text-slate-400" for="ner-threshold">Threshold {Number(nerThreshold).toFixed(2)}</label>
+              <input id="ner-threshold" type="range" min="0.1" max="0.95" step="0.05" bind:value={nerThreshold} class="flex-1 accent-indigo-500" />
+            </div>
+            <button type="submit" disabled={isLoading}
+              class="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs font-semibold text-white transition">
+              {isLoading ? 'Loading GLiNER & Extracting...' : 'Extract via /v1/entities'}
+            </button>
+          </form>
+
+          {#if nerResult}
+            <div class="rounded-lg border border-slate-800 bg-slate-950 p-3.5 space-y-3 text-xs">
+              {#if nerResult.hypnos_telemetry}
+                <div class="flex flex-wrap justify-between gap-2 text-slate-400 font-mono">
+                  <span>{nerResult.data[0]?.entities.length ?? 0} entities</span>
+                  <span>
+                    From: <strong class="text-amber-300">{nerResult.hypnos_telemetry.previous_tier}</strong> ·
+                    Switch: <strong class="text-emerald-300">{nerResult.hypnos_telemetry.tier_switch_latency_ms.toFixed(0)}ms</strong> ·
+                    {nerResult.hypnos_telemetry.inference_latency_ms.toFixed(0)} ms
+                  </span>
+                </div>
+              {/if}
+              <p class="leading-7 text-slate-200 bg-slate-900 p-3 rounded border border-slate-800">
+                {#each nerSegments(nerResult.text, nerResult.data[0]?.entities ?? [], nerResult.labels) as seg}
+                  {#if seg.entity}
+                    <mark class="px-1 py-0.5 rounded {seg.color}" title={`${seg.entity.label} ${seg.entity.score.toFixed(3)}`}>{seg.text}<span class="ml-1 text-[10px] uppercase opacity-80">{seg.entity.label}</span></mark>
+                  {:else}{seg.text}{/if}
+                {/each}
+              </p>
+              <table class="w-full font-mono text-[11px] text-slate-300">
+                <thead class="text-slate-500"><tr><th class="text-left py-1">text</th><th class="text-left">label</th><th class="text-right">chars</th><th class="text-right">score</th></tr></thead>
+                <tbody>
+                  {#each nerResult.data[0]?.entities ?? [] as ent}
+                    <tr class="border-t border-slate-800"><td class="py-1">{ent.text}</td><td>{ent.label}</td><td class="text-right">{ent.start}-{ent.end}</td><td class="text-right">{ent.score.toFixed(3)}</td></tr>
+                  {/each}
+                </tbody>
+              </table>
             </div>
           {/if}
         {/if}
