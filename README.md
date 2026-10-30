@@ -31,7 +31,13 @@ the big ones come in when asked for, and nothing is evicted while a request is u
   carries its placement and timing, `/metrics` is Prometheus, and a request log keeps recent calls.
 - **Runs on CUDA (Windows, Linux) and Apple Silicon (Metal).**
 
-<!-- DOC-3: demo GIF of the playground's 3-tier visualizer goes here. -->
+<p align="center">
+  <img src="assets/demo.gif" alt="Playground: a chat request promotes Gemma 4 26B to the GPU, an image request evicts it for MOSS-Image, TTS answers from a pinned model, and the next chat swaps the 26B back in" width="960">
+</p>
+
+<p align="center"><sub>The playground on an Apple M5 Max limited to a simulated 32 GB machine
+(<code>simulate_physical_memory_bytes</code>), real time: chat, image, speech, chat. The 26B model and
+MOSS-Image don't fit together, so each request evicts the other; Kokoro and the embedder stay pinned.</sub></p>
 
 ### Measured
 

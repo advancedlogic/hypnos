@@ -88,10 +88,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       (`entity_extraction`) and endpoint (e.g. `POST /v1/entities` with `model`, `text` or a
       list, `labels`, `threshold`) returning spans with label, offsets and score. Add a
       playground tab, the model to `models.manifest` and the example configs.
-- [ ] ⬜ **DOC-3** `P1` Record a demo GIF of the 3-tier visualizer for the README
-      30-60 s screen recording of the playground while chat, speech and image requests move
-      models between tiers (evictions and promotions visible). Keep it under ~5 MB, save under
-      `assets/`, and replace the `DOC-3` placeholder comment at the top of `README.md`.
 
 ## In Progress
 
@@ -99,6 +95,13 @@ _No cards yet._
 
 ## Done
 
+- [x] ⬜ **DOC-3** `P1` Record a demo GIF of the 3-tier visualizer for the README
+      30-60 s screen recording of the playground while chat, speech and image requests move
+      models between tiers (evictions and promotions visible). Keep it under ~5 MB, save under
+      `assets/`, and replace the `DOC-3` placeholder comment at the top of `README.md`.
+      Shipped: `assets/demo.gif` (46 s, 0.76 MB), recorded headless with Playwright from timed
+      screenshots against a demo server on an M5 Max with `simulate_physical_memory_bytes` = 32 GB,
+      so the 26B chat model and MOSS-Image evict each other. README placeholder replaced.
 - [x] 🟫 **MEM-1** `P2` Read `[models.arch]` defaults from GGUF metadata
       Custom models must copy `num_layers`, `num_kv_heads` and `head_dim` from the GGUF by hand
       (README "Bring your own models"); the defaults (32 / 8 / 128) misplan anything else. Fill
