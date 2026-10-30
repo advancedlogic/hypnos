@@ -60,7 +60,8 @@ Build notes:
   a standalone Rust install may shadow it on PATH.
 - The first backend build compiles every native engine (10-20 min). CMake generator is forced to
   Ninja; the Visual Studio generator ignores `CUDAHOSTCXX`.
-- `.github/workflows/ci.yml` is fully commented out (CI disabled); the commands above are what it ran.
+- `.github/workflows/ci.yml` runs fmt + clippy, the CPU (Linux, Windows) and Metal (macOS) builds
+  and tests, and the frontend build on every push to main and every PR.
 - `backend/backend.http` has ready-made requests for the VS Code REST Client extension.
 
 ## Architecture

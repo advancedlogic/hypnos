@@ -68,11 +68,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       mounted as a volume, config via mount or env. Publish to GHCR from the release workflow
       (BUILD-1) and add a `docker run --gpus all ...` quickstart to the README. Same GPL
       obligations as BUILD-1 for the image.
-- [ ] ⬛ **BUILD-3** `P2` Re-enable CI
-      `.github/workflows/ci.yml` is fully commented out. Restore the engine-free jobs: CPU-only
-      `cargo build --workspace --no-default-features`, `cargo test --workspace`, scoped `cargo fmt
-      --check` and clippy, plus `npm run build` for the frontend. Add a macOS Metal build job if
-      runner time allows.
 - [ ] 🟩 **ENG-1** `P2` Add Docling document conversion (PDF / images to Markdown)
       Serve Docling-style conversion in-process, without the Python library: run
       `granite-docling-258M` (GGUF + mmproj) through the existing llama.cpp + mtmd path on page
@@ -95,6 +90,14 @@ _No cards yet._
 
 ## Done
 
+- [x] ⬛ **BUILD-3** `P2` Re-enable CI
+      `.github/workflows/ci.yml` is fully commented out. Restore the engine-free jobs: CPU-only
+      `cargo build --workspace --no-default-features`, `cargo test --workspace`, scoped `cargo fmt
+      --check` and clippy, plus `npm run build` for the frontend. Add a macOS Metal build job if
+      runner time allows.
+      Shipped: `ci.yml` on push to main / PRs / manual: `lint` (scoped fmt + clippy), `build-test`
+      matrix (Linux CPU, Windows CPU, macOS 15 Metal; build all targets + test) and `frontend`
+      (`npm ci && npm run build`). The repo is public, so the macOS minutes are free.
 - [x] ⬜ **DOC-3** `P1` Record a demo GIF of the 3-tier visualizer for the README
       30-60 s screen recording of the playground while chat, speech and image requests move
       models between tiers (evictions and promotions visible). Keep it under ~5 MB, save under

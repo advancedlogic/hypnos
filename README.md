@@ -390,8 +390,9 @@ Behaviour that matters in production:
 - **Tests**: `cargo test --workspace` runs engine-free scheduler tests (mock backend: promotion,
   eviction order, rollback on load failure, admission, cancellation, shutdown) plus unit tests;
   `cargo test -- --ignored` runs the GPU lifecycle test against the real weights;
-  `backend/scripts/smoke_test.sh` exercises every endpoint of a running server. CI is currently
-  disabled (BUILD-3); `.github/workflows/ci.yml` holds the CPU-only build and test jobs it ran.
+  `backend/scripts/smoke_test.sh` exercises every endpoint of a running server. CI
+  (`.github/workflows/ci.yml`) runs fmt + clippy, CPU (Linux, Windows) and Metal (macOS) builds
+  and tests, and the frontend build on every push and pull request.
 - **Telemetry**: every response's `hypnos_telemetry` carries the tier placement plus an `engine`
   object with the request's timing split (`queue_ms`, `context_ms`, `prefill_ms`, `decode_ms`,
   `ttft_ms`, `prefill_tokens_per_s`, `decode_tokens_per_s`; `audio_secs` and `rtf` for speech).

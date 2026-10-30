@@ -1,80 +1,93 @@
-# name: ci
+name: ci
 
-# on:
-#   push:
-#     branches: [main, master]
-#   pull_request:
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 
-# env:
-#   CARGO_TERM_COLOR: always
-#   # CPU-only on hosted runners: no CUDA toolkit. The `cuda` feature of hypnos-backends is default-on
-#   # and is disabled below with --no-default-features (scoped to that crate, the others have no features).
-#   CMAKE_GENERATOR: Ninja
-#   LLAMA_LIB_PROFILE: Release
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
-# jobs:
-#   build-test:
-#     name: ${{ matrix.os }} (CPU engines)
-#     runs-on: ${{ matrix.os }}
-#     strategy:
-#       fail-fast: false
-#       matrix:
-#         os: [ubuntu-latest, windows-latest, macos-15]
-#     steps:
-#       - uses: actions/checkout@v4
+env:
+  CARGO_TERM_COLOR: always
+  # Hosted runners have no CUDA toolkit: the engines are built for the CPU (Linux, Windows) or
+  # Metal (macOS). `cuda` is a default feature of hypnos-server and is turned off below.
+  CMAKE_GENERATOR: Ninja
+  LLAMA_LIB_PROFILE: Release
 
-#       - name: Install Rust (stable)
-#         uses: dtolnay/rust-toolchain@stable
-#         with:
-#           components: rustfmt, clippy
+jobs:
+  lint:
+    name: fmt + clippy (engine-free crates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Vendor engine sources
+        # Cargo loads every workspace member's path dependencies, even for the engine-free crates.
+        run: ./backend/scripts/vendor.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend -> target
+          key: lint
+      - name: rustfmt
+        working-directory: backend
+        # Scoped to the workspace crates: `--all` would also format the vendored engine bindings.
+        run: cargo fmt -p hypnos-core -p hypnos-memory -p hypnos-scheduler -p hypnos-backends -p hypnos-server -- --check
+      - name: clippy
+        working-directory: backend
+        run: cargo clippy -p hypnos-core -p hypnos-memory -p hypnos-scheduler --all-targets -- -D warnings
 
-#       - name: Install Ninja + CMake
-#         uses: lukka/get-cmake@latest
+  build-test:
+    name: build + test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-cpu, os: ubuntu-latest, features: "" }
+          - { name: windows-cpu, os: windows-latest, features: "" }
+          # macos-15 is Apple Silicon; Metal compiles without a GPU attached.
+          - { name: macos-metal, os: macos-15, features: "--features hypnos-server/metal" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: lukka/get-cmake@latest
+      - name: Linux build deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libclang-dev
+      - name: MSVC developer environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Vendor engine sources (pinned commits + patches)
+        shell: bash
+        run: ./backend/scripts/vendor.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend -> target
+          key: ${{ matrix.name }}
+          cache-on-failure: true
+      - name: Build
+        working-directory: backend
+        shell: bash
+        run: cargo build --workspace --all-targets --no-default-features ${{ matrix.features }}
+      - name: Test
+        working-directory: backend
+        shell: bash
+        run: cargo test --workspace --no-default-features ${{ matrix.features }}
 
-#       - name: Linux build deps (espeak-ng, ONNX Runtime download, sd.cpp)
-#         if: runner.os == 'Linux'
-#         run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libssl-dev
-
-#       - name: MSVC developer environment
-#         if: runner.os == 'Windows'
-#         uses: ilammy/msvc-dev-cmd@v1
-
-#       - name: Vendor engine sources (pinned commits + patches)
-#         shell: bash
-#         run: ./backend/scripts/vendor.sh
-
-#       - name: Cache cargo registry + native build output
-#         uses: Swatinem/rust-cache@v2
-#         with:
-#           workspaces: backend -> target
-#           cache-on-failure: true
-
-#       - name: rustfmt
-#         working-directory: backend
-#         # scoped to the workspace crates: `--all` would also format the vendored engine bindings
-#         run: cargo fmt -p hypnos-core -p hypnos-memory -p hypnos-scheduler -p hypnos-backends -p hypnos-server -- --check
-
-#       - name: clippy (engine-free crates)
-#         working-directory: backend
-#         run: cargo clippy -p hypnos-core -p hypnos-memory -p hypnos-scheduler --all-targets -- -D warnings
-
-#       - name: Build (CPU-only engines)
-#         if: runner.os != 'macOS'
-#         working-directory: backend
-#         run: cargo build --workspace --all-targets --no-default-features
-
-#       - name: Test
-#         if: runner.os != 'macOS'
-#         working-directory: backend
-#         run: cargo test --workspace --no-default-features
-
-#       # macos-15 is Apple Silicon and exposes Metal to the runner.
-#       - name: Build (Metal engines)
-#         if: runner.os == 'macOS'
-#         working-directory: backend
-#         run: cargo build --workspace --all-targets --no-default-features --features hypnos-server/metal
-
-#       - name: Test (Metal engines)
-#         if: runner.os == 'macOS'
-#         working-directory: backend
-#         run: cargo test --workspace --no-default-features --features hypnos-server/metal
+  frontend:
+    name: frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci && npm run build
