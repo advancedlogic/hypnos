@@ -11,6 +11,8 @@ Scenarios (see docs/execution-efficiency-plan.md, work item A):
   4. N concurrent chat clients on the same model              (batching)
   5. TTS of a 600-character paragraph, time to first byte     (streaming TTS)
   6. voice round trip: WAV in -> transcript -> reply -> speech (pipeline overlap)
+  7. model swap latency: first request to a large model staged in Tier 3 / Tier 2 / Tier 1
+     (opt-in, not in the default set; --chart writes an SVG of the result)
 
 Every number is measured client-side from this process, plus whatever the server reports in
 `hypnos_telemetry` (and in `/metrics` once the engine metrics exist). The script prints a
@@ -18,9 +20,12 @@ Markdown report and optionally writes it to --out.
 """
 
 import argparse
+import ctypes
+import ctypes.util
 import datetime as dt
 import io
 import json
+import mmap
 import os
 import struct
 import sys
@@ -32,6 +37,8 @@ import wave
 import zlib
 
 TIMEOUT = 900
+# Weight files of the default chat model (gemma4:26b-q4), relative to backend/models/.
+DEFAULT_SWAP_FILES = ("gemma-4-26B-A4B-it-Q4_0.gguf", "mmproj-gemma-4-26B-A4B-it-BF16.gguf")
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 FIXTURES = os.path.join(ROOT, "backend", "tests", "fixtures")
 
@@ -506,8 +513,286 @@ def scenario_6(c, rep, stt_model, chat_model, tts_model, voice):
 
 
 # ----------------------------------------------------------------------------------------------
+# Page cache (scenario 7)
+# ----------------------------------------------------------------------------------------------
+
+
+class PageCache:
+    """Residency check (`mincore`) and per-file eviction of the OS page cache, without root.
+
+    Linux evicts with `posix_fadvise(DONTNEED)`, macOS with `msync(MS_INVALIDATE)`. Both only drop
+    clean pages nobody holds wired, which is the state of a model Hypnos demoted to Tier 3. On
+    Windows neither is available (the standby list needs admin rights to purge), so every method
+    returns None and the report says the cache was not dropped.
+    """
+
+    def __init__(self):
+        self.libc = None
+        if sys.platform.startswith("linux") or sys.platform == "darwin":
+            libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+            libc.mmap.restype = ctypes.c_void_p
+            libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_longlong]
+            libc.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+            libc.mincore.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_char_p]
+            libc.msync.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+            self.libc = libc
+
+    @property
+    def supported(self):
+        return self.libc is not None
+
+    def _with_map(self, path, fn):
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            size = os.fstat(fd).st_size
+            addr = self.libc.mmap(None, size, mmap.PROT_READ, mmap.MAP_SHARED, fd, 0)
+            if addr in (None, ctypes.c_void_p(-1).value):
+                raise OSError(ctypes.get_errno(), f"mmap failed for {path}")
+            try:
+                return fn(addr, size)
+            finally:
+                self.libc.munmap(addr, size)
+        finally:
+            os.close(fd)
+
+    def resident_fraction(self, paths):
+        """Share of the files' pages currently in the page cache (0..1), or None."""
+        if not self.supported or not paths:
+            return None
+        total = resident = 0
+        for path in paths:
+            def count(addr, size):
+                pages = (size + mmap.PAGESIZE - 1) // mmap.PAGESIZE
+                vec = ctypes.create_string_buffer(pages)
+                if self.libc.mincore(addr, size, vec) != 0:
+                    raise OSError(ctypes.get_errno(), "mincore failed")
+                return pages, sum(1 for b in vec.raw if b & 1)
+
+            p, r = self._with_map(path, count)
+            total += p
+            resident += r
+        return resident / total if total else None
+
+    def evict(self, paths):
+        """Drops the files' clean pages from the page cache. Returns False when unsupported."""
+        if not self.supported:
+            return False
+        for path in paths:
+            if sys.platform == "darwin":
+                self._with_map(path, lambda addr, size: self.libc.msync(addr, size, 2))  # MS_INVALIDATE
+            else:
+                fd = os.open(path, os.O_RDONLY)
+                try:
+                    os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+                finally:
+                    os.close(fd)
+        return True
+
+
+def median(values):
+    vals = sorted(v for v in values if v is not None)
+    if not vals:
+        return None
+    mid = len(vals) // 2
+    return vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2.0
+
+
+SWAP_TIERS = [
+    ("tier3_nvme_ssd", "Tier 3 (NVMe mmap, cold)"),
+    ("tier2_pinned_ram", "Tier 2 (pinned RAM, warm)"),
+    ("tier1_gpu_vram", "Tier 1 (resident, hot)"),
+]
+
+
+def model_tier(c, model):
+    for m in c.get_json("/v1/memory/status").get("models", []):
+        if m["id"] == model:
+            return m["current_tier"]
+    raise RuntimeError(f"model {model} not in /v1/memory/status")
+
+
+def scenario_7(c, rep, model, reps, files, keep_cache):
+    rep.h(f"7. Model swap latency by start tier ({model})")
+    cache = PageCache()
+    files = [f for f in files if os.path.exists(f)]
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": "Reply with the single word: ready."}],
+        "max_tokens": 8,
+        "temperature": 0,
+    }
+    # One unmeasured request so the model is loadable and the prompt path is warm.
+    print(f"-- scenario 7: warm-up request to {model} ...")
+    c.stream_chat(body)
+    runs = {tier: [] for tier, _ in SWAP_TIERS}
+    for rep_i in range(1, reps + 1):
+        for tier, _ in SWAP_TIERS:
+            _, stage_ms, _ = c.post_json("/v1/memory/tier", {"model": model, "target_tier": tier})
+            evicted = False
+            if tier == "tier3_nvme_ssd" and not keep_cache:
+                evicted = cache.evict(files)
+            actual = model_tier(c, model)
+            resident = cache.resident_fraction(files)
+            r = c.stream_chat(body)
+            tel = r["telemetry"]
+            run = {
+                "rep": rep_i,
+                "staged": actual,
+                "stage_ms": stage_ms,
+                "evicted": evicted,
+                "resident": resident,
+                "ttft_ms": r["ttft_ms"],
+                "switch_ms": tel.get("tier_switch_latency_ms"),
+                "previous_tier": tel.get("previous_tier"),
+                "engine_ttft_ms": eng(tel, "ttft_ms"),
+                "total_ms": r["total_ms"],
+            }
+            runs[tier].append(run)
+            print(
+                f"     rep {rep_i} {tier}: staged={actual} cache={fmt_pct(resident)} "
+                f"switch={fmt(run['switch_ms'])}ms ttft={fmt(run['ttft_ms'])}ms"
+            )
+            if actual != tier:
+                print(f"     [WARN] asked for {tier}, server staged {actual}", file=sys.stderr)
+
+    rows = []
+    for tier, _ in SWAP_TIERS:
+        for run in runs[tier]:
+            rows.append([
+                run["rep"], tier, run["staged"], run["previous_tier"] or "n/a", fmt(run["stage_ms"]),
+                fmt_pct(run["resident"]), fmt(run["switch_ms"]), fmt(run["engine_ttft_ms"]), fmt(run["ttft_ms"]),
+                fmt(run["total_ms"]),
+            ])
+    rep.table(
+        ["rep", "start tier", "staged as", "telemetry previous tier", "staging call ms", "page cache resident",
+         "tier switch ms", "engine TTFT ms", "TTFT ms", "total ms"],
+        rows,
+    )
+
+    summary = []
+    for tier, label in SWAP_TIERS:
+        rs = runs[tier]
+        ttfts = [r["ttft_ms"] for r in rs if r["ttft_ms"] is not None]
+        summary.append({
+            "tier": tier,
+            "label": label,
+            "switch_ms": median(r["switch_ms"] for r in rs),
+            "ttft_ms": median(ttfts),
+            "ttft_min": min(ttfts) if ttfts else None,
+            "ttft_max": max(ttfts) if ttfts else None,
+            "resident": median(r["resident"] for r in rs),
+        })
+    rep.table(
+        ["start tier", "runs", "median tier switch ms", "median TTFT ms", "TTFT range ms", "median page cache resident"],
+        [[s["label"], len(runs[s["tier"]]), fmt(s["switch_ms"]), fmt(s["ttft_ms"]),
+          f"{fmt(s['ttft_min'])}-{fmt(s['ttft_max'])}", fmt_pct(s["resident"])] for s in summary],
+    )
+    if keep_cache:
+        cache_note = "The OS page cache was left alone (`--swap-keep-page-cache`), so Tier 3 reads may be served from RAM."
+    elif cache.supported and files:
+        cache_note = (
+            "Before each Tier 3 run the weight files were evicted from the OS page cache "
+            f"({', '.join(os.path.basename(f) for f in files)}), so Tier 3 reads come from the SSD; "
+            "`page cache resident` is measured with `mincore` just before the request."
+        )
+    elif not files:
+        cache_note = "No `--swap-files` given, so the OS page cache was not dropped and Tier 3 reads may be served from RAM."
+    else:
+        cache_note = f"Per-file page cache eviction is not available on {sys.platform}, so Tier 3 reads may be served from the OS standby list (RAM)."
+    rep.p(
+        "Each run stages the model with `POST /v1/memory/tier`, then times one streamed chat request "
+        "(8 output tokens). `tier switch ms` is the server's `hypnos_telemetry.tier_switch_latency_ms` "
+        "(promotion inside `acquire_model`); TTFT is measured by this client and includes it. "
+        + cache_note
+    )
+    return summary
+
+
+def fmt_pct(v):
+    return "n/a" if v is None else f"{v * 100:.0f}%"
+
+
+def swap_chart_svg(summary, title, subtitle):
+    """Horizontal bars per start tier: tier switch + rest of TTFT, median runs. Light/dark aware."""
+    width, left, right, top, bar_h, gap = 720, 210, 90, 78, 30, 18
+    plot_w = width - left - right
+    height = top + len(summary) * (bar_h + gap) + 40
+    vmax = max((s["ttft_ms"] or 0) for s in summary) or 1.0
+    # Round the axis up to a 1/2/5 step.
+    step = 10 ** max(0, len(str(int(vmax))) - 1)
+    for m in (1, 2, 5, 10):
+        if vmax <= step * m * 5:
+            step *= m
+            break
+    axis_max = step * (int(vmax // step) + 1)
+
+    def x(v):
+        return left + plot_w * v / axis_max
+
+    def esc(t):
+        return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    out = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-label="{esc(title)}">',
+        "<style>",
+        ".bg{fill:#fcfcfb}.ink{fill:#0b0b0b}.ink2{fill:#52514e}.muted{fill:#898781}.grid{stroke:#e1e0d9}"
+        ".s1{fill:#2a78d6}.s2{fill:#eb6834}.gap{stroke:#fcfcfb}",
+        "@media (prefers-color-scheme: dark){.bg{fill:#1a1a19}.ink{fill:#f0efec}.ink2{fill:#c3c2b7}"
+        ".grid{stroke:#2c2c2a}.s1{fill:#3987e5}.s2{fill:#d95926}.gap{stroke:#1a1a19}}",
+        "</style>",
+        f'<rect class="bg" width="{width}" height="{height}" rx="8"/>',
+        f'<text class="ink" x="20" y="30" font-size="16" font-weight="600">{esc(title)}</text>',
+        f'<text class="ink2" x="20" y="50" font-size="12">{esc(subtitle)}</text>',
+    ]
+    # Legend
+    lx = left
+    for cls, name in (("s2", "tier switch (load)"), ("s1", "rest of time to first token")):
+        out.append(f'<rect class="{cls}" x="{lx}" y="58" width="10" height="10" rx="2"/>')
+        out.append(f'<text class="ink2" x="{lx + 15}" y="67" font-size="11">{name}</text>')
+        lx += 190
+    # Grid + axis labels
+    axis_y = top + len(summary) * (bar_h + gap)
+    v = 0
+    while v <= axis_max:
+        gx = x(v)
+        out.append(f'<line class="grid" x1="{gx:.1f}" y1="{top - 4}" x2="{gx:.1f}" y2="{axis_y}" stroke-width="1"/>')
+        label = f"{v / 1000:g} s" if axis_max >= 2000 else f"{v:g} ms"
+        out.append(f'<text class="muted" x="{gx:.1f}" y="{axis_y + 16}" font-size="11" text-anchor="middle">{label}</text>')
+        v += step
+    for i, s in enumerate(summary):
+        y = top + i * (bar_h + gap)
+        ttft = s["ttft_ms"] or 0.0
+        switch = min(s["switch_ms"] or 0.0, ttft)
+        out.append(f'<text class="ink" x="{left - 12}" y="{y + bar_h / 2 + 4}" font-size="13" text-anchor="end">{esc(s["label"])}</text>')
+        if switch > 0:
+            out.append(f'<rect class="s2" x="{left}" y="{y}" width="{max(x(switch) - left, 1):.1f}" height="{bar_h}" rx="4"/>')
+        if ttft > switch:
+            out.append(
+                f'<rect class="s1 gap" x="{x(switch):.1f}" y="{y}" width="{max(x(ttft) - x(switch), 1):.1f}" '
+                f'height="{bar_h}" rx="4" stroke-width="{2 if switch > 0 else 0}"/>'
+            )
+        value = f"{ttft / 1000:.2f} s" if ttft >= 1000 else f"{ttft:.0f} ms"
+        out.append(f'<text class="ink" x="{x(ttft) + 8:.1f}" y="{y + bar_h / 2 + 4}" font-size="12" font-weight="600">{value}</text>')
+    out.append("</svg>")
+    return "\n".join(out) + "\n"
+
+
+# ----------------------------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------------------------
+
+
+def swap(c, rep, args):
+    model = args.swap_model or args.chat_model
+    files = [f for f in args.swap_files.split(",") if f.strip()]
+    summary = scenario_7(c, rep, model, args.swap_reps, files, args.swap_keep_page_cache)
+    if args.chart:
+        os.makedirs(os.path.dirname(os.path.abspath(args.chart)), exist_ok=True)
+        subtitle = f"{model}, median of {args.swap_reps} runs, first streamed token, {args.device or sys.platform}"
+        with open(args.chart, "w", encoding="utf-8", newline="\n") as f:
+            f.write(swap_chart_svg(summary, "Time to first token by start tier", subtitle))
+        print(f"chart written to {args.chart}")
 
 
 def main():
@@ -521,6 +806,15 @@ def main():
     ap.add_argument("--tts-model", default="kokoro-82m-q4")
     ap.add_argument("--voice", default="af_heart")
     ap.add_argument("--label", default="", help="free text recorded in the report header (e.g. git sha, 'after B')")
+    ap.add_argument("--swap-model", default=None, help="scenario 7 model (default: --chat-model)")
+    ap.add_argument("--swap-reps", type=int, default=3, help="scenario 7 runs per start tier")
+    ap.add_argument(
+        "--swap-files",
+        default=",".join(os.path.join(ROOT, "backend", "models", f) for f in DEFAULT_SWAP_FILES),
+        help="comma-separated weight files of the scenario 7 model, evicted from the page cache before Tier 3 runs",
+    )
+    ap.add_argument("--swap-keep-page-cache", action="store_true", help="scenario 7: do not evict the weight files for Tier 3")
+    ap.add_argument("--chart", help="scenario 7: write an SVG chart of the median runs here")
     args = ap.parse_args()
 
     c = Client(args.host)
@@ -533,6 +827,7 @@ def main():
         mem = c.get_json("/v1/memory/status")
     except Exception:  # noqa: BLE001
         mem = {}
+    args.device = (mem.get("capabilities") or {}).get("device_name")
 
     rep = Report()
     today = dt.date.today().isoformat()
@@ -562,6 +857,7 @@ def main():
         (4, lambda: scenario_4(c, rep, args.chat_model, args.clients)),
         (5, lambda: scenario_5(c, rep, args.tts_model, args.voice)),
         (6, lambda: scenario_6(c, rep, args.stt_model, args.chat_model, args.tts_model, args.voice)),
+        (7, lambda: swap(c, rep, args)),
     ]
     started = time.perf_counter()
     for n, fn in steps:

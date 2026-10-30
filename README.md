@@ -45,7 +45,13 @@ Measured on one 24 GB CUDA GPU with the default lineup (full reports in [docs/be
 | Four concurrent chat clients | **2.18x** the aggregate decode throughput of one (continuous batching) |
 | Text-to-speech, time to first audio | 5.4 s → **385 ms** with streaming synthesis |
 
-<!-- PERF-5: cold (NVMe) vs warm (pinned RAM) vs hot (VRAM) model swap chart goes here. -->
+Model swap: time to the first token of Gemma 4 26B-A4B Q4 (15.8 GB) depending on where the
+scheduler finds it, measured on an Apple M5 Max (128 GB, Metal) with the OS page cache dropped for
+the Tier 3 runs ([report](docs/bench/swap-metal-2026-10-29.md)):
+
+![Time to first token by start tier: Tier 3 2.29 s, Tier 2 0.99 s, Tier 1 84 ms](docs/bench/swap-metal-2026-10-29.svg)
+
+<!-- PERF-5: add the CUDA run (bench.sh --scenarios 7) next to the Metal one. -->
 
 ### How it compares
 
@@ -395,7 +401,10 @@ Behaviour that matters in production:
 - **Benchmark**: `backend/scripts/bench.sh [--host URL] [--out docs/bench/<name>.md]` runs the
   fixed execution scenarios from `docs/execution-efficiency-plan.md` (cold chat, five-turn chat,
   vision chat, concurrent clients, TTS, voice round trip) against a running server and prints a
-  Markdown report; the current baseline is `docs/bench/baseline-2026-10-29.md`.
+  Markdown report; the current baseline is `docs/bench/baseline-2026-10-29.md`. Scenario 7
+  (`--scenarios 7 [--chart out.svg]`, not in the default set) stages a model in Tier 3, 2 and 1
+  with `POST /v1/memory/tier` and times the first request from each; before the Tier 3 runs it
+  evicts the weight files (`--swap-files`) from the OS page cache on Linux and macOS.
 
 ---
 

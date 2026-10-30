@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 262" width="720" height="262" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-label="Time to first token by start tier">
+<style>
+.bg{fill:#fcfcfb}.ink{fill:#0b0b0b}.ink2{fill:#52514e}.muted{fill:#898781}.grid{stroke:#e1e0d9}.s1{fill:#2a78d6}.s2{fill:#eb6834}.gap{stroke:#fcfcfb}
+@media (prefers-color-scheme: dark){.bg{fill:#1a1a19}.ink{fill:#f0efec}.ink2{fill:#c3c2b7}.grid{stroke:#2c2c2a}.s1{fill:#3987e5}.s2{fill:#d95926}.gap{stroke:#1a1a19}}
+</style>
+<rect class="bg" width="720" height="262" rx="8"/>
+<text class="ink" x="20" y="30" font-size="16" font-weight="600">Time to first token by start tier</text>
+<text class="ink2" x="20" y="50" font-size="12">gemma4:26b-q4, median of 3 runs, first streamed token, Apple Silicon Metal (Unified Memory)</text>
+<rect class="s2" x="210" y="58" width="10" height="10" rx="2"/>
+<text class="ink2" x="225" y="67" font-size="11">tier switch (load)</text>
+<rect class="s1" x="400" y="58" width="10" height="10" rx="2"/>
+<text class="ink2" x="415" y="67" font-size="11">rest of time to first token</text>
+<line class="grid" x1="210.0" y1="74" x2="210.0" y2="222" stroke-width="1"/>
+<text class="muted" x="210.0" y="238" font-size="11" text-anchor="middle">0 s</text>
+<line class="grid" x1="350.0" y1="74" x2="350.0" y2="222" stroke-width="1"/>
+<text class="muted" x="350.0" y="238" font-size="11" text-anchor="middle">1 s</text>
+<line class="grid" x1="490.0" y1="74" x2="490.0" y2="222" stroke-width="1"/>
+<text class="muted" x="490.0" y="238" font-size="11" text-anchor="middle">2 s</text>
+<line class="grid" x1="630.0" y1="74" x2="630.0" y2="222" stroke-width="1"/>
+<text class="muted" x="630.0" y="238" font-size="11" text-anchor="middle">3 s</text>
+<text class="ink" x="198" y="97.0" font-size="13" text-anchor="end">Tier 3 (NVMe mmap, cold)</text>
+<rect class="s2" x="210" y="78" width="308.1" height="30" rx="4"/>
+<rect class="s1 gap" x="518.1" y="78" width="12.6" height="30" rx="4" stroke-width="2"/>
+<text class="ink" x="538.7" y="97.0" font-size="12" font-weight="600">2.29 s</text>
+<text class="ink" x="198" y="145.0" font-size="13" text-anchor="end">Tier 2 (pinned RAM, warm)</text>
+<rect class="s2" x="210" y="126" width="126.2" height="30" rx="4"/>
+<rect class="s1 gap" x="336.2" y="126" width="12.6" height="30" rx="4" stroke-width="2"/>
+<text class="ink" x="356.8" y="145.0" font-size="12" font-weight="600">992 ms</text>
+<text class="ink" x="198" y="193.0" font-size="13" text-anchor="end">Tier 1 (resident, hot)</text>
+<rect class="s1 gap" x="210.0" y="174" width="11.8" height="30" rx="4" stroke-width="0"/>
+<text class="ink" x="229.8" y="193.0" font-size="12" font-weight="600">84 ms</text>
+</svg>

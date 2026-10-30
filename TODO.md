@@ -56,12 +56,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Backlog
 
-- [ ] 🟧 **PERF-5** `P1` Benchmark model swap latency: cold vs warm vs hot
-      The 3-tier hierarchy is the headline claim but no bench measures it (baseline shows 9
-      promotions averaging ~4.8 s each). Add a `bench.sh` scenario that times the first request
-      to a large model (`gemma4:26b-q4`) starting from Tier 3 (NVMe mmap), Tier 2 (pinned RAM)
-      and Tier 1 (resident), using `POST /v1/memory/tier` to stage it. Report tier-switch ms and
-      TTFT per start tier on CUDA and Metal; save under `docs/bench/` and chart it for the README.
 - [ ] ⬛ **BUILD-1** `P1` Publish prebuilt release binaries
       The 10-20 min native build plus vendoring, CMake/Ninja and the CUDA host-compiler pin stop
       most people. Release workflow producing archives for Windows x64 (CUDA), Linux x64 (CUDA)
@@ -111,6 +105,17 @@ _No cards yet._
 
 ## Done
 
+- [x] 🟧 **PERF-5** `P1` Benchmark model swap latency: cold vs warm vs hot
+      The 3-tier hierarchy is the headline claim but no bench measures it (baseline shows 9
+      promotions averaging ~4.8 s each). Add a `bench.sh` scenario that times the first request
+      to a large model (`gemma4:26b-q4`) starting from Tier 3 (NVMe mmap), Tier 2 (pinned RAM)
+      and Tier 1 (resident), using `POST /v1/memory/tier` to stage it. Report tier-switch ms and
+      TTFT per start tier on CUDA and Metal; save under `docs/bench/` and chart it for the README.
+      Shipped: `bench.py` scenario 7 (`--scenarios 7`, `--swap-model`, `--swap-reps`,
+      `--swap-files`, `--chart`), per-file page-cache eviction without root (`posix_fadvise` /
+      `msync(MS_INVALIDATE)`) checked with `mincore`, SVG chart. Metal run in
+      `docs/bench/swap-metal-2026-10-29.md` (Tier 3 2.29 s, Tier 2 0.99 s, Tier 1 84 ms TTFT),
+      chart in the README. CUDA run still to do on the Windows box (no page-cache drop there).
 - [x] ⬜ **DOC-2** `P1` Rewrite README around the pitch, a quickstart and bring-your-own models
       Lead with the one-line pitch (one OpenAI endpoint for every modality on one GPU, with a
       scheduler that manages VRAM), then a short demo GIF/video of the 3-tier visualizer, then a
