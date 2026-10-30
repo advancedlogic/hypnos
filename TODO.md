@@ -78,11 +78,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       A C++ abort inside llama.cpp / sd.cpp takes the whole process down: document the
       supervisor expectation (run scripts, Docker restart policy, systemd unit) and add a
       per-engine crash counter to `/metrics` so restarts are visible.
-- [ ] 🟫 **MEM-2** `P3` Expose GPU device health on /metrics (utilisation, temperature, errors)
-      `/metrics` covers bookings and placements but not the device itself. Through the existing
-      probe path (`GpuMemoryProbe`, NVML / `nvidia-smi` on CUDA, IOKit on Apple Silicon) export
-      utilisation, temperature, power, clock throttling and Xid / driver error counts, sampled
-      with the VRAM reconcile; show the first three in the playground's tier visualizer header.
 - [ ] 🟫 **MEM-3** `P3` Version the config and the model manifest with a migration path
       `HypnosConfig` has no schema version; the first breaking change to a field or to
       `models.manifest` will break every deployed `hypnos.toml`. Add `config_version` (absent =
@@ -122,6 +117,19 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       archives were never attached; the step now uploads into an existing or draft release.
 
 ## Done
+
+- [x] 🟫 **MEM-2** `P3` Expose GPU device health on /metrics (utilisation, temperature, errors)
+      `/metrics` covers bookings and placements but not the device itself. Through the existing
+      probe path (`GpuMemoryProbe`, NVML / `nvidia-smi` on CUDA, IOKit on Apple Silicon) export
+      utilisation, temperature, power, clock throttling and Xid / driver error counts, sampled
+      with the VRAM reconcile; show the first three in the playground's tier visualizer header.
+      Shipped: `GpuHealth` in `hypnos-memory/src/hardware.rs` (utilisation, temperature, power,
+      SM clock, throttle reasons + `throttled`, ECC uncorrected errors, pending retired pages)
+      sampled through `nvidia-smi --query-gpu` on NVIDIA (Metal / ROCm: none yet, the field is
+      absent), cached in `TieredMemoryManager::gpu_health` and refreshed at most every 3 s from
+      `status_snapshot`; `gpu` in `/v1/memory/status`, `hypnos_gpu_*` gauges on `/metrics`, and
+      the visualizer header shows utilisation, temperature and power in red while throttled.
+      Xid counts are not in nvidia-smi's query set; ECC + retired pages stand in. Parser test.
 
 - [x] 🟪 **API-5** `P2` Per-key rate limits and quotas, and redaction in the request log
       API keys are all-or-nothing. Add per-key limits in `[server]` (requests per minute,

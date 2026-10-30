@@ -33,6 +33,56 @@ pub fn metal_default_working_set(physical: u64) -> u64 {
     }
 }
 
+/// One reading of the accelerator's health (`/v1/memory/status` `gpu`, the `hypnos_gpu_*`
+/// gauges on `/metrics`). Fields `nvidia-smi` reports as unsupported are `None`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GpuHealth {
+    pub utilization_percent: Option<u32>,
+    pub temperature_celsius: Option<u32>,
+    pub power_watts: Option<f64>,
+    pub sm_clock_mhz: Option<u32>,
+    /// `clocks_throttle_reasons.active` as nvidia-smi prints it (a bitmask).
+    pub throttle_reasons: Option<u64>,
+    /// Any throttle reason other than the device being idle (bit 0x1).
+    pub throttled: bool,
+    pub ecc_uncorrected_errors: Option<u64>,
+    pub retired_pages_pending: Option<bool>,
+    /// Milliseconds since the Unix epoch.
+    pub sampled_unix_ms: u64,
+}
+
+impl GpuHealth {
+    /// Parses one CSV line of `utilization.gpu,temperature.gpu,power.draw,clocks.sm,
+    /// clocks_throttle_reasons.active,ecc.errors.uncorrected.volatile.total,retired_pages.pending`
+    /// with `nounits`; `[N/A]` and `[Not Supported]` fields become `None`.
+    pub fn parse_nvidia_smi(line: &str) -> Option<Self> {
+        let fields: Vec<&str> = line.split(',').map(str::trim).collect();
+        if fields.len() < 5 {
+            return None;
+        }
+        let field = |i: usize| fields.get(i).copied().filter(|f| !f.starts_with('['));
+        let num = |i: usize| field(i).and_then(|f| f.parse::<f64>().ok());
+        let throttle_reasons = field(4).and_then(|f| {
+            let hex = f.trim_start_matches("0x").trim_start_matches("0X");
+            u64::from_str_radix(hex, 16).ok()
+        });
+        Some(Self {
+            utilization_percent: num(0).map(|v| v as u32),
+            temperature_celsius: num(1).map(|v| v as u32),
+            power_watts: num(2),
+            sm_clock_mhz: num(3).map(|v| v as u32),
+            throttle_reasons,
+            throttled: throttle_reasons.is_some_and(|r| r & !0x1 != 0),
+            ecc_uncorrected_errors: num(5).map(|v| v as u64),
+            retired_pages_pending: field(6).map(|f| f.eq_ignore_ascii_case("yes")),
+            sampled_unix_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
+        })
+    }
+}
+
 /// Detected hardware capabilities and memory budgets.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceMemoryCapabilities {
@@ -261,6 +311,27 @@ impl DeviceMemoryCapabilities {
         AcceleratorKind::NvidiaCuda
     }
 
+    /// Samples the device's health through `nvidia-smi` (NVIDIA only; Metal and ROCm report
+    /// nothing yet). About 30-100 ms of process spawn, so callers rate-limit it.
+    pub fn sample_gpu_health(accelerator: AcceleratorKind, device_id: usize) -> Option<GpuHealth> {
+        if accelerator != AcceleratorKind::NvidiaCuda {
+            return None;
+        }
+        let output = Command::new("nvidia-smi")
+            .args([
+                "--query-gpu=utilization.gpu,temperature.gpu,power.draw,clocks.sm,clocks_throttle_reasons.active,ecc.errors.uncorrected.volatile.total,retired_pages.pending",
+                "--format=csv,noheader,nounits",
+                &format!("--id={device_id}"),
+            ])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        GpuHealth::parse_nvidia_smi(text.lines().next()?)
+    }
+
     fn probe_nvidia_smi(device_id: usize) -> Option<(String, u64)> {
         let output = Command::new("nvidia-smi")
             .args([
@@ -417,5 +488,35 @@ mod tests {
     fn metal_working_set_estimate() {
         assert_eq!(metal_default_working_set(16 * GIB), 16 * GIB / 3 * 2);
         assert_eq!(metal_default_working_set(64 * GIB), 48 * GIB);
+    }
+    #[test]
+    fn gpu_health_parses_nvidia_smi_lines() {
+        let h =
+            GpuHealth::parse_nvidia_smi("37, 61, 19.00, 292, 0x0000000000000001, 0, No").unwrap();
+        assert_eq!(
+            (
+                h.utilization_percent,
+                h.temperature_celsius,
+                h.power_watts,
+                h.sm_clock_mhz
+            ),
+            (Some(37), Some(61), Some(19.0), Some(292))
+        );
+        assert_eq!(h.throttle_reasons, Some(1));
+        assert!(!h.throttled, "idle is not throttling");
+        assert_eq!(
+            (h.ecc_uncorrected_errors, h.retired_pages_pending),
+            (Some(0), Some(false))
+        );
+        let h = GpuHealth::parse_nvidia_smi(
+            "99, 87, 150.5, 1200, 0x0000000000000020, [N/A], [Not Supported]",
+        )
+        .unwrap();
+        assert!(h.throttled);
+        assert_eq!(
+            (h.ecc_uncorrected_errors, h.retired_pages_pending),
+            (None, None)
+        );
+        assert!(GpuHealth::parse_nvidia_smi("garbage").is_none());
     }
 }

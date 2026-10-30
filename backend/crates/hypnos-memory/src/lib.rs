@@ -3,7 +3,7 @@ pub mod manager;
 pub mod mmap_cache;
 pub mod process;
 
-pub use hardware::DeviceMemoryCapabilities;
+pub use hardware::{DeviceMemoryCapabilities, GpuHealth};
 pub use manager::{
     EvictionEvent, EvictionReason, MemoryHierarchyStatus, ModelTierSnapshot, TieredMemoryManager,
 };

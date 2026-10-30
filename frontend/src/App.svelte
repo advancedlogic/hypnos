@@ -1033,6 +1033,12 @@
           </h2>
           {#if memoryStatus && !isUnifiedMemory}
             <span class="text-xs text-slate-400">
+              {#if memoryStatus.gpu}
+                <span class={memoryStatus.gpu.throttled ? 'text-rose-300' : ''} title={memoryStatus.gpu.throttled ? 'The driver reports clock throttling' : 'GPU utilisation · temperature · power (nvidia-smi)'}>
+                  GPU {memoryStatus.gpu.utilization_percent ?? '–'}% · {memoryStatus.gpu.temperature_celsius ?? '–'} °C · {memoryStatus.gpu.power_watts != null ? memoryStatus.gpu.power_watts.toFixed(0) : '–'} W{memoryStatus.gpu.throttled ? ' · throttled' : ''}
+                </span>
+                ·
+              {/if}
               DMA Speed: ~{memoryStatus.capabilities.tier2_to_tier1_bandwidth_gbps} GB/s
             </span>
           {/if}

@@ -378,6 +378,42 @@ impl Metrics {
             "hypnos_vram_bytes{{kind=\"unaccounted\"}} {}",
             status.tier1_vram_unaccounted_bytes
         );
+        if let Some(gpu) = &status.gpu {
+            let _ = writeln!(
+                out,
+                "# HELP hypnos_gpu_utilization_percent Device utilisation as the driver reports it."
+            );
+            let _ = writeln!(out, "# TYPE hypnos_gpu_utilization_percent gauge");
+            if let Some(v) = gpu.utilization_percent {
+                let _ = writeln!(out, "hypnos_gpu_utilization_percent {v}");
+            }
+            let _ = writeln!(out, "# TYPE hypnos_gpu_temperature_celsius gauge");
+            if let Some(v) = gpu.temperature_celsius {
+                let _ = writeln!(out, "hypnos_gpu_temperature_celsius {v}");
+            }
+            let _ = writeln!(out, "# TYPE hypnos_gpu_power_watts gauge");
+            if let Some(v) = gpu.power_watts {
+                let _ = writeln!(out, "hypnos_gpu_power_watts {v:.1}");
+            }
+            let _ = writeln!(out, "# TYPE hypnos_gpu_sm_clock_mhz gauge");
+            if let Some(v) = gpu.sm_clock_mhz {
+                let _ = writeln!(out, "hypnos_gpu_sm_clock_mhz {v}");
+            }
+            let _ = writeln!(
+                out,
+                "# HELP hypnos_gpu_throttled 1 while a throttle reason other than idle is active."
+            );
+            let _ = writeln!(out, "# TYPE hypnos_gpu_throttled gauge");
+            let _ = writeln!(out, "hypnos_gpu_throttled {}", u8::from(gpu.throttled));
+            let _ = writeln!(out, "# TYPE hypnos_gpu_ecc_uncorrected_errors gauge");
+            if let Some(v) = gpu.ecc_uncorrected_errors {
+                let _ = writeln!(out, "hypnos_gpu_ecc_uncorrected_errors {v}");
+            }
+            let _ = writeln!(out, "# TYPE hypnos_gpu_retired_pages_pending gauge");
+            if let Some(v) = gpu.retired_pages_pending {
+                let _ = writeln!(out, "hypnos_gpu_retired_pages_pending {}", u8::from(v));
+            }
+        }
         let _ = writeln!(out, "# TYPE hypnos_pinned_ram_bytes gauge");
         let _ = writeln!(
             out,

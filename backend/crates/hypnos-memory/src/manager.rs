@@ -1,4 +1,4 @@
-use crate::hardware::{DeviceMemoryCapabilities, OS_RESERVE_BYTES};
+use crate::hardware::{DeviceMemoryCapabilities, GpuHealth, OS_RESERVE_BYTES};
 use crate::mmap_cache::MmapWeightBuffer;
 use hypnos_core::config::{HardwareConfig, MemoryTier, MemoryTopology, ModelConfig};
 use hypnos_core::error::{HypnosError, Result};
@@ -61,6 +61,10 @@ pub struct MemoryHierarchyStatus {
     /// The scheduler's most recent automatic evictions, newest first.
     #[serde(default)]
     pub recent_evictions: Vec<EvictionEvent>,
+    /// The device's health (utilisation, temperature, power, clocks, throttling, ECC) when the
+    /// accelerator reports it: NVIDIA through nvidia-smi, sampled at most every few seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu: Option<GpuHealth>,
     pub models: Vec<ModelTierSnapshot>,
 }
 
@@ -123,6 +127,10 @@ pub struct TieredMemoryManager {
     max_process_memory_bytes: u64,
     /// Newest first, at most `EVICTION_LOG_LEN`.
     evictions: parking_lot::Mutex<VecDeque<EvictionEvent>>,
+    /// `hardware.device_id`, for the health sample.
+    device_id: usize,
+    /// The last health reading and when it was taken.
+    gpu_health: parking_lot::Mutex<Option<(Instant, GpuHealth)>>,
     lock_host_memory: bool,
     models: RwLock<HashMap<String, ManagedModelMemory>>,
     vram_used_bytes: AtomicU64,
@@ -225,6 +233,8 @@ impl TieredMemoryManager {
             simulating: hw_config.simulate_physical_memory_bytes > 0,
             max_process_memory_bytes: hw_config.max_process_memory_bytes,
             evictions: parking_lot::Mutex::new(VecDeque::with_capacity(EVICTION_LOG_LEN)),
+            device_id: hw_config.device_id as usize,
+            gpu_health: parking_lot::Mutex::new(None),
             lock_host_memory,
             models: RwLock::new(models),
             vram_used_bytes: AtomicU64::new(0),
@@ -363,6 +373,21 @@ impl TieredMemoryManager {
         } else {
             to.pinned_ram_bytes.saturating_sub(from.pinned_ram_bytes)
         }
+    }
+
+    /// The device's health, re-sampled when the last reading is older than `max_age` (a
+    /// `nvidia-smi` call); `None` where the accelerator reports nothing.
+    pub fn gpu_health(&self, max_age: std::time::Duration) -> Option<GpuHealth> {
+        let accelerator = self.capabilities.read().accelerator;
+        let mut cached = self.gpu_health.lock();
+        if let Some((at, h)) = cached.as_ref() {
+            if at.elapsed() < max_age {
+                return Some(h.clone());
+            }
+        }
+        let fresh = DeviceMemoryCapabilities::sample_gpu_health(accelerator, self.device_id)?;
+        *cached = Some((Instant::now(), fresh.clone()));
+        Some(fresh)
     }
 
     /// Re-reads device memory and derives how much VRAM is in use beyond what the planner booked.
@@ -773,6 +798,7 @@ impl TieredMemoryManager {
             process_memory_cap_bytes: (self.max_process_memory_bytes > 0)
                 .then_some(self.max_process_memory_bytes),
             recent_evictions: self.evictions.lock().iter().cloned().collect(),
+            gpu: self.gpu_health(std::time::Duration::from_secs(3)),
             models,
         }
     }
