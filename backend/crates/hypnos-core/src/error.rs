@@ -54,6 +54,10 @@ pub enum HypnosError {
     #[error("Invalid request parameter: {0}")]
     InvalidRequest(String),
 
+    /// A resource addressed by the URL (a stored document, a log entry) does not exist.
+    #[error("Not found: {0}")]
+    NotFound(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 

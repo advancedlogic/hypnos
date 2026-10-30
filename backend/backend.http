@@ -114,11 +114,33 @@ Content-Disposition: form-data; name="describe_pictures"
 
 gemma4:e4b-q4
 ------HypnosBoundary
+Content-Disposition: form-data; name="return_pictures"
+
+true
+------HypnosBoundary
 Content-Disposition: form-data; name="file"; filename="sample.pdf"
 Content-Type: application/pdf
 
 < ./sample.pdf
 ------HypnosBoundary--
+
+### 7b. Pictures of a `return_pictures` conversion (use the `id` from the response above)
+# The list carries the metadata; a single picture adds its base64 `image`. `?format=image`
+# returns the bare image. DELETE releases them before `server.document_pictures_ttl_secs`.
+GET {{host}}/v1/documents/doc-REPLACE-ME/pictures
+Authorization: Bearer {{apiKey}}
+
+###
+GET {{host}}/v1/documents/doc-REPLACE-ME/pictures/1
+Authorization: Bearer {{apiKey}}
+
+###
+GET {{host}}/v1/documents/doc-REPLACE-ME/pictures/1?format=image
+Authorization: Bearer {{apiKey}}
+
+###
+DELETE {{host}}/v1/documents/doc-REPLACE-ME
+Authorization: Bearer {{apiKey}}
 
 
 ### 8. Entity Extraction (gliner2.5-multi, Hypnos extension)

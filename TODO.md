@@ -50,7 +50,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 2   | 5   | 2   | 6    | 1   | 5     | 4   | 1    |
+| 2  | 3   | 5   | 2   | 6    | 1   | 5     | 4   | 1    |
 
 ---
 
@@ -62,6 +62,17 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       it for `POST /v1/audio/transcriptions` as an alternative to the llama.cpp/mtmd path,
       selected per model in the config. Check its ggml does not clash with llama.cpp's (build
       shared like sd.cpp if needed), then add models to `models.manifest` and the example configs.
+- [ ] 🟪 **API-2** `P2` Allow enabling and disabling models without removing their config
+      Per-model `enabled = true|false` in `[[models]]` (default true): a disabled model keeps its
+      block but is not pre-staged by `initialize_startup_tiers`, is left out of `/v1/models` and
+      the Tier 1 / Tier 2 budgets, and a request for it answers 404 with a "disabled" message
+      instead of loading it. Validation still checks the block (ids, engine / modality combos)
+      but tolerates missing weights for a disabled model. Runtime toggle, e.g.
+      `POST /v1/models/{id}/enable` and `/disable` (or a `state` field next to
+      `POST /v1/memory/tier`): disabling evicts the model to Tier 3 and is refused while it is
+      leased, like a manual tier move; the change is not persisted to the TOML. Show the state in
+      `/v1/memory/status` with a switch per model in the playground's tier visualizer, mirror the
+      flag in `default_profile`, and cover the scheduler side in the mock-backend tests.
 - [ ] ⬛ **BUILD-4** `P3` Ship docling on CUDA in the release archives and the Docker image
       ENG-3 left docling's CUDA path behind the `docling-cuda` feature. ort's prebuilt GPU build of
       ONNX Runtime 1.31 is CUDA 13 only, while llama.cpp / sd.cpp target CUDA 12.8 (driver 570+).
@@ -76,6 +87,26 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🟪 **API-2** `P2` Return the pictures docling extracts from a document
+      `return_pictures` on `POST /v1/documents/convert` keeps the pictures the engine cuts out
+      (today they are dropped, or consumed by `describe_pictures`) in a temporary store keyed by a
+      document id: one JSON file per picture with the base64 image and its metadata (mime type,
+      pixel size, page, bounding box, page size, caption, docling ref). The response carries the
+      `id` and each page its `picture_urls`; `GET /v1/documents/{id}/pictures` lists them,
+      `GET /v1/documents/{id}/pictures/{n}` returns one (JSON, or the image with `?format=image`),
+      `DELETE /v1/documents/{id}` releases them. TTL and size cap in `[server]`
+      (`document_pictures_dir`, `_ttl_secs`, `_max_bytes`); stale directories are swept at startup.
+      Playground: "Keep pictures" checkbox and a thumbnail strip under the result.
+      Shipped: `return_pictures` (JSON and multipart) keeps what `split_off_images` now extracts
+      per picture (data URI, mime, pixel size, dpi, bbox, page size, caption, docling ref);
+      `hypnos-server/src/pictures.rs` writes `<dir>/<doc-id>/<n>.json` records, serves
+      `GET /v1/documents/{id}/pictures` (metadata), `GET .../pictures/{n}` (JSON with base64
+      `image`, or the bytes with `?format=image`) and `DELETE /v1/documents/{id}`; TTL sweep every
+      minute, size cap drops the oldest documents, a failed conversion releases its own. The
+      response carries `id` and `pictures_expire_at`, the stream's `document.started` the `id`,
+      each page its `picture_urls`. Playground checkbox + thumbnail strip + release button.
+      Verified end to end on a two-page PDF (bbox, caption and page size match the source).
 
 - [x] 🟩 **ENG-3** `P3` Run document conversion on the GPU (Core ML, CUDA)
       Follow-up to ENG-1, opt-in per model. macOS: docling's `coreml` feature (unified memory,

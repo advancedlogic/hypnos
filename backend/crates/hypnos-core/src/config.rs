@@ -443,10 +443,31 @@ pub struct ServerConfig {
     /// `index.html` (release archives and the Docker image ship it there), otherwise nothing.
     #[serde(default)]
     pub frontend_dir: Option<PathBuf>,
+    /// Where `/v1/documents/convert` keeps the pictures a `return_pictures` conversion cut out
+    /// (one JSON file per picture: base64 image plus its metadata). Unset: `hypnos-pictures`
+    /// under the OS temporary directory. Documents left from an earlier run are removed at
+    /// startup.
+    #[serde(default)]
+    pub document_pictures_dir: Option<PathBuf>,
+    /// How long a document's pictures stay after its last page was converted; `DELETE
+    /// /v1/documents/{id}` releases them earlier.
+    #[serde(default = "default_document_pictures_ttl_secs")]
+    pub document_pictures_ttl_secs: u64,
+    /// Cap on the store's total size; the oldest documents go first when it is crossed
+    /// (0 = no cap).
+    #[serde(default = "default_document_pictures_max_bytes")]
+    pub document_pictures_max_bytes: u64,
     /// HTTPS: serve TLS in-process with this PEM certificate chain and private key.
     /// Plain HTTP when absent.
     #[serde(default)]
     pub tls: Option<TlsConfig>,
+}
+
+fn default_document_pictures_ttl_secs() -> u64 {
+    3600
+}
+fn default_document_pictures_max_bytes() -> u64 {
+    1024 * 1024 * 1024
 }
 
 /// `[server.tls]`: PEM files, relative paths resolved from the working directory.
@@ -511,6 +532,9 @@ impl Default for ServerConfig {
             api_keys: Vec::new(),
             metrics_require_auth: false,
             frontend_dir: None,
+            document_pictures_dir: None,
+            document_pictures_ttl_secs: default_document_pictures_ttl_secs(),
+            document_pictures_max_bytes: default_document_pictures_max_bytes(),
             tls: None,
         }
     }

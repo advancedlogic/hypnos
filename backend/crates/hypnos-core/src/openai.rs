@@ -552,6 +552,11 @@ pub struct DocumentConversionRequest {
     /// replaces the picture's `<!-- image -->` placeholder in the Markdown.
     #[serde(default)]
     pub describe_pictures: Option<String>,
+    /// Keep the pictures docling cut out of the pages in the server's picture store, so they can
+    /// be fetched afterwards from `GET /v1/documents/{id}/pictures[/{n}]`. The response then
+    /// carries the document `id`, each page its `picture_urls`.
+    #[serde(default)]
+    pub return_pictures: bool,
 }
 
 fn default_true() -> bool {
@@ -580,9 +585,60 @@ pub struct DocumentPage {
     pub tables: u32,
     /// Conversion time of this page in milliseconds.
     pub ms: f64,
-    /// PNG data URIs of the page's pictures, in Markdown order (for `describe_pictures`).
+    /// Where each of the page's pictures can be fetched (`return_pictures`), in Markdown order:
+    /// `/v1/documents/{id}/pictures/{n}`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub picture_urls: Vec<String>,
+    /// The page's pictures with their image data, in Markdown order (`describe_pictures`,
+    /// `return_pictures`). Never serialized: the store and the vision model consume them.
     #[serde(skip)]
-    pub picture_images: Vec<String>,
+    pub picture_images: Vec<ExtractedPicture>,
+}
+
+/// A picture docling cut out of a page, with where it was and how it was rendered.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExtractedPicture {
+    /// `data:<mime>;base64,...` as docling exports it.
+    #[serde(skip)]
+    pub data_uri: String,
+    /// Image media type (docling renders pictures as `image/png`).
+    pub mime: String,
+    /// Pixel size of the rendered image.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dpi: Option<u32>,
+    /// Where the picture sits on its page, in the page's units (PDF points for PDFs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bbox: Option<PictureBox>,
+    /// The page's size in the same units as `bbox`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<PageSize>,
+    /// The caption docling attached to the picture, when it found one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+    /// The picture's reference inside the docling document (`#/pictures/0`).
+    #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub self_ref: Option<String>,
+}
+
+/// A docling bounding box: `l`, `t`, `r`, `b` with the origin `coord_origin` (`TOPLEFT` or
+/// `BOTTOMLEFT`) says which way `t` and `b` count.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PictureBox {
+    pub l: f64,
+    pub t: f64,
+    pub r: f64,
+    pub b: f64,
+    pub coord_origin: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PageSize {
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -598,6 +654,13 @@ pub struct DocumentUsage {
 pub struct DocumentConversionResponse {
     /// Always `"document"`.
     pub object: String,
+    /// The document's id in the picture store (`return_pictures`): list its pictures at
+    /// `GET /v1/documents/{id}/pictures`, release them with `DELETE /v1/documents/{id}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// When the stored pictures are dropped (RFC 3339), unless deleted earlier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pictures_expire_at: Option<String>,
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filename: Option<String>,

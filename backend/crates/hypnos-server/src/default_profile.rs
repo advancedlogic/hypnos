@@ -29,6 +29,9 @@ pub fn default_six_model_config() -> HypnosConfig {
             api_keys: Vec::new(), // HYPNOS_API_KEYS
             metrics_require_auth: false,
             frontend_dir: None,
+            document_pictures_dir: None,
+            document_pictures_ttl_secs: 3600,
+            document_pictures_max_bytes: gb,
             tls: None,
         },
         limits: LimitsConfig::default(),

@@ -456,8 +456,14 @@ Behaviour that matters in production:
   `{"object": "document", "pages": [...], "markdown": "...", "usage": {...}}`. Options: `pages`
   (`"3"`, `"2-5"`), `ocr` (default true: pages without a text layer are read with OCR),
   `output_format` (`json` adds each page's docling document), `stream` (one server-sent event per
-  page, then the joined document) and `describe_pictures` (a vision model such as `gemma4:e4b-q4`
-  writes a description under every picture). PDFs are converted one page at a time through models
+  page, then the joined document), `describe_pictures` (a vision model such as `gemma4:e4b-q4`
+  writes a description under every picture) and `return_pictures` (the pictures docling cut out
+  stay on the server: the response carries the document `id` and each page its `picture_urls`;
+  `GET /v1/documents/{id}/pictures` lists them with mime type, size, page, bounding box and
+  caption, `GET /v1/documents/{id}/pictures/{n}` returns one as JSON with the base64 image, or the
+  image itself with `?format=image`, and `DELETE /v1/documents/{id}` releases them; otherwise they
+  expire after `server.document_pictures_ttl_secs`, 1 hour, within a store capped at
+  `server.document_pictures_max_bytes`). PDFs are converted one page at a time through models
   that stay loaded (about 0.1 s a page on an M5 Max CPU; the first table loads TableFormer), so
   memory is the same for 5 pages or 500; the joined Markdown puts back tables, numbered lists and
   sentences that a page break cut. Images, DOCX, PPTX, XLSX, HTML and Markdown work too.

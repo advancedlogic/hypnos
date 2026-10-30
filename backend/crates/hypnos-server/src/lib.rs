@@ -3,6 +3,7 @@ pub mod default_profile;
 mod documents;
 mod entities;
 pub mod metrics;
+pub mod pictures;
 pub mod request_log;
 
 use axum::{
@@ -66,6 +67,8 @@ pub struct AppState {
     pub request_log: Arc<RequestLog>,
     /// Bearer keys guarding `/v1/*` (`server.api_keys`); open when empty.
     pub auth: Arc<auth::ApiAuth>,
+    /// Pictures kept for `return_pictures` document conversions (`/v1/documents/{id}/pictures`).
+    pub pictures: Arc<pictures::PictureStore>,
     /// Flipped once startup tier initialization has finished (`/ready`).
     pub ready: Arc<AtomicBool>,
     pub started_at: Instant,
@@ -90,6 +93,22 @@ impl AppState {
             &config.server.api_keys,
             config.server.metrics_require_auth,
         ));
+        let pictures = pictures::PictureStore::open(
+            config.server.document_pictures_dir.as_deref(),
+            Duration::from_secs(config.server.document_pictures_ttl_secs.max(1)),
+            config.server.document_pictures_max_bytes,
+        )
+        .map_err(|e| {
+            HypnosError::Config(format!(
+                "server.document_pictures_dir {}: {e}",
+                config
+                    .server
+                    .document_pictures_dir
+                    .as_deref()
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_else(|| "(temporary directory)".into())
+            ))
+        })?;
         Ok(Self {
             scheduler,
             limits: config.limits,
@@ -99,6 +118,7 @@ impl AppState {
                 config.server.request_log_capacity,
             )),
             auth,
+            pictures: Arc::new(pictures),
             ready: Arc::new(AtomicBool::new(false)),
             started_at: Instant::now(),
             version: env!("CARGO_PKG_VERSION"),
@@ -196,6 +216,18 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
         .route("/v1/audio/speech", post(audio_speech))
         .route("/v1/images/generations", post(image_generations))
         .route("/v1/documents/convert", post(documents::convert_document))
+        .route(
+            "/v1/documents/:id",
+            axum::routing::delete(documents::delete_document),
+        )
+        .route(
+            "/v1/documents/:id/pictures",
+            get(documents::list_document_pictures),
+        )
+        .route(
+            "/v1/documents/:id/pictures/:n",
+            get(documents::get_document_picture),
+        )
         .route("/v1/entities", post(entities::extract_entities))
         // Hypnos 3-Tier Memory Observability & Control Endpoints
         .route("/v1/memory/status", get(memory_status))
@@ -245,6 +277,7 @@ pub fn with_playground(router: Router, dir: &std::path::Path) -> Router {
 fn is_logged_route(route: &str) -> bool {
     route.starts_with("/v1/")
         && !route.starts_with("/v1/logs")
+        && !(route.starts_with("/v1/documents/") && route != "/v1/documents/convert")
         && route != "/v1/memory/status"
         && route != "/v1/models"
 }
@@ -1237,6 +1270,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, error_type) = match &self.0 {
             HypnosError::ModelNotFound(_) => (StatusCode::NOT_FOUND, "model_not_found"),
+            HypnosError::NotFound(_) => (StatusCode::NOT_FOUND, "not_found"),
             HypnosError::ModalityMismatch { .. } | HypnosError::InvalidRequest(_) => {
                 (StatusCode::BAD_REQUEST, "invalid_request_error")
             }

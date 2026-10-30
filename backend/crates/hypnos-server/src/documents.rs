@@ -4,14 +4,17 @@
 //! URI, or `url`). Pages are converted one at a time; with `stream: true` each one is a
 //! server-sent event as soon as it is ready, then a final `document` event carries the joined
 //! Markdown and the telemetry. `describe_pictures` names a vision model that writes a description
-//! under every picture.
+//! under every picture. `return_pictures` keeps the pictures in the picture store
+//! (`pictures.rs`): the response carries the document `id` and each page its `picture_urls`,
+//! served by `GET /v1/documents/{id}/pictures[/{n}]` until `DELETE /v1/documents/{id}` or expiry.
 
 use super::{finish_telemetry, with_log, ApiError, AppState};
+use crate::pictures::PictureStore;
 use crate::request_log::{LogDetails, RequestId};
 use axum::{
     body::Body,
-    extract::{Multipart, State},
-    http::{header, HeaderMap},
+    extract::{Multipart, Path, Query, State},
+    http::{header, HeaderMap, StatusCode},
     response::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
@@ -33,7 +36,7 @@ use hypnos_core::{
 };
 use hypnos_scheduler::ActiveModelLease;
 use serde_json::json;
-use std::{collections::VecDeque, convert::Infallible, time::Instant};
+use std::{collections::VecDeque, convert::Infallible, sync::Arc, time::Instant};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::warn;
 
@@ -119,6 +122,7 @@ async fn parse_request(
                 "describe_pictures" => {
                     req.describe_pictures = Some(value).filter(|v| !v.trim().is_empty())
                 }
+                "return_pictures" => req.return_pictures = parse_bool("return_pictures", &value)?,
                 _ => {}
             }
         }
@@ -178,7 +182,7 @@ async fn describe_pictures(
         }
     };
     let mut descriptions = Vec::with_capacity(images.len());
-    for uri in images {
+    for picture in images {
         let chat = ChatCompletionRequest {
             model: model.to_string(),
             messages: vec![ChatMessage {
@@ -186,7 +190,7 @@ async fn describe_pictures(
                 content: ChatMessageContent::Parts(vec![
                     ContentPart::ImageUrl {
                         image_url: ImageUrlSpec {
-                            url: uri,
+                            url: picture.data_uri,
                             detail: None,
                         },
                     },
@@ -251,21 +255,31 @@ struct Progress {
     model: String,
     filename: Option<String>,
     describe: Option<String>,
+    /// The store and the document's id in it (`return_pictures`).
+    store: Option<(Arc<PictureStore>, String)>,
     page_count: u32,
     pages: Vec<DocumentPage>,
     pictures_described: u32,
 }
 
 impl Progress {
-    fn new(req: &DocumentConversionRequest) -> Self {
+    fn new(req: &DocumentConversionRequest, state: &AppState) -> Self {
+        let store = req
+            .return_pictures
+            .then(|| (state.pictures.clone(), state.pictures.new_document()));
         Self {
             model: req.model.clone(),
             filename: req.filename.clone(),
             describe: req.describe_pictures.clone(),
+            store,
             page_count: 0,
             pages: Vec::new(),
             pictures_described: 0,
         }
+    }
+
+    fn document_id(&self) -> Option<&str> {
+        self.store.as_ref().map(|(_, id)| id.as_str())
     }
 
     async fn page(
@@ -274,9 +288,26 @@ impl Progress {
         ctx: &RequestContext,
         mut page: DocumentPage,
     ) -> DocumentPage {
+        if let Some((store, id)) = self.store.clone() {
+            if !page.picture_images.is_empty() {
+                let pictures = page.picture_images.clone();
+                let page_no = page.page;
+                let stored =
+                    tokio::task::spawn_blocking(move || store.add_page(&id, page_no, &pictures))
+                        .await
+                        .map_err(|e| HypnosError::BackendError(e.to_string()))
+                        .and_then(|r| r);
+                match stored {
+                    Ok(urls) => page.picture_urls = urls,
+                    // The page still converts; its pictures are just not retrievable.
+                    Err(e) => warn!(page = page.page, error = %e, "pictures not stored"),
+                }
+            }
+        }
         if let Some(model) = self.describe.clone() {
             self.pictures_described += describe_pictures(state, &model, &mut page, ctx).await;
         }
+        page.picture_images.clear();
         self.pages.push(page.clone());
         page
     }
@@ -291,8 +322,14 @@ impl Progress {
     }
 
     fn finish(self, telemetry: ExecutionTelemetry) -> DocumentConversionResponse {
+        let (id, pictures_expire_at) = match &self.store {
+            Some((store, id)) => (Some(id.clone()), store.expires_at(id)),
+            None => (None, None),
+        };
         DocumentConversionResponse {
             object: "document".into(),
+            id,
+            pictures_expire_at,
             markdown: join_pages(&self.pages),
             usage: self.usage(),
             model: self.model,
@@ -340,6 +377,7 @@ async fn convert_document_inner(
             "output_format": req.output_format,
             "stream": req.stream,
             "describe_pictures": req.describe_pictures,
+            "return_pictures": req.return_pictures,
         }));
     }
     if let Some(vision) = &req.describe_pictures {
@@ -374,7 +412,7 @@ async fn convert_document_inner(
             backend.convert_document(&req, &ctx, tx).await
         }))
     };
-    let progress = Progress::new(&req);
+    let progress = Progress::new(&req, state);
 
     if req.stream {
         // Wait for the document to be read before answering, so a request the backend refuses
@@ -414,19 +452,24 @@ async fn convert_document_inner(
 
     let mut progress = progress;
     let timing = loop {
-        match rx.recv().await {
+        let failed = match rx.recv().await {
             Some(DocumentStreamEvent::Started { page_count, .. }) => {
-                progress.page_count = page_count
+                progress.page_count = page_count;
+                continue;
             }
             Some(DocumentStreamEvent::Page(page)) => {
                 progress.page(state, &ctx, page).await;
+                continue;
             }
             Some(DocumentStreamEvent::Done { timing }) => break timing,
-            Some(DocumentStreamEvent::Error(message)) => {
-                return Err(HypnosError::BackendError(message).into())
-            }
-            None => return Err(task_error(task.take()).await.into()),
+            Some(DocumentStreamEvent::Error(message)) => HypnosError::BackendError(message),
+            None => task_error(task.take()).await,
+        };
+        // A failed conversion answers with an error: nobody will ask for its pictures.
+        if let Some(id) = progress.document_id() {
+            state.pictures.delete(id);
         }
+        return Err(failed.into());
     };
     let telemetry = finish_telemetry(&lease, infer_start, None).with_engine(timing);
     state.metrics.record_document(&req.model, &telemetry.engine);
@@ -444,6 +487,91 @@ async fn convert_document_inner(
         }));
     }
     Ok(Json(resp).into_response())
+}
+
+fn unknown_document(id: &str) -> ApiError {
+    HypnosError::NotFound(format!(
+        "no pictures are stored for document '{id}' (expired, deleted, or converted without return_pictures)"
+    ))
+    .into()
+}
+
+/// `GET /v1/documents/{id}/pictures`: every stored picture of the document, metadata only
+/// (`index`, `page`, `url`, `mime`, `bytes`, `width`, `height`, `bbox`, `page_size`, `caption`).
+pub(crate) async fn list_document_pictures(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    match state.pictures.list(&id) {
+        Some(list) => Ok(Json(list).into_response()),
+        None => Err(unknown_document(&id)),
+    }
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct PictureQuery {
+    /// `json` (default): the picture record with its base64 `image`; `image`: the bare image
+    /// bytes with their media type.
+    #[serde(default)]
+    format: Option<String>,
+}
+
+/// `GET /v1/documents/{id}/pictures/{n}`: one picture, as JSON with its base64 image or, with
+/// `?format=image`, as the image itself.
+pub(crate) async fn get_document_picture(
+    State(state): State<AppState>,
+    Path((id, index)): Path<(String, u32)>,
+    Query(query): Query<PictureQuery>,
+) -> Result<Response, ApiError> {
+    let as_image = match query
+        .format
+        .as_deref()
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        None | Some("json") => false,
+        Some("image") | Some("binary") | Some("raw") => true,
+        Some(other) => {
+            return Err(bad(format!("format must be json or image, got {other:?}")).into())
+        }
+    };
+    let store = state.pictures.clone();
+    let lookup_id = id.clone();
+    if as_image {
+        let found = tokio::task::spawn_blocking(move || store.get_bytes(&lookup_id, index))
+            .await
+            .map_err(|e| HypnosError::BackendError(e.to_string()))??;
+        let (mime, bytes) = found.ok_or_else(|| unknown_document(&id))?;
+        return Ok((
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, mime),
+                (header::CACHE_CONTROL, "private, no-store".to_string()),
+            ],
+            bytes,
+        )
+            .into_response());
+    }
+    let found = tokio::task::spawn_blocking(move || store.get(&lookup_id, index))
+        .await
+        .map_err(|e| HypnosError::BackendError(e.to_string()))??;
+    let record = found.ok_or_else(|| unknown_document(&id))?;
+    Ok(Json(record).into_response())
+}
+
+/// `DELETE /v1/documents/{id}`: releases the document's pictures before they expire.
+pub(crate) async fn delete_document(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    if state.pictures.delete(&id) {
+        Ok(
+            Json(json!({ "object": "document.deleted", "id": id, "deleted": true }))
+                .into_response(),
+        )
+    } else {
+        Err(unknown_document(&id))
+    }
 }
 
 /// Why the conversion task stopped before `Done`.
@@ -479,6 +607,9 @@ struct DocumentSse {
 impl DocumentSse {
     fn fail(&mut self, error: HypnosError) -> Event {
         self.finished = true;
+        if let Some(id) = self.progress.as_ref().and_then(|p| p.document_id()) {
+            self.state.pictures.delete(id);
+        }
         let message = error.to_string();
         let kind = match error {
             HypnosError::InvalidRequest(_) => "invalid_request_error",
@@ -532,10 +663,11 @@ impl DocumentSse {
                 if let Some(p) = self.progress.as_mut() {
                     p.page_count = page_count;
                 }
-                Event::default().data(
-                    json!({ "object": "document.started", "page_count": page_count, "pages": pages })
-                        .to_string(),
-                )
+                let mut started = json!({ "object": "document.started", "page_count": page_count, "pages": pages });
+                if let Some(id) = self.progress.as_ref().and_then(|p| p.document_id()) {
+                    started["id"] = json!(id);
+                }
+                Event::default().data(started.to_string())
             }
             Some(DocumentStreamEvent::Page(page)) => {
                 let progress = self.progress.as_mut().expect("progress until done");

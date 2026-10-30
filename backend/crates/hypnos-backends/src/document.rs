@@ -14,11 +14,13 @@ use hypnos_core::config::{MemoryTier, ModelConfig};
 use hypnos_core::error::{HypnosError, Result};
 use hypnos_core::kv_cache::LayerPlacementPlan;
 use hypnos_core::openai::{
-    DocumentConversionRequest, DocumentPage, DocumentStreamEvent, EngineTiming,
+    DocumentConversionRequest, DocumentPage, DocumentStreamEvent, EngineTiming, ExtractedPicture,
+    PageSize,
 };
 use hypnos_core::request::RequestContext;
 use hypnos_core::ModelBackend;
 use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -191,9 +193,89 @@ fn strip_glyph_names(markdown: &str) -> String {
 }
 
 /// Removes the embedded page and picture images from a page's docling JSON (they are megabytes of
-/// base64), keeping the pictures' data URIs aside when `keep` asks for them.
-fn split_off_images(json: &mut serde_json::Value, keep: bool) -> Vec<String> {
+/// base64), keeping each picture's data URI and metadata (size, position, caption) aside when
+/// `keep` asks for them.
+fn split_off_images(json: &mut serde_json::Value, keep: bool) -> Vec<ExtractedPicture> {
     let mut images = Vec::new();
+    let page_sizes: HashMap<u64, PageSize> = json
+        .get("pages")
+        .and_then(|p| p.as_object())
+        .map(|pages| {
+            pages
+                .values()
+                .filter_map(|page| {
+                    let no = page.get("page_no")?.as_u64()?;
+                    let size = page.get("size")?;
+                    Some((
+                        no,
+                        PageSize {
+                            width: size.get("width")?.as_f64()?,
+                            height: size.get("height")?.as_f64()?,
+                        },
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let caption_of = |pic: &serde_json::Value| -> Option<String> {
+        let reference = pic
+            .get("captions")?
+            .as_array()?
+            .first()?
+            .get("$ref")?
+            .as_str()?;
+        let index: usize = reference.strip_prefix("#/texts/")?.parse().ok()?;
+        let text = json
+            .get("texts")?
+            .as_array()?
+            .get(index)?
+            .get("text")?
+            .as_str()?;
+        Some(text.trim().to_string()).filter(|t| !t.is_empty())
+    };
+    let pictures: Vec<ExtractedPicture> = json
+        .get("pictures")
+        .and_then(|p| p.as_array())
+        .map(|pictures| {
+            pictures
+                .iter()
+                .filter_map(|pic| {
+                    let image = pic.get("image")?;
+                    let prov = pic.get("prov").and_then(|p| p.as_array()?.first());
+                    let page_no = prov.and_then(|p| p.get("page_no")?.as_u64());
+                    Some(ExtractedPicture {
+                        data_uri: image.get("uri")?.as_str()?.to_string(),
+                        mime: image
+                            .get("mimetype")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("image/png")
+                            .to_string(),
+                        width: image
+                            .pointer("/size/width")
+                            .and_then(|v| v.as_f64())
+                            .map(|v| v as u32),
+                        height: image
+                            .pointer("/size/height")
+                            .and_then(|v| v.as_f64())
+                            .map(|v| v as u32),
+                        dpi: image.get("dpi").and_then(|v| v.as_u64()).map(|v| v as u32),
+                        bbox: prov
+                            .and_then(|p| p.get("bbox"))
+                            .and_then(|b| serde_json::from_value(b.clone()).ok()),
+                        page_size: page_no.and_then(|n| page_sizes.get(&n).cloned()),
+                        caption: caption_of(pic),
+                        self_ref: pic
+                            .get("self_ref")
+                            .and_then(|r| r.as_str())
+                            .map(str::to_string),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if keep {
+        images = pictures;
+    }
     if let Some(pages) = json.get_mut("pages").and_then(|p| p.as_object_mut()) {
         for page in pages.values_mut() {
             if let Some(p) = page.as_object_mut() {
@@ -204,13 +286,7 @@ fn split_off_images(json: &mut serde_json::Value, keep: bool) -> Vec<String> {
     if let Some(pictures) = json.get_mut("pictures").and_then(|p| p.as_array_mut()) {
         for pic in pictures {
             if let Some(p) = pic.as_object_mut() {
-                if let Some(image) = p.remove("image") {
-                    if keep {
-                        if let Some(uri) = image.get("uri").and_then(|u| u.as_str()) {
-                            images.push(uri.to_string());
-                        }
-                    }
-                }
+                p.remove("image");
             }
         }
     }
@@ -267,6 +343,7 @@ fn convert_page(job: &PageJob<'_>, page: Option<u32>) -> Result<DocumentPage> {
         tables: count(&json, "tables"),
         json: job.keep_json.then_some(json),
         ms: started.elapsed().as_secs_f64() * 1000.0,
+        picture_urls: Vec::new(),
         picture_images,
     })
 }
@@ -352,7 +429,7 @@ impl ModelBackend for DoclingBackend {
                 name: &name,
                 bytes: &req.file_bytes,
                 ocr: req.ocr,
-                keep_pictures: req.describe_pictures.is_some(),
+                keep_pictures: req.describe_pictures.is_some() || req.return_pictures,
                 keep_json: req.wants_json(),
             };
             let paginated = format == InputFormat::Pdf;
@@ -541,6 +618,50 @@ pub fn join_pages(pages: &[DocumentPage]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_off_images_keeps_the_pictures_with_their_metadata() {
+        let mut json = serde_json::json!({
+            "pages": { "1": { "page_no": 1, "size": { "width": 612.0, "height": 792.0 }, "image": { "uri": "data:image/png;base64,PAGE" } } },
+            "texts": [ { "text": "Figure 1: a chart " } ],
+            "pictures": [ {
+                "self_ref": "#/pictures/0",
+                "prov": [ { "page_no": 1, "bbox": { "l": 10.0, "t": 20.0, "r": 110.0, "b": 220.0, "coord_origin": "TOPLEFT" }, "charspan": [0, 0] } ],
+                "captions": [ { "$ref": "#/texts/0" } ],
+                "image": { "mimetype": "image/png", "dpi": 144, "size": { "width": 200.0, "height": 400.0 }, "uri": "data:image/png;base64,PIC" }
+            } ]
+        });
+        let kept = split_off_images(&mut json.clone(), true);
+        assert_eq!(kept.len(), 1);
+        let pic = &kept[0];
+        assert_eq!(pic.data_uri, "data:image/png;base64,PIC");
+        assert_eq!(pic.mime, "image/png");
+        assert_eq!(
+            (pic.width, pic.height, pic.dpi),
+            (Some(200), Some(400), Some(144))
+        );
+        assert_eq!(
+            pic.bbox
+                .as_ref()
+                .map(|b| (b.l, b.b, b.coord_origin.as_str())),
+            Some((10.0, 220.0, "TOPLEFT"))
+        );
+        assert_eq!(
+            pic.page_size,
+            Some(PageSize {
+                width: 612.0,
+                height: 792.0
+            })
+        );
+        assert_eq!(pic.caption.as_deref(), Some("Figure 1: a chart"));
+        assert_eq!(pic.self_ref.as_deref(), Some("#/pictures/0"));
+
+        // Dropped or kept, the images leave the JSON.
+        assert!(split_off_images(&mut json, false).is_empty());
+        assert!(json["pages"]["1"].get("image").is_none());
+        assert!(json["pictures"][0].get("image").is_none());
+        assert_eq!(json["pictures"][0]["self_ref"], "#/pictures/0");
+    }
 
     fn page(n: u32, md: &str) -> DocumentPage {
         DocumentPage {

@@ -48,6 +48,12 @@ log_format = "pretty"
 # metrics_require_auth = false        # true: /metrics needs a key too (/health, /ready stay open)
 # Built playground served at /. Unset: frontend/ beside the executable, if present (release archives).
 # frontend_dir = "../frontend/dist"
+# Pictures kept for `return_pictures` document conversions (GET /v1/documents/{id}/pictures): one
+# JSON file per picture (base64 image + mime, size, page, bounding box, caption). Unset dir =
+# hypnos-pictures under the OS temp directory; leftovers of an earlier run are removed at startup.
+# document_pictures_dir = "pictures"
+document_pictures_ttl_secs = 3600       # kept this long after the last page; DELETE /v1/documents/{id} frees earlier
+document_pictures_max_bytes = 1073741824 # 1 GiB store cap, oldest documents dropped first (0 = no cap)
 # HTTPS in-process (PEM files). Must stay the last part of [server]: keys below it would belong to it.
 # [server.tls]
 # cert_path = "certs/hypnos.crt"

@@ -145,6 +145,8 @@ async fn run() -> Result<()> {
         None => None,
     };
     let state = AppState::from_config(config)?;
+    state.pictures.spawn_sweeper();
+    info!(dir = %state.pictures.dir().display(), "document picture store");
     if state.auth.enabled() {
         info!(
             keys = state.auth.key_count(),

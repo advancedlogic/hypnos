@@ -120,8 +120,10 @@
   let docPages = $state('');
   let docOcr = $state(true);
   let docDescribe = $state('');
+  let docReturnPictures = $state(false);
   let docProgress = $state(null); // { page_count, pages: [numbers], done: n }
   let docResult = $state(null);
+  let docPictures = $state([]); // [{ index, page, caption, width, height, bytes, url, blobUrl }]
 
   // -------------------------------------------------------------------------
   // Entities (POST /v1/entities): zero-shot named-entity extraction, labels chosen per request
@@ -798,6 +800,7 @@
     isLoading = true;
     docResult = null;
     docProgress = null;
+    releaseDocPictureUrls();
     try {
       const form = new FormData();
       form.append('model', docModel);
@@ -805,6 +808,7 @@
       form.append('ocr', String(docOcr));
       if (docPages.trim()) form.append('pages', docPages.trim());
       if (docDescribe.trim()) form.append('describe_pictures', docDescribe.trim());
+      if (docReturnPictures) form.append('return_pictures', 'true');
       form.append('file', docFile, docFile.name);
       const res = await apiFetch(`/v1/documents/convert`, { method: 'POST', body: form });
       if (!res.ok) {
@@ -834,6 +838,7 @@
           } else if (ev.object === 'document') {
             docResult = { ...ev, pages };
             recordTelemetry(docModel, 'document_conversion', ev.hypnos_telemetry);
+            if (ev.id) await loadDocPictures(ev.id);
           } else if (ev.object === 'error') {
             throw new Error(ev.error?.message || 'conversion failed');
           }
@@ -844,6 +849,37 @@
       lastError = err.message;
     } finally {
       isLoading = false;
+    }
+  }
+
+  function releaseDocPictureUrls() {
+    for (const p of docPictures) if (p.blobUrl) URL.revokeObjectURL(p.blobUrl);
+    docPictures = [];
+  }
+
+  // Lists the stored pictures of a `return_pictures` conversion and fetches each one as an image
+  // (through apiFetch, so the API key goes along) for the thumbnail strip.
+  async function loadDocPictures(id) {
+    const res = await apiFetch(`/v1/documents/${id}/pictures`);
+    if (!res.ok) return;
+    const list = await res.json();
+    const pictures = [];
+    for (const p of list.data) {
+      let blobUrl = null;
+      const img = await apiFetch(`${p.url}?format=image`);
+      if (img.ok) blobUrl = URL.createObjectURL(await img.blob());
+      pictures.push({ ...p, blobUrl });
+    }
+    docPictures = pictures;
+  }
+
+  // DELETE /v1/documents/{id}: drop the stored pictures before they expire.
+  async function releaseDocPictures() {
+    if (!docResult?.id) return;
+    const res = await apiFetch(`/v1/documents/${docResult.id}`, { method: 'DELETE' });
+    if (res.ok) {
+      releaseDocPictureUrls();
+      docResult = { ...docResult, id: null };
     }
   }
 
@@ -1990,6 +2026,10 @@
                 <input type="checkbox" bind:checked={docOcr} class="accent-indigo-500" />
                 OCR pages that have no text layer (scans, images)
               </label>
+              <label class="flex items-center gap-2 text-xs text-slate-300">
+                <input type="checkbox" bind:checked={docReturnPictures} class="accent-indigo-500" />
+                Keep the extracted pictures (GET /v1/documents/{'{id}'}/pictures, 1 h by default)
+              </label>
             </div>
 
             <button
@@ -2040,6 +2080,37 @@
                   Download Markdown
                 </a>
               </div>
+              {#if docResult.id}
+                <div class="flex flex-wrap justify-between gap-2 text-slate-400 font-mono pt-1">
+                  <span>
+                    Pictures stored as <strong class="text-white">{docResult.id}</strong>
+                    ({docPictures.length}, until {docResult.pictures_expire_at ? new Date(docResult.pictures_expire_at).toLocaleTimeString() : 'expiry'})
+                  </span>
+                  <button type="button" onclick={releaseDocPictures} class="text-rose-300 hover:text-rose-200 underline">
+                    Release now (DELETE /v1/documents/{'{id}'})
+                  </button>
+                </div>
+                {#if docPictures.length}
+                  <div class="flex flex-wrap gap-2">
+                    {#each docPictures as p (p.index)}
+                      <a
+                        href={p.blobUrl ?? p.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={`#${p.index} · page ${p.page} · ${p.width ?? '?'}×${p.height ?? '?'} px · ${(p.bytes / 1024).toFixed(0)} KiB${p.caption ? ` · ${p.caption}` : ''}`}
+                        class="block w-24 rounded border border-slate-800 bg-slate-900 p-1 hover:border-indigo-500"
+                      >
+                        {#if p.blobUrl}
+                          <img src={p.blobUrl} alt={p.caption ?? `picture ${p.index}`} class="w-full h-16 object-contain" />
+                        {:else}
+                          <div class="w-full h-16 flex items-center justify-center text-slate-500">#{p.index}</div>
+                        {/if}
+                        <div class="truncate text-[10px] text-slate-400 mt-1">p{p.page} · {p.caption ?? `#${p.index}`}</div>
+                      </a>
+                    {/each}
+                  </div>
+                {/if}
+              {/if}
               <pre class="font-mono text-emerald-100 bg-slate-900 p-3 rounded border border-slate-800 whitespace-pre-wrap max-h-[32rem] overflow-y-auto">{docResult.markdown}</pre>
             </div>
           {/if}

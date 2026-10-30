@@ -158,7 +158,11 @@ keep that profile in sync with `hypnos.example.toml` when adding models or field
   `device = "cpu"`: the planner books its Tier 1 placement in host RAM only (`runs_on_cpu`), and
   a CPU model short of RAM pushes idle RAM-only models to Tier 3. PDFs go one page per conversion
   through a `WarmPipeline` (a whole document at once keeps every page's data until the end);
-  `join_pages` mends tables, numbered lists and sentences across breaks. docling reads its setup
+  `join_pages` mends tables, numbered lists and sentences across breaks. `split_off_images` strips
+  the base64 images from the docling JSON and keeps each picture with its metadata (mime, size,
+  bbox, caption) only for `describe_pictures` / `return_pictures`; `hypnos-server/src/pictures.rs`
+  is the on-disk store behind `return_pictures` (`GET /v1/documents/{id}/pictures[/{n}]`,
+  `DELETE /v1/documents/{id}`, TTL and size cap in `[server]`). docling reads its setup
   from the environment once per process (`configure_docling`: `DOCLING_RS_MODELS_DIR` from
   `weights_path`'s folder, `DOCLING_RS_EP` from `device`, `DOCLING_RS_NO_ARENA=1`), hence one
   docling model per server. `device = "gpu"`: CoreML in the Metal build, CUDA only with the opt-in
