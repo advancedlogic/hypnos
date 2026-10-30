@@ -103,6 +103,21 @@ pub struct SchedulerStats {
     pub load_failures: AtomicU64,
     pub admissions_rejected: AtomicU64,
     pub tier_switch_ms_total: AtomicU64,
+    /// Load failures per model (`hypnos_model_load_failures_total{model}`): an engine that refused
+    /// its weights (file gone or changed, CUDA out of memory) shows up here, not only in the log.
+    pub load_failures_by_model: std::sync::Mutex<HashMap<String, u64>>,
+}
+
+impl SchedulerStats {
+    pub fn load_failures_by_model(&self) -> Vec<(String, u64)> {
+        let mut v: Vec<(String, u64)> = self
+            .load_failures_by_model
+            .lock()
+            .map(|m| m.iter().map(|(k, n)| (k.clone(), *n)).collect())
+            .unwrap_or_default();
+        v.sort();
+        v
+    }
 }
 
 /// KV-Cache-Aware Multi-Modal Model Scheduler.
@@ -459,6 +474,9 @@ impl ModelScheduler {
             // The engine refused the weights (missing file, CUDA OOM, ...): undo the Tier 1 booking so
             // the accounting keeps matching what the GPU really holds.
             self.stats.load_failures.fetch_add(1, Ordering::Relaxed);
+            if let Ok(mut by_model) = self.stats.load_failures_by_model.lock() {
+                *by_model.entry(model_id.to_string()).or_insert(0) += 1;
+            }
             let fallback_tier = if cfg.keep_warm_in_ram {
                 MemoryTier::Tier2PinnedRam
             } else {

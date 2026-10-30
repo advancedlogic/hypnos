@@ -77,14 +77,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       the picture store and the request-log ring. Pass: no growth after warm-up, no deadlock, no
       429 storm, every eviction explained. Script it as `backend/scripts/soak.sh` with a report
       like `docs/bench/`, and fix what it finds (file them as BUG cards).
-- [ ] 🟨 **TEST-2** `P2` Cover the engine failure paths and contain engine crashes
-      The CUDA lifecycle test (`multi_modal_lifecycle.rs`) runs only by hand with real weights.
-      Add engine-free tests for CUDA OOM mid-generation (mock backend failing on the n-th token:
-      the lease is released, the slot cleared, the request answers 5xx), a weights file that
-      changes or disappears under a resident model, and cancellation during a tier transition.
-      A C++ abort inside llama.cpp / sd.cpp takes the whole process down: document the
-      supervisor expectation (run scripts, Docker restart policy, systemd unit) and add a
-      per-engine crash counter to `/metrics` so restarts are visible.
 - [ ] 🟧 **PERF-7** `P2` Gemma 4 26B decodes at 12 tokens/s on the RTX 5090 laptop; VRAM is full
       The request log and the soak show 12 tok/s for `gemma4:26b-q4` (README: ~100 tok/s on a
       24 GB CUDA GPU). `/v1/memory/status` has the device full: 21.8 GB booked plus 3.9 GB
@@ -109,6 +101,25 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       archives were never attached; the step now uploads into an existing or draft release.
 
 ## Done
+
+- [x] 🟨 **TEST-2** `P2` Cover the engine failure paths and contain engine crashes
+      The CUDA lifecycle test (`multi_modal_lifecycle.rs`) runs only by hand with real weights.
+      Add engine-free tests for CUDA OOM mid-generation (mock backend failing on the n-th token:
+      the lease is released, the slot cleared, the request answers 5xx), a weights file that
+      changes or disappears under a resident model, and cancellation during a tier transition.
+      A C++ abort inside llama.cpp / sd.cpp takes the whole process down: document the
+      supervisor expectation (run scripts, Docker restart policy, systemd unit) and add a
+      per-engine crash counter to `/metrics` so restarts are visible.
+      Shipped: `hypnos-server/tests/faults.rs` runs the real router, scheduler and memory manager
+      over a mock engine: a refused load answers 500 `server_error`, rolls the booking back and
+      counts in `hypnos_model_load_failures_total{model}`, then the next request loads and
+      serves; a failure mid-generation answers 500 (plain) or an error event followed by
+      `[DONE]` (stream), releases the lease and leaves the model resident, and the next request
+      is served without a reload. Scheduler tests: a request cancelled while another model's
+      load holds the transition lock loads nothing, and load failures are counted per model.
+      `/metrics` gains `hypnos_model_load_failures_total{model}` and
+      `hypnos_process_start_time_seconds` (a restart after an engine abort shows as a change);
+      the operator's guide lists both as alerts and describes the supervisor expectation.
 
 - [x] 🟥 **BUG-1** `P1` Eviction can unload a model between a fast-path lease and its request
       Seen in the first soak run (TEST-1, 2026-10-30): an entities request answered 500 "model

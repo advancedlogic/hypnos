@@ -23,6 +23,9 @@ struct MockBackend {
     placements: Mutex<Vec<LayerPlacementPlan>>,
     fail_loads: AtomicBool,
     resident: AtomicBool,
+    /// When set, a Tier 1 load waits for `gate` before it completes (a slow engine load).
+    block_loads: AtomicBool,
+    gate: tokio::sync::Notify,
 }
 
 impl MockBackend {
@@ -32,6 +35,8 @@ impl MockBackend {
             placements: Mutex::new(Vec::new()),
             fail_loads: AtomicBool::new(false),
             resident: AtomicBool::new(false),
+            block_loads: AtomicBool::new(false),
+            gate: tokio::sync::Notify::new(),
         })
     }
     fn tiers(&self) -> Vec<MemoryTier> {
@@ -55,6 +60,9 @@ impl ModelBackend for MockBackend {
     async fn apply_placement(&self, plan: &LayerPlacementPlan, _ptr: Option<usize>) -> Result<()> {
         self.placements.lock().unwrap().push(plan.clone());
         if plan.primary_tier == MemoryTier::Tier1GpuVram {
+            if self.block_loads.load(Ordering::SeqCst) {
+                self.gate.notified().await;
+            }
             if self.fail_loads.load(Ordering::SeqCst) {
                 return Err(HypnosError::BackendError("simulated CUDA OOM".into()));
             }
@@ -331,6 +339,74 @@ async fn cancelled_request_is_refused_before_loading() {
     let err = sched.acquire_model("a", None, 1, &ctx).await.err().unwrap();
     assert!(matches!(err, HypnosError::Cancelled));
     assert!(mocks[0].placements.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn cancelled_while_another_load_holds_the_transition_lock() {
+    // TEST-2: a request that gives up while it waits for the transition lock must not load its
+    // model once the lock frees up; the one holding the lock finishes normally.
+    let (sched, mocks) = build(
+        12,
+        vec![
+            model("slow", 2, ModelPriority::Normal, MemoryTier::Tier3NvmeSsd),
+            model("other", 2, ModelPriority::Normal, MemoryTier::Tier3NvmeSsd),
+        ],
+        2,
+    );
+    mocks[0].block_loads.store(true, Ordering::SeqCst);
+    let slow = {
+        let sched = sched.clone();
+        tokio::spawn(async move {
+            let ctx = RequestContext::unbounded();
+            sched
+                .acquire_model("slow", None, 1, &ctx)
+                .await
+                .map(|l| l.placement.primary_tier)
+        })
+    };
+    // Let the slow load take the lock, then queue a request that is cancelled while it waits.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let ctx = RequestContext::unbounded();
+    let waiting = {
+        let (sched, ctx) = (sched.clone(), ctx.clone());
+        tokio::spawn(async move { sched.acquire_model("other", None, 1, &ctx).await.err() })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    ctx.cancel();
+    mocks[0].gate.notify_one();
+    assert_eq!(slow.await.unwrap().unwrap(), MemoryTier::Tier1GpuVram);
+    assert!(matches!(
+        waiting.await.unwrap(),
+        Some(HypnosError::Cancelled)
+    ));
+    assert!(
+        mocks[1].placements.lock().unwrap().is_empty(),
+        "the cancelled request loaded nothing"
+    );
+    assert_eq!(sched.memory().active_leases("other"), 0);
+}
+
+#[tokio::test]
+async fn load_failures_are_counted_per_model() {
+    let (sched, mocks) = build(
+        12,
+        vec![model(
+            "a",
+            2,
+            ModelPriority::Normal,
+            MemoryTier::Tier3NvmeSsd,
+        )],
+        2,
+    );
+    mocks[0].fail_loads.store(true, Ordering::SeqCst);
+    let ctx = RequestContext::unbounded();
+    assert!(sched.acquire_model("a", None, 1, &ctx).await.is_err());
+    assert!(sched.acquire_model("a", None, 1, &ctx).await.is_err());
+    assert_eq!(
+        sched.stats().load_failures_by_model(),
+        vec![("a".to_string(), 2)]
+    );
+    assert_eq!(sched.stats().load_failures.load(Ordering::Relaxed), 2);
 }
 
 #[tokio::test]

@@ -349,6 +349,30 @@ impl Metrics {
             "hypnos_scheduler_tier_switch_ms_total {}",
             sched.tier_switch_ms_total.load(Ordering::Relaxed)
         );
+        let _ = writeln!(
+            out,
+            "# HELP hypnos_model_load_failures_total Engine load failures per model (weights refused: file gone or changed, CUDA out of memory)."
+        );
+        let _ = writeln!(out, "# TYPE hypnos_model_load_failures_total counter");
+        for (model, n) in sched.load_failures_by_model() {
+            let _ = writeln!(
+                out,
+                "hypnos_model_load_failures_total{{model=\"{}\"}} {n}",
+                model.replace('"', "")
+            );
+        }
+        // A restart (an engine abort takes the process down) shows as a change of this gauge.
+        let start = std::time::SystemTime::now()
+            .checked_sub(uptime)
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(
+            out,
+            "# HELP hypnos_process_start_time_seconds Unix time the server started; a change means it restarted."
+        );
+        let _ = writeln!(out, "# TYPE hypnos_process_start_time_seconds gauge");
+        let _ = writeln!(out, "hypnos_process_start_time_seconds {start}");
 
         let _ = writeln!(out, "# HELP hypnos_vram_bytes Tier 1 VRAM accounting (booked / budget-free / effective-free / real-free / unaccounted).");
         let _ = writeln!(out, "# TYPE hypnos_vram_bytes gauge");

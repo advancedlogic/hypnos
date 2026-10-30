@@ -93,9 +93,11 @@ counters (`hypnos_scheduler_promotions_total`, `_evictions_total`, `_load_failur
 (`hypnos_gpu_utilization_percent`, `_temperature_celsius`, `_power_watts`, `_sm_clock_mhz`,
 `_throttled`), the prefix-cache counters and the per-key counters.
 
-Alerts worth having: `hypnos_scheduler_load_failures_total` increasing (an engine refused weights:
-file changed, CUDA out of memory), `hypnos_gpu_throttled == 1` for minutes, `/ready` not 200 for
-longer than your pre-staging takes, `hypnos_http_requests_total{class="5xx"}` rate.
+Alerts worth having: `hypnos_model_load_failures_total{model}` increasing (an engine refused its
+weights: file gone or changed, CUDA out of memory; the per-model series says which),
+`changes(hypnos_process_start_time_seconds[1h]) > 0` (the process restarted: an engine abort took
+it down and the supervisor brought it back), `hypnos_gpu_throttled == 1` for minutes, `/ready` not
+200 for longer than your pre-staging takes, `hypnos_http_requests_total{class="5xx"}` rate.
 
 The request log (`GET /v1/logs`, the playground's "Request Logs" tab) keeps the last
 `server.request_log_capacity` calls with route, status, model, key, tokens, tier switch and
