@@ -75,6 +75,7 @@ fn model(id: &str, weight_gb: u64, priority: ModelPriority, initial: MemoryTier)
     }
     ModelConfig {
         id: id.to_string(),
+        enabled: true,
         modality: Modality::TextGeneration,
         additional_modalities: vec![],
         engine: EngineKind::GgmlLlama,
@@ -354,6 +355,74 @@ async fn startup_tiers_and_shutdown_release_engines() {
     let st = sched.status();
     assert_eq!(st.tier1_vram_used_bytes, 0);
     assert_eq!(st.tier2_pinned_ram_used_bytes, 0);
+}
+
+#[tokio::test]
+async fn disabled_models_are_skipped_refused_and_evicted() {
+    // `enabled = false` in the config: not pre-staged, refused, invisible to tier moves.
+    let mut off = model("off", 2, ModelPriority::High, MemoryTier::Tier1GpuVram);
+    off.enabled = false;
+    let (sched, mocks) = build(
+        12,
+        vec![
+            off,
+            model("on", 2, ModelPriority::Normal, MemoryTier::Tier3NvmeSsd),
+        ],
+        2,
+    );
+    sched.initialize_startup_tiers().await.unwrap();
+    assert!(
+        !mocks[0].is_resident(),
+        "a disabled model is not pre-loaded"
+    );
+    assert!(mocks[0].tiers().is_empty());
+    let ctx = RequestContext::unbounded();
+    let err = sched
+        .acquire_model("off", None, 1, &ctx)
+        .await
+        .err()
+        .unwrap();
+    assert!(matches!(err, HypnosError::ModelDisabled(ref id) if id == "off"));
+    let err = sched
+        .set_model_tier("off", MemoryTier::Tier2PinnedRam, None)
+        .await
+        .err()
+        .unwrap();
+    assert!(matches!(err, HypnosError::ModelDisabled(_)));
+    let st = sched.status();
+    let snap = |id: &str| st.models.iter().find(|m| m.id == id).unwrap().clone();
+    assert!(!snap("off").enabled);
+    assert!(snap("on").enabled);
+
+    // Enabling at runtime makes it loadable again.
+    sched.set_model_enabled("off", true).await.unwrap();
+    assert!(sched.is_enabled("off").unwrap());
+    let lease = sched.acquire_model("off", None, 1, &ctx).await.unwrap();
+    assert!(mocks[0].is_resident());
+
+    // Disabling is refused while leased, then evicts to Tier 3 and frees the bookings.
+    let err = sched.set_model_enabled("off", false).await.err().unwrap();
+    assert!(matches!(err, HypnosError::Busy { .. }));
+    drop(lease);
+    let plan = sched.set_model_enabled("off", false).await.unwrap();
+    assert_eq!(plan.primary_tier, MemoryTier::Tier3NvmeSsd);
+    assert!(!mocks[0].is_resident());
+    assert_eq!(mocks[0].tiers().last(), Some(&MemoryTier::Tier3NvmeSsd));
+    assert_eq!(sched.status().tier1_vram_used_bytes, 0);
+    assert_eq!(sched.status().tier2_pinned_ram_used_bytes, 0);
+    assert!(matches!(
+        sched
+            .acquire_model("off", None, 1, &ctx)
+            .await
+            .err()
+            .unwrap(),
+        HypnosError::ModelDisabled(_)
+    ));
+    // Unknown ids are still "not found", enabled or not.
+    assert!(matches!(
+        sched.set_model_enabled("nope", true).await.err().unwrap(),
+        HypnosError::ModelNotFound(_)
+    ));
 }
 
 #[tokio::test]

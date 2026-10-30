@@ -137,7 +137,11 @@ reason in `/v1/memory/status`).
 
 `HypnosConfig` (`hypnos-core/src/config.rs`): `[server]`, `[limits]`, `[hardware]`, `[[models]]` with
 nested `[models.arch]`. `HypnosConfig::validate` runs at startup and aborts on any error (missing
-weights, duplicate ids, impossible budgets, bad engine/modality combos). If the config path does not
+weights, duplicate ids, impossible budgets, bad engine/modality combos; a model with
+`enabled = false` may have missing weights). A disabled model keeps its block but is skipped by
+`initialize_startup_tiers`, refused by `acquire_model` with `ModelDisabled` (404) and hidden from
+`/v1/models`; `POST /v1/models/{id}/enable|disable` flips the runtime switch held by
+`TieredMemoryManager` (disable evicts to Tier 3 first). If the config path does not
 exist, the server falls back to `default_profile::default_six_model_config()` in `hypnos-server`;
 keep that profile in sync with `hypnos.example.toml` when adding models or fields.
 

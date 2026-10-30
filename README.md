@@ -181,6 +181,7 @@ weights_path = "models/Qwen3-8B-Q4_K_M.gguf"
 # aux_weights_path = "models/mmproj-....gguf"   # vision / audio projector, if the model has one
 priority = "high"                    # realtime_pinned | high | normal | low
 initial_tier = "tier2_pinned_ram"    # stage in RAM at startup; default tier3_nvme_ssd loads on first use
+enabled = true                       # false keeps the block but takes the model out of service
 
 [models.arch]                        # optional; sizes the KV cache and the GPU/CPU layer split
 default_context_len = 8192           # context reserved per load (layers, KV heads, head_dim,
@@ -397,6 +398,7 @@ check free space first.
 | `GET /metrics` | Prometheus text: per-route counters and latency, scheduler promotions/evictions/load failures/rejections, VRAM bookkeeping vs. real device memory, per-model tier and leases, and per-model execution histograms (`hypnos_chat_ttft_ms`, `hypnos_chat_queue_ms`, `hypnos_chat_context_ms`, `hypnos_chat_prefill_tokens_per_s`, `hypnos_chat_decode_tokens_per_s`, `hypnos_tts_rtf`, `hypnos_tts_ttfa_ms`, `hypnos_stt_rtf`, `hypnos_image_jct_s`; each also exposes a `_last` gauge) and prefix-cache counters (`hypnos_prefix_cache_hits_total`, `_misses_total`, `_tokens_reused_total`) |
 | `GET /v1/memory/status` | full 3-tier snapshot, including `tier1_vram_real_free_bytes` and `tier1_vram_unaccounted_bytes` |
 | `POST /v1/memory/tier` | manual promote / demote (`{"model": "...", "target_tier": "tier2_pinned_ram"}`); refused with 429 while the model is leased |
+| `POST /v1/models/{id}/disable`, `.../enable` | take a model out of service without removing its config, or put it back. Disabling evicts it to Tier 3 (refused with 429 while leased), hides it from `/v1/models` and makes requests for it answer 404 `model_disabled`; enabling lets it load on its next request. Same as `enabled = false` in its `[[models]]` block (which also tolerates missing weights), but not written back to the file. `/v1/memory/status` shows `enabled` per model, and the playground's model cards carry the switch |
 | `GET /v1/logs` | recent API calls, newest first (`?model=&route=&status=ok|error|4xx|5xx&limit=`): route, status, duration, model, tokens in / out / cached, tokens/s, tier switch; `GET /v1/logs/{id}` adds the prompt and completion text (level `debug`) and the request / response payloads with media replaced by placeholders (level `trace`) |
 | `POST /v1/logs/level` | `{"level": "off|error|warn|info|debug|trace"}` changes what is captured at runtime (`server.request_log_level` sets the start value, `server.request_log_capacity` the ring size); `DELETE /v1/logs` empties the ring. The playground's "Request Logs" tab is a client of these |
 

@@ -1723,6 +1723,7 @@ mod tests {
     fn media_ids_depend_on_bytes_and_projector() {
         let mut cfg = hypnos_core::config::ModelConfig {
             id: "m".into(),
+            enabled: true,
             modality: Modality::TextGeneration,
             additional_modalities: vec![],
             engine: hypnos_core::config::EngineKind::GgmlLlama,

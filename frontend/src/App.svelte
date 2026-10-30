@@ -385,6 +385,25 @@
     return () => clearInterval(timer);
   });
 
+  // POST /v1/models/{id}/enable | /disable: take a model out of service (evicted to Tier 3,
+  // hidden from /v1/models, requests answer 404) or put it back; not written to the config.
+  async function setModelEnabled(modelId, enabled) {
+    isLoading = true;
+    lastError = '';
+    try {
+      const res = await apiFetch(`/v1/models/${encodeURIComponent(modelId)}/${enabled ? 'enable' : 'disable'}`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+      await fetchMemoryStatus();
+    } catch (err) {
+      lastError = err.message;
+    } finally {
+      isLoading = false;
+    }
+  }
+
   async function manualSetTier(modelId, targetTier) {
     isLoading = true;
     lastError = '';
@@ -1145,14 +1164,20 @@
               {@const gpuPct = (m.placement.gpu_layers / totalLayers) * 100}
               {@const ramPct = (m.placement.pinned_ram_layers / totalLayers) * 100}
 
-              <div class="rounded-lg border border-slate-800 bg-slate-950/80 p-3.5 space-y-2.5">
+              <div class="rounded-lg border border-slate-800 bg-slate-950/80 p-3.5 space-y-2.5 {m.enabled === false ? 'opacity-60' : ''}">
                 <div class="flex items-start justify-between gap-2">
                   <div>
                     <div class="flex items-center gap-2 flex-wrap">
                       <span class="font-mono font-semibold text-sm text-white">{m.id}</span>
-                      <span class="text-[10px] px-2 py-0.5 rounded border font-medium {tierBadgeClass(m.current_tier)}">
-                        {tierLabel(m.current_tier, m.placement)}
-                      </span>
+                      {#if m.enabled === false}
+                        <span class="text-[10px] px-2 py-0.5 rounded border font-medium border-rose-500/40 bg-rose-500/10 text-rose-300">
+                          disabled
+                        </span>
+                      {:else}
+                        <span class="text-[10px] px-2 py-0.5 rounded border font-medium {tierBadgeClass(m.current_tier)}">
+                          {tierLabel(m.current_tier, m.placement)}
+                        </span>
+                      {/if}
                     </div>
                     <div class="flex flex-wrap gap-1 mt-1">
                       {#each m.modalities || [m.modality] as mod}
@@ -1196,23 +1221,33 @@
                     Served: {m.total_requests_served} reqs • Idle: {m.idle_seconds.toFixed(0)}s
                   </span>
                   <div class="flex items-center gap-1.5">
+                    <label class="flex items-center gap-1 mr-1 cursor-pointer select-none" title={m.enabled === false ? 'Enable: the model loads on its next request' : 'Disable: evict to SSD and hide from /v1/models (refused while in use)'}>
+                      <input
+                        type="checkbox"
+                        checked={m.enabled !== false}
+                        disabled={isLoading}
+                        onchange={(e) => setModelEnabled(m.id, e.currentTarget.checked)}
+                        class="accent-indigo-500"
+                      />
+                      <span class="text-slate-400">{m.enabled === false ? 'off' : 'on'}</span>
+                    </label>
                     <button
                       onclick={() => manualSetTier(m.id, 'tier1_gpu_vram')}
-                      disabled={isLoading}
+                      disabled={isLoading || m.enabled === false}
                       class="px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 transition"
                     >
                       To VRAM
                     </button>
                     <button
                       onclick={() => manualSetTier(m.id, 'tier2_pinned_ram')}
-                      disabled={isLoading}
+                      disabled={isLoading || m.enabled === false}
                       class="px-2 py-0.5 rounded bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 transition"
                     >
                       To RAM
                     </button>
                     <button
                       onclick={() => manualSetTier(m.id, 'tier3_nvme_ssd')}
-                      disabled={isLoading}
+                      disabled={isLoading || m.enabled === false}
                       class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
                     >
                       Evict SSD

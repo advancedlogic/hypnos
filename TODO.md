@@ -50,7 +50,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 3   | 5   | 2   | 6    | 1   | 5     | 5   | 1    |
+| 2  | 4   | 5   | 2   | 6    | 1   | 5     | 5   | 1    |
 
 ---
 
@@ -62,17 +62,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       it for `POST /v1/audio/transcriptions` as an alternative to the llama.cpp/mtmd path,
       selected per model in the config. Check its ggml does not clash with llama.cpp's (build
       shared like sd.cpp if needed), then add models to `models.manifest` and the example configs.
-- [ ] 🟪 **API-2** `P2` Allow enabling and disabling models without removing their config
-      Per-model `enabled = true|false` in `[[models]]` (default true): a disabled model keeps its
-      block but is not pre-staged by `initialize_startup_tiers`, is left out of `/v1/models` and
-      the Tier 1 / Tier 2 budgets, and a request for it answers 404 with a "disabled" message
-      instead of loading it. Validation still checks the block (ids, engine / modality combos)
-      but tolerates missing weights for a disabled model. Runtime toggle, e.g.
-      `POST /v1/models/{id}/enable` and `/disable` (or a `state` field next to
-      `POST /v1/memory/tier`): disabling evicts the model to Tier 3 and is refused while it is
-      leased, like a manual tier move; the change is not persisted to the TOML. Show the state in
-      `/v1/memory/status` with a switch per model in the playground's tier visualizer, mirror the
-      flag in `default_profile`, and cover the scheduler side in the mock-backend tests.
 - [ ] ⬛ **BUILD-4** `P3` Ship docling on CUDA in the release archives and the Docker image
       ENG-3 left docling's CUDA path behind the `docling-cuda` feature. ort's prebuilt GPU build of
       ONNX Runtime 1.31 is CUDA 13 only, while llama.cpp / sd.cpp target CUDA 12.8 (driver 570+).
@@ -87,6 +76,27 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🟪 **API-3** `P2` Allow enabling and disabling models without removing their config
+      Per-model `enabled = true|false` in `[[models]]` (default true): a disabled model keeps its
+      block but is not pre-staged by `initialize_startup_tiers`, is left out of `/v1/models` and
+      the Tier 1 / Tier 2 budgets, and a request for it answers 404 with a "disabled" message
+      instead of loading it. Validation still checks the block (ids, engine / modality combos)
+      but tolerates missing weights for a disabled model. Runtime toggle, e.g.
+      `POST /v1/models/{id}/enable` and `/disable` (or a `state` field next to
+      `POST /v1/memory/tier`): disabling evicts the model to Tier 3 and is refused while it is
+      leased, like a manual tier move; the change is not persisted to the TOML. Show the state in
+      `/v1/memory/status` with a switch per model in the playground's tier visualizer, mirror the
+      flag in `default_profile`, and cover the scheduler side in the mock-backend tests.
+      Shipped: `ModelConfig.enabled` (default true; validation downgrades missing files to a
+      warning when false), `ManagedModelMemory.enabled` as the runtime switch with
+      `ModelTierSnapshot.enabled` in `/v1/memory/status`, `HypnosError::ModelDisabled` (404
+      `model_disabled`) from `acquire_model` and `set_model_tier`, startup pre-staging skips
+      disabled models, `/v1/models` hides them. `ModelScheduler::set_model_enabled` behind
+      `POST /v1/models/{id}/enable` / `/disable` (disable evicts to Tier 3 under the transition
+      lock, 429 while leased; enable just flips the switch). Playground: on/off checkbox per model
+      card, "disabled" badge, tier buttons greyed. Scheduler mock test + config test; README,
+      CLAUDE.md, example profiles and backend.http updated.
 
 - [x] ⬜ **DOC-4** `P2` Create the Hypnos website as a single page under `website/`
       One static `website/index.html` (plus its CSS, JS and copied assets; no framework or build
@@ -106,7 +116,7 @@ _No cards yet._
       licenses. Palette sampled from the logo: navy `#0d0f43`, orange `#fd6000`; orange text uses
       `#c24a00` (light) / `#ff8a3d` (dark) so every pair clears WCAG AA (lowest 4.5:1). Space
       Grotesk + Inter from Google Fonts; theme follows the OS with a stored toggle; checked at
-      1280 px and 390 px in both themes with headless Chrome.
+      1280 px and 390 px in both themes with headless Chrome. (commit 22fc5fa)
 
 - [x] 🟪 **API-2** `P2` Return the pictures docling extracts from a document
       `return_pictures` on `POST /v1/documents/convert` keeps the pictures the engine cuts out

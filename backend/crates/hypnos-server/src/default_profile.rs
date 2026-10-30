@@ -49,6 +49,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             // 1. Gemma 4 26B-A4B Q4_0 — Text Generation + Vision
             ModelConfig {
                 id: "gemma4:26b-q4".to_string(),
+                enabled: true,
                 modality: Modality::TextGeneration,
                 additional_modalities: vec![Modality::Vision],
                 engine: EngineKind::GgmlLlama,
@@ -82,6 +83,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             // 2. Gemma 4 E4B Q4_0 — Audio / Speech-to-Text (+ text + vision chat)
             ModelConfig {
                 id: "gemma4:e4b-q4".to_string(),
+                enabled: true,
                 modality: Modality::SpeechToText,
                 additional_modalities: vec![Modality::TextGeneration, Modality::Vision],
                 engine: EngineKind::GgmlLlama,
@@ -116,6 +118,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             // The quantized q8f16/q4 graphs crash the static ORT 1.31 CPU provider at session creation.
             ModelConfig {
                 id: "kokoro-82m-q4".to_string(),
+                enabled: true,
                 modality: Modality::TextToSpeech,
                 additional_modalities: vec![],
                 engine: EngineKind::OnnxRuntime,
@@ -149,6 +152,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             // 4. EmbeddingGemma 2 Q8_0 — Dense Vector Embeddings (768-dim, mean pooling)
             ModelConfig {
                 id: "gemmaembedding2".to_string(),
+                enabled: true,
                 modality: Modality::Embeddings,
                 additional_modalities: vec![],
                 engine: EngineKind::GgmlLlama,
@@ -182,6 +186,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             // 5. MOSS-Image SFT Q4_K — Image Generation (stable-diffusion.cpp)
             ModelConfig {
                 id: "moss-image".to_string(),
+                enabled: true,
                 modality: Modality::ImageGeneration,
                 additional_modalities: vec![],
                 engine: EngineKind::GgmlDiffusion,
@@ -215,6 +220,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             // 6. docling.rs — Document Conversion on the CPU (Tier 1 books host RAM only)
             ModelConfig {
                 id: "docling".to_string(),
+                enabled: true,
                 modality: Modality::DocumentConversion,
                 additional_modalities: vec![],
                 engine: EngineKind::Docling,
@@ -240,6 +246,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             // 7. GLiNER2.5 multilingual — Entity Extraction on the CPU
             ModelConfig {
                 id: "gliner2.5-multi".to_string(),
+                enabled: true,
                 modality: Modality::EntityExtraction,
                 additional_modalities: vec![],
                 engine: EngineKind::Gliner,

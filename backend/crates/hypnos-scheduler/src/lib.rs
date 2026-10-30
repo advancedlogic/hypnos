@@ -169,6 +169,12 @@ impl ModelScheduler {
         let ctx = RequestContext::unbounded();
         for id in self.memory.model_ids() {
             let (cfg, _) = self.memory.get_model_state(&id)?;
+            if !self.memory.is_enabled(&id)? {
+                if cfg.initial_tier != MemoryTier::Tier3NvmeSsd {
+                    info!(model = %cfg.id, initial_tier = ?cfg.initial_tier, "Model is disabled; not pre-staged");
+                }
+                continue;
+            }
             match cfg.initial_tier {
                 MemoryTier::Tier1GpuVram => {
                     info!(model = %cfg.id, "Pre-loading model into Tier 1 GPU VRAM on startup");
@@ -208,6 +214,9 @@ impl ModelScheduler {
             .get(model_id)
             .ok_or_else(|| HypnosError::ModelNotFound(model_id.to_string()))?
             .clone();
+        if !self.memory.is_enabled(model_id)? {
+            return Err(HypnosError::ModelDisabled(model_id.to_string()));
+        }
 
         // Admission control: bounded queue per model.
         let sem = self
@@ -261,6 +270,10 @@ impl ModelScheduler {
         let _guard = self.transition_lock.lock().await;
         if !ctx.should_continue() {
             return Err(HypnosError::Cancelled);
+        }
+        // Re-checked under the lock: a disable that ran while this request waited wins.
+        if !self.memory.is_enabled(model_id)? {
+            return Err(HypnosError::ModelDisabled(model_id.to_string()));
         }
         let switch_start = Instant::now();
 
@@ -504,6 +517,56 @@ impl ModelScheduler {
         (vram, ram)
     }
 
+    /// Whether the model is in service.
+    pub fn is_enabled(&self, model_id: &str) -> Result<bool> {
+        self.memory.is_enabled(model_id)
+    }
+
+    /// Takes a model out of service or puts it back (`POST /v1/models/{id}/disable` / `enable`).
+    /// Disabling evicts it to Tier 3 first and, like a manual tier move, is refused while the
+    /// model is leased. Enabling only flips the switch: the model loads on its next request.
+    /// Returns the model's placement afterwards.
+    pub async fn set_model_enabled(
+        &self,
+        model_id: &str,
+        enabled: bool,
+    ) -> Result<LayerPlacementPlan> {
+        let _guard = self.transition_lock.lock().await;
+        let (_, plan) = self.memory.get_model_state(model_id)?;
+        if enabled {
+            if !self.memory.is_enabled(model_id)? {
+                info!(model = %model_id, "Model enabled");
+            }
+            self.memory.set_enabled(model_id, true)?;
+            return Ok(plan);
+        }
+        let leases = self.memory.active_leases(model_id);
+        if leases > 0 {
+            return Err(HypnosError::Busy {
+                model: model_id.to_string(),
+                in_flight: leases,
+                limit: 0,
+            });
+        }
+        let plan = if plan.primary_tier != MemoryTier::Tier3NvmeSsd || plan.pinned_ram_bytes > 0 {
+            let demoted = self
+                .memory
+                .demote_model_from_vram(model_id, MemoryTier::Tier3NvmeSsd)?;
+            if let Some(backend) = self.backends.get(model_id) {
+                backend.apply_placement(&demoted, None).await?;
+            }
+            self.memory.reconcile_vram();
+            demoted
+        } else {
+            plan
+        };
+        if self.memory.is_enabled(model_id)? {
+            info!(model = %model_id, "Model disabled; evicted to Tier 3");
+        }
+        self.memory.set_enabled(model_id, false)?;
+        Ok(plan)
+    }
+
     /// Manually promotes or demotes a model to a specific tier (`/v1/memory/tier`).
     pub async fn set_model_tier(
         &self,
@@ -511,6 +574,9 @@ impl ModelScheduler {
         target_tier: MemoryTier,
         context_len: Option<u32>,
     ) -> Result<LayerPlacementPlan> {
+        if !self.memory.is_enabled(model_id)? {
+            return Err(HypnosError::ModelDisabled(model_id.to_string()));
+        }
         match target_tier {
             MemoryTier::Tier1GpuVram => {
                 let ctx = RequestContext::unbounded();

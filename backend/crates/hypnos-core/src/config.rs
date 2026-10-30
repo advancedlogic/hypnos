@@ -258,6 +258,12 @@ pub struct ModelConfig {
     /// Retention priority when competing for VRAM
     #[serde(default)]
     pub priority: ModelPriority,
+    /// `false` keeps the block but takes the model out of service: it is not pre-staged at
+    /// startup, left out of `/v1/models`, holds no Tier 1 / Tier 2 memory, and a request for it
+    /// answers 404. Validation tolerates missing weights for a disabled model.
+    /// `POST /v1/models/{id}/enable` and `/disable` change it at runtime (not persisted).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// Execution slots for llama.cpp models: sequences that share one persistent context. Each
     /// slot owns a KV cache of `allocated_context_len` positions, so the KV booking scales with
     /// `slots`. 1 (the default) serialises requests exactly as before while still keeping the
@@ -803,22 +809,37 @@ impl HypnosConfig {
             if let Some(p) = &m.tokenizer_path {
                 required.push(("tokenizer_path", Some(p)));
             }
+            // A disabled model keeps its block without its files having to be there.
             for (label, path) in required {
                 if let Some(p) = path {
                     let full = resolve(p);
                     if !full.is_file() {
-                        r.errors
-                            .push(format!("'{id}': {label} not found: {}", full.display()));
+                        if m.enabled {
+                            r.errors
+                                .push(format!("'{id}': {label} not found: {}", full.display()));
+                        } else {
+                            r.warnings.push(format!(
+                                "'{id}': disabled; {label} not found: {}",
+                                full.display()
+                            ));
+                        }
                     }
                 }
             }
             if let Some(v) = &m.voices_path {
                 let full = resolve(v);
                 if !full.is_dir() {
-                    r.errors.push(format!(
-                        "'{id}': voices_path is not a directory: {}",
-                        full.display()
-                    ));
+                    if m.enabled {
+                        r.errors.push(format!(
+                            "'{id}': voices_path is not a directory: {}",
+                            full.display()
+                        ));
+                    } else {
+                        r.warnings.push(format!(
+                            "'{id}': disabled; voices_path is not a directory: {}",
+                            full.display()
+                        ));
+                    }
                 }
             }
             match m.engine {
@@ -1053,6 +1074,25 @@ num_layers = 4
             .errors
             .iter()
             .any(|e| e.contains("duplicate model id")));
+    }
+
+    #[test]
+    fn disabled_models_tolerate_missing_weights() {
+        let dir = std::env::temp_dir().join(format!("hypnos-cfg-disabled-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let toml = minimal_toml("missing.gguf").replace(
+            "engine = \"ggml_llama\"",
+            "engine = \"ggml_llama\"\nenabled = false",
+        );
+        let cfg = HypnosConfig::from_toml_str(&toml).unwrap();
+        assert!(!cfg.models[0].enabled);
+        let report = cfg.validate(&dir);
+        assert!(report.is_ok(), "{:?}", report.errors);
+        assert!(report.warnings.iter().any(|w| w.contains("disabled")));
+        // The default is enabled, and then the file must exist.
+        let cfg = HypnosConfig::from_toml_str(&minimal_toml("missing.gguf")).unwrap();
+        assert!(cfg.models[0].enabled);
+        assert!(!cfg.validate(&dir).is_ok());
     }
 
     #[test]

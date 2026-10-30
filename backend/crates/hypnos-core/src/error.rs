@@ -5,6 +5,10 @@ pub enum HypnosError {
     #[error("Model not found in registry: '{0}'")]
     ModelNotFound(String),
 
+    /// The model is configured but switched off (`enabled = false`, or `POST /v1/models/{id}/disable`).
+    #[error("Model '{0}' is disabled; enable it with POST /v1/models/{0}/enable or `enabled = true` in its config")]
+    ModelDisabled(String),
+
     #[error("Modality mismatch for model '{model}': expected {expected:?}, got {actual:?}")]
     ModalityMismatch {
         model: String,

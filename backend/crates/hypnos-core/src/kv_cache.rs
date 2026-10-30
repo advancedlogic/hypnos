@@ -222,6 +222,7 @@ mod tests {
     fn sample_gemma4_26b_config() -> ModelConfig {
         ModelConfig {
             id: "gemma4:26b-q4".to_string(),
+            enabled: true,
             modality: Modality::TextGeneration,
             additional_modalities: vec![Modality::Vision],
             engine: EngineKind::GgmlLlama,

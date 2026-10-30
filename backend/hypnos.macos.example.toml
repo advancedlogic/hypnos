@@ -104,6 +104,10 @@ min_gpu_layer_ratio = 1.0               # unified memory: all layers or none
 initial_tier = "tier2_pinned_ram"       # Pre-stage in pinned RAM on boot for fast promotion
 keep_warm_in_ram = true
 priority = "high"
+# enabled = false                       # keep the block but take the model out of service (not
+#                                       # pre-staged, hidden from /v1/models, requests answer 404;
+#                                       # missing weights are tolerated). POST /v1/models/{id}/enable
+#                                       # or /disable flips it at runtime without touching this file.
 
 [models.arch]
 num_layers = 30

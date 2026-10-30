@@ -15,6 +15,9 @@ use tracing::{debug, info, warn};
 /// Live runtime state of a registered model inside the 3-tier memory manager.
 pub struct ManagedModelMemory {
     pub config: ModelConfig,
+    /// Runtime switch, starts as `config.enabled`. A disabled model holds no Tier 1 / Tier 2
+    /// memory and is refused by the scheduler.
+    pub enabled: bool,
     pub placement: LayerPlacementPlan,
     pub host_buffer: MmapWeightBuffer,
     pub last_used: Instant,
@@ -91,6 +94,8 @@ const EVICTION_LOG_LEN: usize = 20;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelTierSnapshot {
     pub id: String,
+    /// `false`: taken out of service (left out of `/v1/models`, requests answer 404).
+    pub enabled: bool,
     pub modality: hypnos_core::config::Modality,
     pub modalities: Vec<hypnos_core::config::Modality>,
     pub engine: hypnos_core::config::EngineKind,
@@ -198,10 +203,12 @@ impl TieredMemoryManager {
                 allocated_context_len: 0,
             };
 
+            let enabled = cfg.enabled;
             models.insert(
                 cfg.id.clone(),
                 ManagedModelMemory {
                     config: cfg,
+                    enabled,
                     placement: initial_placement,
                     host_buffer,
                     last_used: Instant::now(),
@@ -462,6 +469,26 @@ impl TieredMemoryManager {
         ids
     }
 
+    /// Whether the model is in service (`enabled = true` in its config, or enabled at runtime).
+    pub fn is_enabled(&self, model_id: &str) -> Result<bool> {
+        self.models
+            .read()
+            .get(model_id)
+            .map(|m| m.enabled)
+            .ok_or_else(|| HypnosError::ModelNotFound(model_id.to_string()))
+    }
+
+    /// Flips the runtime switch. The scheduler demotes a model before disabling it, so a
+    /// disabled model never holds Tier 1 / Tier 2 bookings.
+    pub fn set_enabled(&self, model_id: &str, enabled: bool) -> Result<()> {
+        let mut guard = self.models.write();
+        let entry = guard
+            .get_mut(model_id)
+            .ok_or_else(|| HypnosError::ModelNotFound(model_id.to_string()))?;
+        entry.enabled = enabled;
+        Ok(())
+    }
+
     /// Commits a new `LayerPlacementPlan` for `model_id`, updating Tier 1 VRAM and Tier 2 Pinned RAM
     /// accounting and pinning/unpinning OS host pages as needed.
     ///
@@ -711,6 +738,7 @@ impl TieredMemoryManager {
             .values()
             .map(|m| ModelTierSnapshot {
                 id: m.config.id.clone(),
+                enabled: m.enabled,
                 modality: m.config.modality,
                 modalities: m.config.all_modalities(),
                 engine: m.config.engine,

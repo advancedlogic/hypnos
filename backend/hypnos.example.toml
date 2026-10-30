@@ -91,6 +91,10 @@ min_gpu_layer_ratio = 0.25
 initial_tier = "tier2_pinned_ram"       # Pre-stage in pinned RAM on boot for fast promotion
 keep_warm_in_ram = true
 priority = "high"
+# enabled = false                       # keep the block but take the model out of service (not
+#                                       # pre-staged, hidden from /v1/models, requests answer 404;
+#                                       # missing weights are tolerated). POST /v1/models/{id}/enable
+#                                       # or /disable flips it at runtime without touching this file.
 # Execution slots sharing one persistent llama.cpp context (KV booking = slots x context). Requests
 # in different slots are decoded together, one llama_batch per step; 1 serves them one at a time.
 # 4 fits a 24 GB GPU next to the weights (about 0.9 GiB of KV per slot at 16k context).

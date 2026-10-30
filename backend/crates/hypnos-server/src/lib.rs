@@ -210,6 +210,8 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
     Router::new()
         // OpenAI Standard Endpoints across all 6 modalities
         .route("/v1/models", get(list_models))
+        .route("/v1/models/:id/enable", post(enable_model))
+        .route("/v1/models/:id/disable", post(disable_model))
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/embeddings", post(embeddings))
         .route("/v1/audio/transcriptions", post(audio_transcriptions))
@@ -360,9 +362,11 @@ async fn metrics_endpoint(State(state): State<AppState>) -> Response {
 async fn list_models(State(state): State<AppState>) -> Json<OpenAiModelList> {
     let snapshot = state.scheduler.status();
     let created = Utc::now().timestamp();
+    // Disabled models keep their config but are out of service: not listed.
     let data = snapshot
         .models
         .into_iter()
+        .filter(|m| m.enabled)
         .map(|m| OpenAiModelInfo {
             id: m.id,
             object: "model".to_string(),
@@ -406,6 +410,37 @@ async fn set_model_tier(
         .await?;
     Ok(Json(json!({
         "model": req.model,
+        "placement": plan,
+    })))
+}
+
+/// `POST /v1/models/{id}/enable`: puts a model back in service (it loads on its next request).
+async fn enable_model(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> std::result::Result<Json<serde_json::Value>, ApiError> {
+    set_model_enabled(&state, &id, true).await
+}
+
+/// `POST /v1/models/{id}/disable`: evicts the model to Tier 3 and takes it out of service
+/// (`/v1/models` hides it, requests answer 404). Refused with 429 while it is leased. The change
+/// is not written back to the config file.
+async fn disable_model(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> std::result::Result<Json<serde_json::Value>, ApiError> {
+    set_model_enabled(&state, &id, false).await
+}
+
+async fn set_model_enabled(
+    state: &AppState,
+    id: &str,
+    enabled: bool,
+) -> std::result::Result<Json<serde_json::Value>, ApiError> {
+    let plan = state.scheduler.set_model_enabled(id, enabled).await?;
+    Ok(Json(json!({
+        "model": id,
+        "enabled": enabled,
         "placement": plan,
     })))
 }
@@ -1270,6 +1305,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, error_type) = match &self.0 {
             HypnosError::ModelNotFound(_) => (StatusCode::NOT_FOUND, "model_not_found"),
+            HypnosError::ModelDisabled(_) => (StatusCode::NOT_FOUND, "model_disabled"),
             HypnosError::NotFound(_) => (StatusCode::NOT_FOUND, "not_found"),
             HypnosError::ModalityMismatch { .. } | HypnosError::InvalidRequest(_) => {
                 (StatusCode::BAD_REQUEST, "invalid_request_error")

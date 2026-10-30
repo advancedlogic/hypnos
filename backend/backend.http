@@ -143,6 +143,14 @@ DELETE {{host}}/v1/documents/doc-REPLACE-ME
 Authorization: Bearer {{apiKey}}
 
 
+### 7c. Take a model out of service / put it back (not persisted to the config)
+POST {{host}}/v1/models/gemma4:e4b-q4/disable
+Authorization: Bearer {{apiKey}}
+
+###
+POST {{host}}/v1/models/gemma4:e4b-q4/enable
+Authorization: Bearer {{apiKey}}
+
 ### 8. Entity Extraction (gliner2.5-multi, Hypnos extension)
 # Zero-shot: any labels. `input` takes one text or a list; threshold defaults to 0.5.
 POST {{host}}/v1/entities
