@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Hypnos with CUDA engines. Build: docker build -t hypnos .   (published as ghcr.io/advancedlogic/hypnos)
 #
-#   docker run --gpus all -p 8888:8888 -v ./models:/opt/hypnos/models ghcr.io/advancedlogic/hypnos
+#   docker run --gpus all -p 9999:9999 -v ./models:/opt/hypnos/models ghcr.io/advancedlogic/hypnos
 #
 # Models are mounted at /opt/hypnos/models (download them with the image's fetch script, see the
 # README). The config is /opt/hypnos/hypnos.toml: mount your own over it, or point HYPNOS_CONFIG
@@ -76,6 +76,6 @@ WORKDIR /opt/hypnos
 # server logs a warning, since anything that can reach the published port can use it.
 RUN sed -i 's/^host = "127.0.0.1"/host = "0.0.0.0"/' hypnos.toml && grep -q '^host = "0.0.0.0"' hypnos.toml
 VOLUME ["/opt/hypnos/models"]
-EXPOSE 8888
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10m CMD curl -fsS http://127.0.0.1:8888/health || exit 1
+EXPOSE 9999
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10m CMD curl -fsS http://127.0.0.1:9999/health || exit 1
 ENTRYPOINT ["/opt/hypnos/hypnos"]

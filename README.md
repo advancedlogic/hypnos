@@ -96,7 +96,7 @@ model downloader included. Unpack one and run everything from that folder:
 
 ```bash
 ./scripts/fetch-models.sh     # the default lineup, ~31 GB into models/ (or one model id)
-./hypnos                      # reads hypnos.toml; API and playground on http://127.0.0.1:8888
+./hypnos                      # reads hypnos.toml; API and playground on http://127.0.0.1:9999
 ./hypnos --port 9000          # or HYPNOS_PORT=9000: overrides server.port without editing the file
 ```
 
@@ -119,10 +119,10 @@ Linux with an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.
 mkdir -p models
 docker run --rm -v ./models:/opt/hypnos/models --entrypoint ./scripts/fetch-models.sh \
   ghcr.io/advancedlogic/hypnos                       # ~31 GB, or append one model id
-docker run --gpus all -p 8888:8888 -v ./models:/opt/hypnos/models ghcr.io/advancedlogic/hypnos
+docker run --gpus all -p 9999:9999 -v ./models:/opt/hypnos/models ghcr.io/advancedlogic/hypnos
 ```
 
-The playground and API are then on http://127.0.0.1:8888. The image's config is the CUDA example
+The playground and API are then on http://127.0.0.1:9999. The image's config is the CUDA example
 (`/opt/hypnos/hypnos.toml`, listening on all interfaces inside the container); mount your own over
 it, or mount one elsewhere and set `-e HYPNOS_CONFIG=/path/in/container.toml`. Set
 `-e HYPNOS_API_KEYS=...` before publishing the port beyond localhost. Build it yourself with
@@ -145,7 +145,7 @@ git clone https://github.com/advancedlogic/hypnos.git && cd hypnos
 ./backend/scripts/vendor.sh            # fetch the pinned engine sources into backend/vendor/
 ./run.sh models                        # the default lineup, ~31 GB into backend/models/
 ./run.sh build                         # backend + playground (Metal is picked automatically on Apple Silicon)
-./run.sh start                         # API on http://localhost:8888, playground on http://localhost:5173
+./run.sh start                         # API on http://localhost:9999, playground on http://localhost:5173
 ```
 
 On Windows use `powershell -ExecutionPolicy Bypass -File backend\scripts\setup-build-env.ps1` and
@@ -159,14 +159,14 @@ size.
 Then send a request with any OpenAI client, or curl:
 
 ```bash
-curl http://localhost:8888/v1/chat/completions \
+curl http://localhost:9999/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "gemma4:e4b-q4", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://localhost:8888/v1", api_key="unused")
+client = OpenAI(base_url="http://localhost:9999/v1", api_key="unused")
 print(client.chat.completions.create(
     model="gemma4:e4b-q4",
     messages=[{"role": "user", "content": "Hello!"}],
@@ -206,7 +206,7 @@ HYPNOS_CONFIG=my.toml ./run.sh start backend     # or: cd backend && ./target/re
 
 On Windows: `set HYPNOS_CONFIG=my.toml` and then `run.bat start backend`.
 
-The port is `server.port` (8888 by default); `hypnos my.toml --port 9000` or `HYPNOS_PORT=9000` override
+The port is `server.port` (9999 by default); `hypnos my.toml --port 9000` or `HYPNOS_PORT=9000` override
 it without editing the file, so one config can serve several instances.
 
 - `use_mmap` (unset = automatic) decides how llama.cpp reads the weights: through pinned staging
@@ -376,7 +376,7 @@ run.bat [build|start|stop|restart|status]      [backend|frontend|all]
 |-----------------------------|---------------------------------------------------------------|
 | `... build`                 | `cargo build --release --bin hypnos` + `npm install` (first run compiles the native engines) |
 | `... build backend`         | compile only the Rust server to `backend/target/release/hypnos[.exe]` |
-| `run.bat` / `./run.sh`      | start backend (port 8888) and frontend (port 5173) from the built artifacts |
+| `run.bat` / `./run.sh`      | start backend (port 9999) and frontend (port 5173) from the built artifacts |
 | `... start backend`         | start only the Rust server binary; fails with a hint if it is not built yet |
 | `... restart frontend`      | stop + start only the Vite dev server                         |
 | `... stop`                  | stop both (kills the whole process tree, frees the ports)     |
@@ -393,7 +393,7 @@ rustc 1.92 or newer).
 
 ### Manual launch
 
-#### 1. Start the Rust Backend (`http://localhost:8888`)
+#### 1. Start the Rust Backend (`http://localhost:9999`)
 ```bash
 cd backend
 cargo test

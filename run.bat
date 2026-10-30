@@ -19,7 +19,7 @@ REM  stale or in-progress cargo build can never masquerade as a running server.
 REM  Set HYPNOS_PROFILE=debug to build/start the dev profile instead of release, and
 REM  HYPNOS_CONFIG=<file> (relative to backend\) to start the backend with your own config.
 REM
-REM  Backend : Rust server on http://localhost:8888  (hypnos.exe, own console window)
+REM  Backend : Rust server on http://localhost:9999  (hypnos.exe, own console window)
 REM  Frontend: Vite dev server on http://localhost:5173 (npm run dev, own console window)
 REM  PIDs are kept in .run\*.pid so stop/restart can kill the whole process tree;
 REM  the listening port is used as a fallback when no PID file exists.
@@ -30,7 +30,7 @@ if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set "RUN_DIR=%ROOT%\.run"
 if not exist "%RUN_DIR%" mkdir "%RUN_DIR%"
 
-set "BACKEND_PORT=8888"
+set "BACKEND_PORT=9999"
 set "FRONTEND_PORT=5173"
 set "BACKEND_CONFIG=hypnos.example.toml"
 if defined HYPNOS_CONFIG set "BACKEND_CONFIG=%HYPNOS_CONFIG%"

@@ -2,7 +2,7 @@
 # Works with the VS Code "REST Client" extension and the JetBrains HTTP Client.
 # Each request is separated by "###"; click "Send Request" above a block to run it.
 
-@host = http://localhost:8888
+@host = http://localhost:9999
 # Only checked when the server has api_keys / HYPNOS_API_KEYS set.
 @apiKey = 
 

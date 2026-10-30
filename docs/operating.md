@@ -128,7 +128,7 @@ their usual exceptions.
 
 - `server.log_format = "json"` (or `HYPNOS_LOG_FORMAT=json`) for log shippers; `pretty` for a
   terminal. Startup prints every config warning and error, the device and the budgets.
-- The port is `server.port` (8888 by default), overridden by `HYPNOS_PORT` and, above that, by
+- The port is `server.port` (9999 by default), overridden by `HYPNOS_PORT` and, above that, by
   `--port N` on the command line, so one config file can serve several instances.
 - `server.request_log_level`: `info` keeps metadata only and is the right level for anything
   exposed beyond a trusted group; `debug` stores prompts and completions; `trace` stores payloads
@@ -161,7 +161,7 @@ quotas per user or organisation, billing, or finer rules put an API gateway in f
 **Docker** (CUDA):
 
 ```bash
-docker run --gpus all -p 8888:8888 -v ./models:/opt/hypnos/models \
+docker run --gpus all -p 9999:9999 -v ./models:/opt/hypnos/models \
   -e HYPNOS_API_KEYS=... --restart unless-stopped ghcr.io/advancedlogic/hypnos:0.1.0
 ```
 
@@ -208,7 +208,7 @@ file, CUDA out of memory) does not: the booking is rolled back and the request a
 ## 9. Before going live
 
 1. `hypnos --check-config` is clean, and the startup log shows the budgets you expect.
-2. `backend/scripts/smoke_test.sh http://host:8888` passes once per modality.
+2. `backend/scripts/smoke_test.sh http://host:9999` passes once per modality.
 3. `backend/scripts/bench.sh` against the box gives the numbers you will compare against later
    (`docs/bench/` holds the reference runs).
 4. Keys set, bound beyond loopback only behind TLS, request log at `info`, redaction on if the

@@ -88,7 +88,7 @@ fi
     echo
     printf '  1. %-36s # ~31 GB into models/, or pass one model id\n' "$FETCH"
     printf '  2. %-36s # reads hypnos.toml\n' "$RUN"
-    echo "  3. open http://127.0.0.1:8888 for the playground; the API is at http://127.0.0.1:8888/v1"
+    echo "  3. open http://127.0.0.1:9999 for the playground; the API is at http://127.0.0.1:9999/v1"
     echo
     echo "hypnos.toml lists the default lineup; remove [[models]] you did not download, or write"
     echo "your own (see the README's \"Bring your own models\"). Startup prints one error per problem."

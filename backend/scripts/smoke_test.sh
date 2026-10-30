@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # End-to-end smoke test for a running Hypnos server: one real request per modality.
 #
-#   ./backend/scripts/smoke_test.sh [http://localhost:8888]
+#   ./backend/scripts/smoke_test.sh [http://localhost:9999]
 #
 # Outputs (audio, images, raw JSON) are written to .run/smoke/ at the repository root.
 set -uo pipefail
 
-HOST="${1:-http://localhost:8888}"
+HOST="${1:-http://localhost:9999}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT="$ROOT_DIR/.run/smoke"
 FIX="$ROOT_DIR/backend/tests/fixtures"

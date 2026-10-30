@@ -71,7 +71,7 @@ async fn run() -> Result<()> {
             continue;
         }
         let value =
-            value.ok_or_else(|| anyhow::anyhow!("--port needs a number, e.g. --port 8888"))?;
+            value.ok_or_else(|| anyhow::anyhow!("--port needs a number, e.g. --port 9999"))?;
         port_arg = Some(
             value
                 .parse::<u16>()
@@ -89,7 +89,7 @@ async fn run() -> Result<()> {
         }
         Some("--help" | "-h") => {
             println!(
-                "usage: hypnos [config.toml] [--port N]   start the server (config: $HYPNOS_CONFIG, then ./hypnos.toml;\n                                         port: --port, then $HYPNOS_PORT, then server.port, default 8888)\n       hypnos --check-config [config.toml]   validate the config and exit (1 on errors)\n       hypnos --version"
+                "usage: hypnos [config.toml] [--port N]   start the server (config: $HYPNOS_CONFIG, then ./hypnos.toml;\n                                         port: --port, then $HYPNOS_PORT, then server.port, default 9999)\n       hypnos --check-config [config.toml]   validate the config and exit (1 on errors)\n       hypnos --version"
             );
             return Ok(());
         }

@@ -22,7 +22,7 @@ pub fn default_six_model_config() -> HypnosConfig {
         unknown_keys: Vec::new(),
         server: ServerConfig {
             host: "127.0.0.1".to_string(),
-            port: 8888,
+            port: 9999,
             kv_idle_timeout_secs: 300,
             request_log_level: "info".to_string(),
             request_log_capacity: 200,

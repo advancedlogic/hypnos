@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Execution-efficiency benchmark for a running Hypnos server (stdlib only).
 
-    python backend/scripts/bench.py [--host http://127.0.0.1:8888] [--out docs/bench/baseline-YYYY-MM-DD.md]
+    python backend/scripts/bench.py [--host http://127.0.0.1:9999] [--out docs/bench/baseline-YYYY-MM-DD.md]
                                     [--scenarios 1,2,3,4,5,6] [--clients 4]
 
 Scenarios (see docs/execution-efficiency-plan.md, work item A):
@@ -797,7 +797,7 @@ def swap(c, rep, args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--host", default="http://127.0.0.1:8888")
+    ap.add_argument("--host", default="http://127.0.0.1:9999")
     ap.add_argument("--out", help="write the Markdown report here (directories are created)")
     ap.add_argument("--scenarios", default="1,2,3,4,5,6")
     ap.add_argument("--clients", type=int, default=4)
