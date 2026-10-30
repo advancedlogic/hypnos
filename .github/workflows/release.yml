@@ -94,9 +94,10 @@ jobs:
         shell: bash
         run: ./backend/scripts/vendor.sh
 
+      # pwsh, not bash: Git Bash puts its own /usr/bin/link.exe ahead of MSVC's on Windows.
       - name: Build
         working-directory: backend
-        shell: bash
+        shell: pwsh
         run: cargo build --release -p hypnos-server ${{ matrix.cargo }}
 
       - uses: actions/download-artifact@v4

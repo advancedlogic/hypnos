@@ -132,7 +132,20 @@ pub struct TieredMemoryManager {
 
 impl TieredMemoryManager {
     pub fn new(hw_config: &HardwareConfig, model_configs: Vec<ModelConfig>) -> Result<Self> {
-        let capabilities = DeviceMemoryCapabilities::detect(hw_config);
+        Self::with_capabilities(
+            hw_config,
+            DeviceMemoryCapabilities::detect(hw_config),
+            model_configs,
+        )
+    }
+
+    /// Like `new`, with the hardware given instead of probed (tests that must not depend on the
+    /// RAM of the machine they run on).
+    pub fn with_capabilities(
+        hw_config: &HardwareConfig,
+        capabilities: DeviceMemoryCapabilities,
+        model_configs: Vec<ModelConfig>,
+    ) -> Result<Self> {
         let is_uma = capabilities.topology == MemoryTopology::UnifiedMemory;
         let lock_host_memory = hw_config.lock_host_memory_for(capabilities.topology);
         if is_uma {

@@ -11,7 +11,7 @@ use hypnos_core::error::{HypnosError, Result};
 use hypnos_core::kv_cache::LayerPlacementPlan;
 use hypnos_core::request::RequestContext;
 use hypnos_core::ModelBackend;
-use hypnos_memory::{EvictionReason, TieredMemoryManager};
+use hypnos_memory::{DeviceMemoryCapabilities, EvictionReason, TieredMemoryManager};
 use hypnos_scheduler::ModelScheduler;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -129,7 +129,14 @@ fn build(
         .iter()
         .map(|m| m.clone() as Arc<dyn ModelBackend>)
         .collect();
-    let memory = Arc::new(TieredMemoryManager::new(&hardware(vram_gb), models).unwrap());
+    // Physical RAM "unknown": Tier 2 keeps its configured budget instead of being capped by the
+    // RAM of this machine (a 7 GB CI runner leaves too little for the evictions tested here).
+    let hw = hardware(vram_gb);
+    let mut caps = DeviceMemoryCapabilities::detect(&hw);
+    caps.physical_memory_bytes = 0;
+    caps.installed_memory_bytes = 0;
+    caps.pinned_ram_budget_bytes = hw.pinned_ram_budget_bytes;
+    let memory = Arc::new(TieredMemoryManager::with_capabilities(&hw, caps, models).unwrap());
     let limits = LimitsConfig {
         max_queue_per_model: queue,
         ..LimitsConfig::default()

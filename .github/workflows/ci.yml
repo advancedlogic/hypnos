@@ -70,13 +70,14 @@ jobs:
           workspaces: backend -> target
           key: ${{ matrix.name }}
           cache-on-failure: true
+      # pwsh, not bash: Git Bash puts its own /usr/bin/link.exe ahead of MSVC's on Windows.
       - name: Build
         working-directory: backend
-        shell: bash
+        shell: pwsh
         run: cargo build --workspace --all-targets --no-default-features ${{ matrix.features }}
       - name: Test
         working-directory: backend
-        shell: bash
+        shell: pwsh
         run: cargo test --workspace --no-default-features ${{ matrix.features }}
 
   frontend:
