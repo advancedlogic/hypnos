@@ -164,7 +164,7 @@ quotas per user or organisation, billing, or finer rules put an API gateway in f
 
 ```bash
 docker run --gpus all -p 9999:9999 -v ./models:/opt/hypnos/models \
-  -e HYPNOS_API_KEYS=... --restart unless-stopped ghcr.io/advancedlogic/hypnos:0.1.0
+  -e HYPNOS_API_KEYS=... --restart unless-stopped ghcr.io/advancedlogic/hypnos:0.2.0
 ```
 
 Mount your own `hypnos.toml` over `/opt/hypnos/hypnos.toml` or point `HYPNOS_CONFIG` at a
