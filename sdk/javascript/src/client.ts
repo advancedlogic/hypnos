@@ -237,7 +237,7 @@ class Semaphore {
 async function toBlob(file: FileInput, filename?: string): Promise<{ blob: Blob; name: string }> {
   if (typeof file === "string") {
     // A path: Node only. The module name is built at run time so bundlers leave it alone.
-    const fs = (await import(["node", "fs/promises"].join(":"))) as {
+    const fs = (await import(/* @vite-ignore */ ["node", "fs/promises"].join(":"))) as {
       readFile(path: string): Promise<Uint8Array>;
     };
     const bytes = await fs.readFile(file);

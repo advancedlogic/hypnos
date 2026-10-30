@@ -1,0 +1,22 @@
+[package]
+name = "hypnos-desktop"
+version = "0.2.0"
+description = "Hypnos desktop client"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+# Not part of the backend workspace.
+[workspace]
+
+[lib]
+name = "hypnos_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-http = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

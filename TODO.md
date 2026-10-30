@@ -18,6 +18,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 | `BUILD-n`| ⬛ Black  | `⬛`  | Build system, vendor patches, CMake, CI, run scripts      |
 | `DOC-n` | ⬜ White   | `⬜`  | Documentation, README, guides                             |
 | `TEST-n`| 🟨 Yellow  | `🟨`  | Tests, fixtures, test infrastructure                      |
+| `DESK-n`| 🟦 Cyan    | `🩵`  | Tauri desktop app (`desktop/`)                            |
 
 ### Priority
 
@@ -48,9 +49,9 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ### Next IDs
 
-| UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
-|----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 9   | 5   | 4   | 8    | 5   | 8     | 6   | 3    |
+| UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
+|----|-----|-----|-----|------|-----|-------|-----|------|------|
+| 2  | 9   | 5   | 4   | 8    | 5   | 9     | 7   | 3    | 6    |
 
 ---
 
@@ -77,11 +78,65 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
 
+- [ ] 🩵 **DESK-2** `P1` Chat view in the style of Ollama
+      Model picker from `GET /v1/models` (chat-capable, enabled models only); streaming
+      `POST /v1/chat/completions` over SSE with markdown and code-block rendering; Stop
+      (aborts the request, which cancels server-side on disconnect), regenerate, new chat.
+      Conversation list in a left sidebar, persisted locally (Tauri store plugin or SQLite);
+      per-chat model and system prompt. Handle 429 `Busy` and 503 warm-up with a clear
+      message instead of a raw error. After DESK-1.
+
+- [ ] 🩵 **DESK-3** `P1` Collapsible right panel with live Hypnos stats
+      Polls `GET /v1/memory/status` (1-2 s, paused while collapsed or the window is hidden):
+      Tier 1 / Tier 2 / Tier 3 usage bars and budgets, which models sit in which tier, leases,
+      recent evictions with their reason; `/health` and `/ready`. Below it, the last chat
+      response's `hypnos_telemetry`: TTFT, prefill/decode tokens/s, cached tokens, previous
+      tier, tier-switch latency and phases, evicted models. Toggle button + shortcut
+      (Cmd/Ctrl+.), collapsed state remembered. Reuse the visual language of the frontend's
+      tier visualizer. After DESK-1.
+
+- [ ] 🩵 **DESK-4** `P2` Connection settings and server states
+      Settings screen: server URL (default `http://localhost:9999`), API key kept in the OS
+      keychain (not plain storage), "test connection". The UI shows distinct states for
+      unreachable, warming up (503 `model_not_available` until ready), unauthorized (401) and
+      ready, and recovers by itself when the server comes back. The `http:default` scope in
+      `src-tauri/capabilities/default.json` allows loopback only (DESK-1): a remote server
+      needs a wider scope (or a runtime one) limited to the configured origin.
+
+- [ ] 🩵 **DESK-5** `P3` Start and stop a local Hypnos server from the app
+      Optional: bundle or locate the `hypnos` binary and run it as a Tauri sidecar with a
+      chosen config, show its log (`/v1/logs`), stop it on quit. Decide first whether the
+      desktop app stays a pure client or ships the server (archive size, GPU builds per
+      platform). After DESK-4.
+
+- [ ] ⬛ **BUILD-8** `P2` Build the desktop app from the run scripts and CI
+      `./run.sh build desktop` / `run.bat build desktop` (npm install + `tauri build`) and
+      `start desktop` for `tauri dev`; a desktop build job in ci.yml (macOS, Windows, Linux)
+      and, later, signed bundles (.dmg, .msi, .AppImage) in release.yml. After DESK-1.
+
+- [ ] ⬜ **DOC-6** `P2` Document the desktop app
+      `desktop/README.md` (prerequisites per OS, dev and build commands, connecting to a
+      server), a section in the root README, and the new directory in CLAUDE.md. After DESK-3.
+
 ## In Progress
 
 _No cards yet._
 
 ## Done
+
+- [x] 🩵 **DESK-1** `P1` Scaffold the Tauri 2 desktop app in `desktop/`
+      Tauri 2 + Vite + Svelte 5 (runes) + Tailwind, the same stack and versions as `frontend/`
+      (`svelte` ^5, `tailwindcss` ^3, `@sveltejs/vite-plugin-svelte`), no other UI framework, with its own
+      `package.json` and `src-tauri/` (not part of the backend workspace). Talk to Hypnos through
+      `@hypnos/client` from `sdk/javascript` (Vite alias to its sources) so retries, error classes
+      and streaming match docs/api.md. App shell: header with server status dot, main area,
+      right panel slot (DESK-3). `npm run tauri dev` opens a window on macOS, Windows and Linux.
+      Done: `desktop/` with header (server status dot: connecting / unreachable / warming up /
+      ready, polled every 3 s), placeholder chat area, right panel toggled by button or
+      Cmd/Ctrl+. (state kept in localStorage). Vite aliases `@hypnos/client` to the SDK's
+      TypeScript sources, so no SDK build step. Requests go through `tauri-plugin-http`
+      (the `tauri://localhost` origin fails the server's loopback-only CORS default); its
+      scope allows loopback only for now. Dev port 1420.
 
 - [x] 🟥 **BUG-4** `P1` A second server on the same machine deletes the first one's pictures
       Every instance without `server.document_pictures_dir` stores pictures under

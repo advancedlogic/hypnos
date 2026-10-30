@@ -16,6 +16,10 @@ backend/vendor/*
 frontend/node_modules/
 frontend/dist/
 
+# Desktop app
+desktop/node_modules/
+desktop/dist/
+
 # Local config overrides
 backend/hypnos.toml
 
