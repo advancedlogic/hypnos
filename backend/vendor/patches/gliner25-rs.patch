@@ -1,6 +1,6 @@
 diff --color -ruN a/Cargo.toml b/Cargo.toml
 --- a/Cargo.toml	2026-10-30 07:37:14
-+++ b/Cargo.toml	2026-10-30 07:37:15
++++ b/Cargo.toml	2026-10-30 08:26:14
 @@ -99,15 +99,6 @@
  features = [
      "std",
@@ -17,9 +17,15 @@ diff --color -ruN a/Cargo.toml b/Cargo.toml
      "half",
  ]
  default-features = false
+@@ -124,3 +115,5 @@
+ 
+ [dependencies.tokenizers]
+ version = "0.23"
++default-features = false
++features = ["onig"]
 diff --color -ruN a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs	2026-10-30 07:37:14
-+++ b/src/lib.rs	2026-10-30 07:37:15
++++ b/src/lib.rs	2026-10-30 07:42:01
 @@ -64,13 +64,11 @@
  pub use processor::{ProcessedRecord, SchemaTask, SchemaTransformer, TaskMapping, TaskType};
  pub use runtime::Precision;
@@ -41,7 +47,7 @@ diff --color -ruN a/src/lib.rs b/src/lib.rs
  #[cfg(feature = "test-support")]
 diff --color -ruN a/src/runtime.rs b/src/runtime.rs
 --- a/src/runtime.rs	2026-10-30 07:37:14
-+++ b/src/runtime.rs	2026-10-30 07:41:40
++++ b/src/runtime.rs	2026-10-30 07:42:01
 @@ -20,7 +20,8 @@
  
  use anyhow::{Context, Result, anyhow};
