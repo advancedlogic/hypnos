@@ -50,7 +50,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 8   | 5   | 4   | 8    | 3   | 8     | 6   | 3    |
+| 2  | 8   | 5   | 4   | 8    | 4   | 8     | 6   | 3    |
 
 ---
 
@@ -88,6 +88,19 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🟥 **BUG-3** `P1` An engine that runs out of device memory mid-request answers 500
+      Seen in the TEST-1 confirmation soak (PERF-7): sd.cpp found 0 MB free for a 518 MB
+      workspace and the client got a generic 500. Engines (hypnos-backends) now report
+      `HypnosError::DeviceOutOfMemory`: sd.cpp through the out-of-memory lines its log callback
+      sees during the job (model manager, ggml allocators, cudaMalloc, Metal), llama.cpp through
+      `llama_decode` -2 (batch and embedding decodes). The server answers it with 507
+      `device_out_of_memory`; for chat without `stream`, embeddings and images it first calls
+      `ModelScheduler::reclaim_vram_for`, which evicts every idle model holding VRAM (reason
+      `device_out_of_memory` in `recent_evictions`), and retries once when something was freed.
+      Streams are not replayed. Test: `faults.rs`
+      `a_device_out_of_memory_evicts_idle_models_and_retries_once_then_answers_507`. Also fixed
+      the two lints a newer clippy rejects on main (unused `mut` in `migrate`, a `usize` cast).
 
 - [x] ⬛ **BUILD-7** `P1` `run.sh` reports a backend that dies on start as running
       `wait_up` counted a live pid as up, so a backend killed half a second after the spawn

@@ -51,6 +51,7 @@ booking; `/v1/memory/status` right after `/ready` shows the pre-staged models in
 | First token slow after idle | `hypnos_telemetry.tier_switch_latency_ms` and `tier_switch_phases` | The model was evicted: `priority = "realtime_pinned"` keeps it in VRAM, `keep_warm_in_ram = true` + Tier 2 budget makes the return 4 s instead of a disk read; check `use_mmap` is unset on CUDA |
 | 507 `insufficient_vram_or_ram` | the log line names required and available bytes | The booking cannot fit even after evicting idle models: smaller context, fewer slots, lower `vram_safety_margin_bytes` if it is large, or a smaller quantisation |
 | 507 `process_memory_cap` | `process_footprint_bytes`, `process_memory_cap_bytes` | Raise `hardware.max_process_memory_bytes`, or accept it as the guard it is |
+| 507 `device_out_of_memory` | log line "Retrying after the engine ran out of device memory" or "no idle model holds VRAM"; `recent_evictions` with reason `device_out_of_memory`; `tier1_vram_unaccounted_bytes` | A placed model's engine found the device full mid-request (runtime buffers beyond the booking). Idle models were evicted and the request retried once; a 507 means nothing was left to evict. Raise that model's `activation_workspace_bytes` so the booking covers its real peak, or `vram_safety_margin_bytes` |
 | Machine paging, everything slow | `free RAM` on the host; `tier2_pinned_ram_used_bytes` close to the budget | Lower `pinned_ram_budget_bytes`, `keep_warm_in_ram = false` on models that reload fast (the image model), fewer pre-staged models |
 | 503 `model_not_available` right after start | `/ready` says 503 | Startup pre-staging is running (minutes with a large model); wait for `/ready` |
 | GPU hot or throttling | `gpu.throttled`, `hypnos_gpu_temperature_celsius`, `hypnos_gpu_throttled` | Cooling, power limits; Hypnos only reports it |
@@ -122,6 +123,7 @@ their usual exceptions.
 | 504 | `timeout` | `limits.request_timeout_secs` passed | Longer timeout, smaller request |
 | 507 | `insufficient_vram_or_ram` | The booking does not fit even after evicting idle models | See sizing |
 | 507 | `process_memory_cap` | Loading would cross `hardware.max_process_memory_bytes` | Raise the cap or free RAM |
+| 507 | `device_out_of_memory` | The engine ran out of device memory while running, and evicting idle models freed nothing (or the retry failed too) | Retry later; see the symptom table |
 | 500 | `server_error` | An engine failed (the log line has the engine's message) | Check the log; a load failure rolls the booking back |
 
 ## 5. Logs, levels and redaction

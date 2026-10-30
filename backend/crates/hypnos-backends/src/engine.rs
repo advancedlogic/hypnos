@@ -37,6 +37,7 @@ use llama_cpp_2::mtmd::{
 };
 use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::token::LlamaToken;
+use llama_cpp_2::DecodeError;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
@@ -502,7 +503,11 @@ fn run_worker(
             engine.step(mtmd);
         }
     }
-    engine.abort_all("model was released from VRAM while the request was running");
+    engine.abort_all(|| {
+        HypnosError::BackendError(
+            "model was released from VRAM while the request was running".into(),
+        )
+    });
     inbox.drain_pending("model was released from VRAM while the request was queued");
     // `engine` (the context) drops before `loaded` (projector, then weights).
 }
@@ -585,6 +590,19 @@ fn kv_types(dtype: KvDataType) -> (KvCacheType, KvCacheType) {
 
 fn backend_err<E: std::fmt::Debug>(what: &str) -> impl FnOnce(E) -> HypnosError + '_ {
     move |e| HypnosError::BackendError(format!("{what}: {e:?}"))
+}
+
+/// `llama_decode` returns -2 when ggml could not allocate the compute graph or the batch's
+/// outputs: the device is full, which the server answers with 507 and a retry after evicting idle
+/// models rather than a generic 500.
+fn decode_err(model: &str, what: &str, e: &DecodeError) -> HypnosError {
+    match e {
+        DecodeError::Unknown(-2) => HypnosError::DeviceOutOfMemory {
+            model: model.to_string(),
+            detail: format!("{what}: could not allocate compute buffers ({e})"),
+        },
+        e => HypnosError::BackendError(format!("{what}: {e:?}")),
+    }
 }
 
 fn ms_since(t: Instant) -> f64 {
@@ -828,20 +846,20 @@ impl<'m> Engine<'m> {
         }
     }
 
-    /// Fails everything in flight or queued (shutdown).
-    fn abort_all(&mut self, why: &str) {
+    /// Fails everything in flight or queued (shutdown, a failed batch decode) with `err()`.
+    fn abort_all(&mut self, err: impl Fn() -> HypnosError) {
         for mut a in std::mem::take(&mut self.active) {
             if let Some(reply) = a.reply.take() {
-                let _ = reply.send(Err(HypnosError::BackendError(why.to_string())));
+                let _ = reply.send(Err(err()));
             }
             self.slots.slots[a.slot].in_use = false;
             self.clear_slot(a.slot);
         }
         for job in self.waiting.drain(..) {
-            LlamaJob::Chat(job).fail(HypnosError::BackendError(why.to_string()));
+            LlamaJob::Chat(job).fail(err());
         }
         for job in self.deferred.drain(..) {
-            job.fail(HypnosError::BackendError(why.to_string()));
+            job.fail(err());
         }
     }
 
@@ -1214,9 +1232,9 @@ impl<'m> Engine<'m> {
         // 3. One decode for everyone.
         if self.batch.n_tokens() > 0 {
             if let Err(e) = self.ctx.decode(&mut self.batch) {
-                let err = format!("llama.cpp decode failed: {e:?}");
-                warn!(model = %self.cfg.id, error = %err, "batch decode failed; failing every active request");
-                self.abort_all(&err);
+                let model = self.cfg.id.clone();
+                warn!(model = %model, error = ?e, "batch decode failed; failing every active request");
+                self.abort_all(|| decode_err(&model, "llama.cpp decode failed", &e));
                 return;
             }
         }
@@ -1445,7 +1463,7 @@ impl<'m> Engine<'m> {
             self.ctx.clear_kv_cache();
             self.ctx
                 .decode(&mut self.batch)
-                .map_err(backend_err("llama.cpp embedding decode failed"))?;
+                .map_err(|e| decode_err(&self.cfg.id, "llama.cpp embedding decode failed", &e))?;
             let emb: Vec<f32> = match self.ctx.embeddings_seq_ith(0) {
                 Ok(e) => e.to_vec(),
                 Err(_) => self

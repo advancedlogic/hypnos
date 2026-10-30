@@ -1,7 +1,8 @@
 //! Engine failure paths through the real router, with a mock engine instead of llama.cpp
 //! (TEST-2): a load the engine refuses answers 500 and is counted per model, a failure in the
 //! middle of a generation releases the lease and ends the stream with an error event, and the
-//! model keeps serving afterwards.
+//! model keeps serving afterwards, and an engine that runs out of device memory is retried once
+//! after idle models are evicted, or answered with 507.
 
 use async_trait::async_trait;
 use axum::body::Body;
@@ -36,6 +37,8 @@ struct MockEngine {
     fail_loads: AtomicBool,
     /// Fail the next generations with a mid-stream error.
     fail_generation: AtomicBool,
+    /// Fail this many upcoming generations with `DeviceOutOfMemory`.
+    device_oom: AtomicUsize,
     generations: AtomicUsize,
     placements: Mutex<Vec<MemoryTier>>,
 }
@@ -72,6 +75,16 @@ impl ModelBackend for MockEngine {
             return Err(HypnosError::BackendError(
                 "simulated CUDA out of memory during decode".into(),
             ));
+        }
+        if self
+            .device_oom
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .is_ok()
+        {
+            return Err(HypnosError::DeviceOutOfMemory {
+                model: req.model.clone(),
+                detail: "simulated: compute buffer allocation failed".into(),
+            });
         }
         Ok(ChatCompletionResponse {
             id: "chatcmpl-mock".into(),
@@ -173,6 +186,10 @@ fn model(id: &str) -> ModelConfig {
 
 /// The real server state with one mock engine behind the real scheduler and memory manager.
 fn state(engine: Arc<MockEngine>) -> AppState {
+    state_with(vec![engine])
+}
+
+fn state_with(engines: Vec<Arc<MockEngine>>) -> AppState {
     let hw = HardwareConfig {
         accelerator: AcceleratorKind::Vulkan, // no probing of this machine's GPU
         device_id: 0,
@@ -188,12 +205,20 @@ fn state(engine: Arc<MockEngine>) -> AppState {
     caps.installed_memory_bytes = 0;
     caps.pinned_ram_budget_bytes = hw.pinned_ram_budget_bytes;
     let memory = Arc::new(
-        TieredMemoryManager::with_capabilities(&hw, caps, vec![engine.config.clone()]).unwrap(),
+        TieredMemoryManager::with_capabilities(
+            &hw,
+            caps,
+            engines.iter().map(|e| e.config.clone()).collect(),
+        )
+        .unwrap(),
     );
     let limits = LimitsConfig::default();
     let scheduler = Arc::new(ModelScheduler::new(
         memory,
-        vec![engine as Arc<dyn ModelBackend>],
+        engines
+            .into_iter()
+            .map(|e| e as Arc<dyn ModelBackend>)
+            .collect(),
         &limits,
     ));
     let pictures = pictures::PictureStore::open(
@@ -271,6 +296,7 @@ async fn a_refused_load_answers_500_and_is_counted_per_model() {
         resident: AtomicBool::new(false),
         fail_loads: AtomicBool::new(true),
         fail_generation: AtomicBool::new(false),
+        device_oom: AtomicUsize::new(0),
         generations: AtomicUsize::new(0),
         placements: Mutex::new(Vec::new()),
     });
@@ -311,6 +337,7 @@ async fn a_failure_mid_generation_releases_the_lease_and_keeps_the_model() {
         resident: AtomicBool::new(false),
         fail_loads: AtomicBool::new(false),
         fail_generation: AtomicBool::new(true),
+        device_oom: AtomicUsize::new(0),
         generations: AtomicUsize::new(0),
         placements: Mutex::new(Vec::new()),
     });
@@ -349,4 +376,66 @@ async fn a_failure_mid_generation_releases_the_lease_and_keeps_the_model() {
         "no reload"
     );
     assert_eq!(leases(&app, "m").await, (0, "tier1_gpu_vram".to_string()));
+}
+
+fn engine(id: &str) -> Arc<MockEngine> {
+    Arc::new(MockEngine {
+        config: model(id),
+        resident: AtomicBool::new(false),
+        fail_loads: AtomicBool::new(false),
+        fail_generation: AtomicBool::new(false),
+        device_oom: AtomicUsize::new(0),
+        generations: AtomicUsize::new(0),
+        placements: Mutex::new(Vec::new()),
+    })
+}
+
+#[tokio::test]
+async fn a_device_out_of_memory_evicts_idle_models_and_retries_once_then_answers_507() {
+    let m = engine("m");
+    let idle = engine("idle");
+    let app = build_router(state_with(vec![m.clone(), idle.clone()]), &[]);
+    let resp = post(
+        &app,
+        "/v1/chat/completions",
+        &CHAT.replace(r#""model":"m""#, r#""model":"idle""#),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        leases(&app, "idle").await,
+        (0, "tier1_gpu_vram".to_string())
+    );
+
+    // The bookings fit but the engine finds the device full: the idle model goes, the retry serves.
+    m.device_oom.store(1, Ordering::SeqCst);
+    let resp = post(&app, "/v1/chat/completions", CHAT).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(m.generations.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        leases(&app, "idle").await,
+        (0, "tier2_pinned_ram".to_string())
+    );
+    assert_eq!(leases(&app, "m").await, (0, "tier1_gpu_vram".to_string()));
+    let status: serde_json::Value =
+        serde_json::from_str(&text(get(&app, "/v1/memory/status").await).await).unwrap();
+    let eviction = status["recent_evictions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["model"] == "idle")
+        .expect("eviction recorded");
+    assert_eq!(eviction["reason"], "device_out_of_memory");
+    assert_eq!(eviction["for_model"], "m");
+
+    // Nothing left to evict: no second attempt, 507 in the OpenAI shape, the model keeps serving.
+    m.device_oom.store(1, Ordering::SeqCst);
+    let resp = post(&app, "/v1/chat/completions", CHAT).await;
+    assert_eq!(resp.status(), StatusCode::INSUFFICIENT_STORAGE);
+    let body: serde_json::Value = serde_json::from_str(&text(resp).await).unwrap();
+    assert_eq!(body["error"]["type"], "device_out_of_memory");
+    assert_eq!(m.generations.load(Ordering::SeqCst), 3);
+    assert_eq!(leases(&app, "m").await, (0, "tier1_gpu_vram".to_string()));
+    let resp = post(&app, "/v1/chat/completions", CHAT).await;
+    assert_eq!(resp.status(), StatusCode::OK);
 }

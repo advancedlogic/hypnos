@@ -514,6 +514,30 @@ fn finish_telemetry(
     lease.build_telemetry(infer_ms).with_engine(engine)
 }
 
+/// Runs an engine call, and once more when the engine ran out of device memory and evicting idle
+/// models freed some VRAM. Without anything to evict, or on a second failure, the 507 goes to the
+/// client. Only for calls that have sent nothing yet: a stream is not replayed.
+async fn retry_on_device_oom<T, F, Fut>(
+    state: &AppState,
+    model: &str,
+    mut run: F,
+) -> hypnos_core::error::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = hypnos_core::error::Result<T>>,
+{
+    let err = match run().await {
+        Err(e @ HypnosError::DeviceOutOfMemory { .. }) => e,
+        other => return other,
+    };
+    let evicted = state.scheduler.reclaim_vram_for(model).await?;
+    if evicted.is_empty() {
+        return Err(err);
+    }
+    warn!(model = %model, evicted = ?evicted, error = %err, "Retrying after the engine ran out of device memory");
+    run().await
+}
+
 /// Attaches the handler's view of the call to the response for the request log.
 fn with_log(mut resp: Response, details: LogDetails) -> Response {
     resp.extensions_mut().insert(details);
@@ -777,7 +801,10 @@ async fn chat_completions_inner(
             .into_response());
     }
 
-    let mut resp = lease.backend.chat_completion(req, &ctx).await?;
+    let mut resp = retry_on_device_oom(state, &req.model, || {
+        lease.backend.chat_completion(req, &ctx)
+    })
+    .await?;
     let telemetry = finish_telemetry(&lease, infer_start, resp.hypnos_telemetry.take());
     state.metrics.record_chat(&req.model, &telemetry.engine);
     resp.hypnos_telemetry = Some(telemetry);
@@ -831,7 +858,8 @@ async fn embeddings_inner(
         .await?;
 
     let infer_start = Instant::now();
-    let mut resp = lease.backend.embeddings(req, &ctx).await?;
+    let mut resp =
+        retry_on_device_oom(state, &req.model, || lease.backend.embeddings(req, &ctx)).await?;
     resp.hypnos_telemetry = Some(finish_telemetry(
         &lease,
         infer_start,
@@ -1272,7 +1300,10 @@ async fn image_generations_inner(
         .await?;
 
     let infer_start = Instant::now();
-    let mut resp = lease.backend.generate_image(req, &ctx).await?;
+    let mut resp = retry_on_device_oom(state, &req.model, || {
+        lease.backend.generate_image(req, &ctx)
+    })
+    .await?;
     state
         .metrics
         .record_image(&req.model, infer_start.elapsed());
@@ -1384,6 +1415,9 @@ impl IntoResponse for ApiError {
             }
             HypnosError::ProcessMemoryCap { .. } => {
                 (StatusCode::INSUFFICIENT_STORAGE, "process_memory_cap")
+            }
+            HypnosError::DeviceOutOfMemory { .. } => {
+                (StatusCode::INSUFFICIENT_STORAGE, "device_out_of_memory")
             }
             HypnosError::Busy { .. } => (StatusCode::TOO_MANY_REQUESTS, "model_busy"),
             HypnosError::Timeout(_) => (StatusCode::GATEWAY_TIMEOUT, "timeout"),

@@ -357,36 +357,12 @@ impl ModelScheduler {
                 Some(plan) if over_process_cap(plan).is_some() => EvictionReason::ProcessMemoryCap,
                 Some(_) => break,
             };
-
-            let (cand_cfg, _) = self.memory.get_model_state(&candidate_id)?;
-            let target_demote_tier = if cand_cfg.keep_warm_in_ram {
-                MemoryTier::Tier2PinnedRam
-            } else {
-                MemoryTier::Tier3NvmeSsd
-            };
-
-            info!(
-                evicting = %candidate_id,
-                for_model = %model_id,
-                to_tier = ?target_demote_tier,
-                reason = ?reason,
-                "Evicting idle model from Tier 1 VRAM to free space"
-            );
-
-            let Some(demoted_plan) = self
-                .memory
-                .demote_if_idle(&candidate_id, target_demote_tier)?
-            else {
-                // A request took a lease on it since the candidates were listed.
+            if !self
+                .evict_idle_from_vram(&candidate_id, model_id, reason)
+                .await?
+            {
                 continue;
-            };
-            if let Some(cand_backend) = self.backends.get(&candidate_id) {
-                cand_backend.apply_placement(&demoted_plan, None).await?;
             }
-            self.stats.evictions.fetch_add(1, Ordering::Relaxed);
-            // The demotion falls back to Tier 3 when Tier 2 has no room: record where it landed.
-            self.memory
-                .record_eviction(&candidate_id, model_id, reason, demoted_plan.primary_tier);
             evicted_models.push(candidate_id);
 
             self.memory.reconcile_vram();
@@ -530,6 +506,69 @@ impl ModelScheduler {
             load_phases,
             _admission: admission,
         })
+    }
+
+    /// Demotes an idle model out of Tier 1 for `for_model` (to Tier 2 when it is kept warm, else
+    /// Tier 3) and records the eviction. Returns false when a request took a lease on it since the
+    /// candidates were listed. Called with `transition_lock` held.
+    async fn evict_idle_from_vram(
+        &self,
+        candidate_id: &str,
+        for_model: &str,
+        reason: EvictionReason,
+    ) -> Result<bool> {
+        let (cand_cfg, _) = self.memory.get_model_state(candidate_id)?;
+        let target_demote_tier = if cand_cfg.keep_warm_in_ram {
+            MemoryTier::Tier2PinnedRam
+        } else {
+            MemoryTier::Tier3NvmeSsd
+        };
+
+        info!(
+            evicting = %candidate_id,
+            for_model = %for_model,
+            to_tier = ?target_demote_tier,
+            reason = ?reason,
+            "Evicting idle model from Tier 1 VRAM to free space"
+        );
+
+        let Some(demoted_plan) = self
+            .memory
+            .demote_if_idle(candidate_id, target_demote_tier)?
+        else {
+            return Ok(false);
+        };
+        if let Some(cand_backend) = self.backends.get(candidate_id) {
+            cand_backend.apply_placement(&demoted_plan, None).await?;
+        }
+        self.stats.evictions.fetch_add(1, Ordering::Relaxed);
+        // The demotion falls back to Tier 3 when Tier 2 has no room: record where it landed.
+        self.memory
+            .record_eviction(candidate_id, for_model, reason, demoted_plan.primary_tier);
+        Ok(true)
+    }
+
+    /// Frees device memory after `model_id`'s engine ran out of it mid-request
+    /// ([`HypnosError::DeviceOutOfMemory`]): evicts every idle model that holds VRAM, lowest
+    /// priority first, and returns their ids. The bookings said the request fits, so the planner
+    /// cannot tell how much is missing; an empty list means nothing could be freed and a retry
+    /// would fail the same way.
+    pub async fn reclaim_vram_for(&self, model_id: &str) -> Result<Vec<String>> {
+        let _guard = self.transition_lock.lock().await;
+        let mut evicted = Vec::new();
+        for candidate_id in self.memory.idle_vram_eviction_candidates(model_id) {
+            if self
+                .evict_idle_from_vram(&candidate_id, model_id, EvictionReason::DeviceOutOfMemory)
+                .await?
+            {
+                evicted.push(candidate_id);
+            }
+        }
+        self.memory.reconcile_vram();
+        if evicted.is_empty() {
+            warn!(model = %model_id, "Engine ran out of device memory and no idle model holds VRAM");
+        }
+        Ok(evicted)
     }
 
     /// `(vram, pinned_ram)` a new placement for a model currently at `current` may use, counting what

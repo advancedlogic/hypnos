@@ -167,6 +167,7 @@ Authentication and quota errors add `"param": null` and `"code"` (section 2).
 | 504 | `timeout` | an engine-side timeout | retry |
 | 507 | `insufficient_vram_or_ram` | the model does not fit next to the models currently leased | retry later; the operator can lower `min_gpu_layer_ratio` or priorities |
 | 507 | `process_memory_cap` | loading would exceed `hardware.max_process_memory_bytes` | retry later |
+| 507 | `device_out_of_memory` | the engine ran out of device memory mid-request; the server already evicted idle models and retried once (chat without `stream`, embeddings, images) | retry later |
 | 500 | `server_error` | the engine failed (weights refused, CUDA error, decode failure) | retry once; report with `x-request-id` |
 
 On a streaming chat response that fails after the headers were sent, the error arrives as a
@@ -685,7 +686,7 @@ Open during startup staging. The full snapshot of the three tiers (bytes unless 
 device reports; `tier1_vram_unaccounted_bytes` is the difference the planner subtracts from what it
 hands out; `tier1_vram_effective_free_bytes` is what a new promotion can use right now.
 `recent_evictions` lists the last automatic evictions with their `reason` (`memory_budget`,
-`full_gpu_placement`, `process_memory_cap`). `gpu` is
+`full_gpu_placement`, `process_memory_cap`, `device_out_of_memory`). `gpu` is
 present on NVIDIA devices with `nvidia-smi` available and is sampled at most every few seconds.
 Additional fields may appear in later versions; clients should ignore unknown ones.
 

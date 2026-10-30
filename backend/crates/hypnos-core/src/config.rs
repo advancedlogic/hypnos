@@ -799,7 +799,7 @@ impl HypnosConfig {
     /// Brings a config written for an older `config_version` up to [`CONFIG_VERSION`], one step
     /// per version, and returns a note per step taken (none so far: version 1 is the first).
     pub fn migrate(&mut self) -> Vec<String> {
-        let mut notes = Vec::new();
+        let notes = Vec::new();
         while self.config_version < CONFIG_VERSION {
             // Future steps go here as `match self.config_version { 1 => { ...; notes.push(...) } }`.
             self.config_version += 1;

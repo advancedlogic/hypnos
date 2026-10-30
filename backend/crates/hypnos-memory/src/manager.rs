@@ -82,6 +82,8 @@ pub enum EvictionReason {
     FullGpuPlacement,
     /// Loading it would have crossed `hardware.max_process_memory_bytes`.
     ProcessMemoryCap,
+    /// A resident model's engine ran out of device memory mid-request; the request is retried.
+    DeviceOutOfMemory,
 }
 
 /// One automatic eviction, as listed in [`MemoryHierarchyStatus::recent_evictions`].
@@ -255,7 +257,7 @@ impl TieredMemoryManager {
             simulating: hw_config.simulate_physical_memory_bytes > 0,
             max_process_memory_bytes: hw_config.max_process_memory_bytes,
             evictions: parking_lot::Mutex::new(VecDeque::with_capacity(EVICTION_LOG_LEN)),
-            device_id: hw_config.device_id as usize,
+            device_id: hw_config.device_id,
             gpu_health: parking_lot::Mutex::new(None),
             lock_host_memory,
             models: RwLock::new(models),

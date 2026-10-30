@@ -43,6 +43,15 @@ unsafe extern "C" fn sd_log_bridge(
     if msg.is_empty() {
         return;
     }
+    if matches!(
+        level,
+        sd::sd_log_level_t::SD_LOG_ERROR | sd::sd_log_level_t::SD_LOG_WARN
+    ) && is_out_of_memory(msg)
+    {
+        if let Ok(mut first) = OOM_MESSAGE.lock() {
+            first.get_or_insert_with(|| msg.to_string());
+        }
+    }
     match level {
         sd::sd_log_level_t::SD_LOG_ERROR => tracing::error!(target: "sd.cpp", "{msg}"),
         sd::sd_log_level_t::SD_LOG_WARN => tracing::warn!(target: "sd.cpp", "{msg}"),
@@ -56,6 +65,24 @@ unsafe extern "C" fn sd_log_bridge(
 /// ask sd.cpp to abort when the request was cancelled.
 static ACTIVE_CTX: AtomicPtr<sd::sd_ctx_t> = AtomicPtr::new(std::ptr::null_mut());
 static ACTIVE_REQUEST: StdMutex<Option<RequestContext>> = StdMutex::new(None);
+
+/// The first device-allocation failure sd.cpp (or its ggml) logged during the running job. sd.cpp
+/// only returns false from `generate_image`, so this is how a full device becomes
+/// [`HypnosError::DeviceOutOfMemory`] (507, retried by the server after evicting idle models)
+/// instead of a generic backend error.
+static OOM_MESSAGE: StdMutex<Option<String>> = StdMutex::new(None);
+
+/// sd.cpp's model manager, ggml's buffer and graph allocators, and the CUDA and Metal backends.
+fn is_out_of_memory(msg: &str) -> bool {
+    const MARKERS: [&str; 5] = [
+        "cannot make enough memory available",
+        "is available under current VRAM limits",
+        "failed to allocate",
+        "cudaMalloc failed",
+        "out of memory",
+    ];
+    MARKERS.iter().any(|m| msg.contains(m))
+}
 
 unsafe extern "C" fn sd_progress_bridge(step: i32, steps: i32, time: f32, _data: *mut c_void) {
     debug!(target: "sd.cpp", step, steps, secs = time, "diffusion step");
@@ -213,13 +240,21 @@ fn encode_png(width: u32, height: u32, channels: u32, pixels: &[u8]) -> Result<V
     Ok(out.into_inner())
 }
 
-fn run_image_job(loaded: &LoadedSd, job: &ImageJob, ctx: &RequestContext) -> Result<Vec<Vec<u8>>> {
+fn run_image_job(
+    model_id: &str,
+    loaded: &LoadedSd,
+    job: &ImageJob,
+    ctx: &RequestContext,
+) -> Result<Vec<Vec<u8>>> {
     if !ctx.should_continue() {
         return Err(HypnosError::Cancelled);
     }
     ACTIVE_CTX.store(loaded.ctx, Ordering::SeqCst);
     if let Ok(mut g) = ACTIVE_REQUEST.lock() {
         *g = Some(ctx.clone());
+    }
+    if let Ok(mut oom) = OOM_MESSAGE.lock() {
+        *oom = None;
     }
     // Reset the cancel flag inside sd.cpp from any previous aborted job.
     unsafe { sd::sd_cancel_generation(loaded.ctx, sd::sd_cancel_mode_t::SD_CANCEL_RESET) };
@@ -231,7 +266,14 @@ fn run_image_job(loaded: &LoadedSd, job: &ImageJob, ctx: &RequestContext) -> Res
     if !ctx.should_continue() {
         return Err(HypnosError::Cancelled);
     }
-    result
+    let oom = OOM_MESSAGE.lock().ok().and_then(|mut m| m.take());
+    match (result, oom) {
+        (Err(HypnosError::BackendError(_)), Some(detail)) => Err(HypnosError::DeviceOutOfMemory {
+            model: model_id.to_string(),
+            detail,
+        }),
+        (result, _) => result,
+    }
 }
 
 fn run_image_job_inner(loaded: &LoadedSd, job: &ImageJob) -> Result<Vec<Vec<u8>>> {
@@ -394,7 +436,7 @@ impl ModelBackend for GgmlDiffusionBackend {
                 HypnosError::BackendError(format!("model '{}' is not resident in VRAM", cfg.id))
             })?;
             let started = Instant::now();
-            let out = run_image_job(resident, &job, &ctx)?;
+            let out = run_image_job(&cfg.id, resident, &job, &ctx)?;
             info!(model = %cfg.id, images = out.len(), width = job.width, height = job.height, steps = job.steps, seed = job.seed, secs = format!("{:.1}", started.elapsed().as_secs_f32()), "image generation complete");
             Ok(out)
         })
@@ -413,5 +455,24 @@ impl ModelBackend for GgmlDiffusionBackend {
             data,
             hypnos_telemetry: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_out_of_memory;
+
+    #[test]
+    fn recognises_device_allocation_failures() {
+        assert!(is_out_of_memory("model manager cannot make enough memory available on CUDA0: need 518.00 MB device / 518.00 MB budget, available 0.00 MB device / unlimited budget"));
+        assert!(is_out_of_memory(
+            "ggml_gallocr_reserve_n: failed to allocate CUDA0 buffer of size 543162368"
+        ));
+        assert!(is_out_of_memory("alloc_tensor_range: allocating 512.00 MiB on device 0: cudaMalloc failed: out of memory"));
+        assert!(is_out_of_memory("ggml_backend_metal_buffer_type_alloc_buffer: failed to allocate Metal buffer of 536870912 bytes (out of memory)"));
+        assert!(!is_out_of_memory(
+            "model manager memory on CUDA0: reported free 0.00 MB / total 24463.00 MB"
+        ));
+        assert!(!is_out_of_memory("sampling completed, taking 12.31s"));
     }
 }

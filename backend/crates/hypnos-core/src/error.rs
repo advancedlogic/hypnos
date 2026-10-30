@@ -55,6 +55,12 @@ pub enum HypnosError {
     #[error("Backend execution error: {0}")]
     BackendError(String),
 
+    /// The engine ran out of device memory while running a request on a model that was already
+    /// placed (sd.cpp workspace, llama.cpp compute buffers): the device is fuller than the
+    /// bookings say, usually because other models' runtime buffers grew.
+    #[error("Model '{model}' ran out of device memory while running the request: {detail}")]
+    DeviceOutOfMemory { model: String, detail: String },
+
     #[error("Invalid request parameter: {0}")]
     InvalidRequest(String),
 

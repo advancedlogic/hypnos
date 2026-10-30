@@ -211,6 +211,7 @@
     memory_budget: 'did not fit in the memory budget',
     full_gpu_placement: 'to fit all layers on the GPU',
     process_memory_cap: 'process memory cap',
+    device_out_of_memory: 'engine ran out of device memory',
   };
 
   function timeAgo(unixMs) {
