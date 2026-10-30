@@ -549,7 +549,98 @@ impl TieredMemoryManager {
         let entry = guard
             .get_mut(model_id)
             .ok_or_else(|| HypnosError::ModelNotFound(model_id.to_string()))?;
+        self.apply_placement_locked(entry, model_id, new_plan)
+    }
 
+    /// Takes a lease on `model_id` only if it is resident in Tier 1 with at least `needed_ctx`
+    /// positions, checking and counting under one lock so an eviction cannot slip in between
+    /// (BUG-1). Returns the placement the lease runs with, or `None` to take the slow path.
+    pub fn increment_lease_if_resident(
+        &self,
+        model_id: &str,
+        needed_ctx: u32,
+    ) -> Result<Option<LayerPlacementPlan>> {
+        let mut guard = self.models.write();
+        let entry = guard
+            .get_mut(model_id)
+            .ok_or_else(|| HypnosError::ModelNotFound(model_id.to_string()))?;
+        let plan = &entry.placement;
+        let resident = plan.primary_tier == MemoryTier::Tier1GpuVram
+            && (plan.gpu_layers > 0 || entry.config.runs_on_cpu())
+            && plan.allocated_context_len >= needed_ctx;
+        if !resident {
+            return Ok(None);
+        }
+        entry.active_leases += 1;
+        entry.total_requests_served += 1;
+        entry.last_used = Instant::now();
+        Ok(Some(entry.placement.clone()))
+    }
+
+    /// Demotes `model_id` to `target_tier` unless it holds a lease, deciding and applying under
+    /// one lock (BUG-1: a fast-path lease taken between the idle check and the demotion ran on an
+    /// unloaded engine). `Ok(None)` when it was leased; the caller skips it.
+    pub fn demote_if_idle(
+        &self,
+        model_id: &str,
+        target_tier: MemoryTier,
+    ) -> Result<Option<LayerPlacementPlan>> {
+        let mut guard = self.models.write();
+        let entry = guard
+            .get_mut(model_id)
+            .ok_or_else(|| HypnosError::ModelNotFound(model_id.to_string()))?;
+        if entry.active_leases > 0 {
+            return Ok(None);
+        }
+        let plan = self.demotion_plan(&entry.config, &entry.placement, target_tier);
+        self.apply_placement_locked(entry, model_id, plan.clone())?;
+        Ok(Some(plan))
+    }
+
+    /// The Tier 2 or Tier 3 placement for a demotion: Tier 2 only when the weights fit the pinned
+    /// budget, Tier 3 otherwise.
+    fn demotion_plan(
+        &self,
+        cfg: &ModelConfig,
+        current: &LayerPlacementPlan,
+        target_tier: MemoryTier,
+    ) -> LayerPlacementPlan {
+        let total_layers = cfg.arch.num_layers;
+        if target_tier == MemoryTier::Tier2PinnedRam {
+            let needed_ram = cfg.total_weight_bytes;
+            let additional_ram = needed_ram.saturating_sub(current.pinned_ram_bytes);
+            if additional_ram <= self.free_pinned_ram_bytes() {
+                return LayerPlacementPlan {
+                    primary_tier: MemoryTier::Tier2PinnedRam,
+                    gpu_layers: 0,
+                    pinned_ram_layers: total_layers,
+                    ssd_layers: 0,
+                    vram_weight_bytes: 0,
+                    vram_kv_and_workspace_bytes: 0,
+                    pinned_ram_bytes: needed_ram,
+                    allocated_context_len: 0,
+                };
+            }
+            warn!(model = %cfg.id, "Tier 2 pinned RAM budget exhausted; demoting to Tier 3 instead");
+        }
+        LayerPlacementPlan {
+            primary_tier: MemoryTier::Tier3NvmeSsd,
+            gpu_layers: 0,
+            pinned_ram_layers: 0,
+            ssd_layers: total_layers,
+            vram_weight_bytes: 0,
+            vram_kv_and_workspace_bytes: 0,
+            pinned_ram_bytes: 0,
+            allocated_context_len: 0,
+        }
+    }
+
+    fn apply_placement_locked(
+        &self,
+        entry: &mut ManagedModelMemory,
+        model_id: &str,
+        new_plan: LayerPlacementPlan,
+    ) -> Result<(MemoryTier, Option<usize>)> {
         let prev_plan = entry.placement.clone();
         let prev_tier = prev_plan.primary_tier;
 
@@ -651,53 +742,8 @@ impl TieredMemoryManager {
         model_id: &str,
         target_tier: MemoryTier,
     ) -> Result<LayerPlacementPlan> {
-        let (cfg, _) = self.get_model_state(model_id)?;
-        let total_layers = cfg.arch.num_layers;
-
-        let new_plan = match target_tier {
-            MemoryTier::Tier2PinnedRam => {
-                // Keep weights pinned in Tier 2 RAM if budget allows, otherwise fallback to Tier 3 SSD
-                let needed_ram = cfg.total_weight_bytes;
-                let current_ram = self.get_model_state(model_id)?.1.pinned_ram_bytes;
-                let additional_ram = needed_ram.saturating_sub(current_ram);
-
-                if additional_ram <= self.free_pinned_ram_bytes() {
-                    LayerPlacementPlan {
-                        primary_tier: MemoryTier::Tier2PinnedRam,
-                        gpu_layers: 0,
-                        pinned_ram_layers: total_layers,
-                        ssd_layers: 0,
-                        vram_weight_bytes: 0,
-                        vram_kv_and_workspace_bytes: 0,
-                        pinned_ram_bytes: needed_ram,
-                        allocated_context_len: 0,
-                    }
-                } else {
-                    warn!(model = %model_id, "Tier 2 pinned RAM budget exhausted; demoting to Tier 3 instead");
-                    LayerPlacementPlan {
-                        primary_tier: MemoryTier::Tier3NvmeSsd,
-                        gpu_layers: 0,
-                        pinned_ram_layers: 0,
-                        ssd_layers: total_layers,
-                        vram_weight_bytes: 0,
-                        vram_kv_and_workspace_bytes: 0,
-                        pinned_ram_bytes: 0,
-                        allocated_context_len: 0,
-                    }
-                }
-            }
-            _ => LayerPlacementPlan {
-                primary_tier: MemoryTier::Tier3NvmeSsd,
-                gpu_layers: 0,
-                pinned_ram_layers: 0,
-                ssd_layers: total_layers,
-                vram_weight_bytes: 0,
-                vram_kv_and_workspace_bytes: 0,
-                pinned_ram_bytes: 0,
-                allocated_context_len: 0,
-            },
-        };
-
+        let (cfg, current) = self.get_model_state(model_id)?;
+        let new_plan = self.demotion_plan(&cfg, &current, target_tier);
         self.apply_model_placement(model_id, new_plan.clone())?;
         Ok(new_plan)
     }

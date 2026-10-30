@@ -427,6 +427,57 @@ async fn disabled_models_are_skipped_refused_and_evicted() {
 }
 
 #[tokio::test]
+async fn eviction_skips_a_model_that_was_leased_meanwhile() {
+    // BUG-1: the fast-path lease and the eviction decide under one lock.
+    let (sched, mocks) = build(
+        12,
+        vec![model(
+            "a",
+            2,
+            ModelPriority::Normal,
+            MemoryTier::Tier3NvmeSsd,
+        )],
+        2,
+    );
+    let ctx = RequestContext::unbounded();
+    let memory = sched.memory();
+    // Not resident: no fast-path lease.
+    assert!(memory
+        .increment_lease_if_resident("a", 1024)
+        .unwrap()
+        .is_none());
+    let lease = sched.acquire_model("a", None, 1, &ctx).await.unwrap();
+    assert!(mocks[0].is_resident());
+    // Leased: an eviction decided now must skip it, and the engine stays loaded.
+    assert!(memory
+        .demote_if_idle("a", MemoryTier::Tier3NvmeSsd)
+        .unwrap()
+        .is_none());
+    assert_eq!(memory.active_leases("a"), 1);
+    // Resident with a large enough window: the fast path counts a second lease atomically.
+    let plan = memory
+        .increment_lease_if_resident("a", 512)
+        .unwrap()
+        .expect("resident");
+    assert_eq!(plan.primary_tier, MemoryTier::Tier1GpuVram);
+    assert_eq!(memory.active_leases("a"), 2);
+    memory.decrement_lease("a");
+    // A window larger than what is allocated takes the slow path.
+    assert!(memory
+        .increment_lease_if_resident("a", 1 << 20)
+        .unwrap()
+        .is_none());
+    drop(lease);
+    // Idle: the demotion goes through.
+    let demoted = memory
+        .demote_if_idle("a", MemoryTier::Tier3NvmeSsd)
+        .unwrap()
+        .expect("idle");
+    assert_eq!(demoted.primary_tier, MemoryTier::Tier3NvmeSsd);
+    assert_eq!(sched.status().tier1_vram_used_bytes, 0);
+}
+
+#[tokio::test]
 async fn manual_demotion_is_refused_while_leased() {
     let (sched, _mocks) = build(
         12,

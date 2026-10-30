@@ -244,18 +244,17 @@ impl ModelScheduler {
             return Err(HypnosError::Cancelled);
         }
 
-        // Fast path: already resident with a sufficient context window.
+        // Fast path: already resident with a sufficient context window. The check and the lease
+        // count happen under one lock, so an eviction cannot unload the model in between.
         {
-            let (cfg, current_plan) = self.memory.get_model_state(model_id)?;
+            let (cfg, _) = self.memory.get_model_state(model_id)?;
             let needed_ctx = requested_context_len
                 .unwrap_or(cfg.arch.default_context_len)
                 .min(cfg.arch.max_context_len);
-
-            if current_plan.primary_tier == MemoryTier::Tier1GpuVram
-                && (current_plan.gpu_layers > 0 || cfg.runs_on_cpu())
-                && current_plan.allocated_context_len >= needed_ctx
+            if let Some(current_plan) = self
+                .memory
+                .increment_lease_if_resident(model_id, needed_ctx)?
             {
-                self.memory.increment_lease(model_id)?;
                 return Ok(ActiveModelLease {
                     model_id: model_id.to_string(),
                     memory: self.memory.clone(),
@@ -287,11 +286,10 @@ impl ModelScheduler {
             .min(cfg.arch.max_context_len);
 
         // Double-check after acquiring transition_lock
-        if current_plan.primary_tier == MemoryTier::Tier1GpuVram
-            && (current_plan.gpu_layers > 0 || cfg.runs_on_cpu())
-            && current_plan.allocated_context_len >= needed_ctx
+        if let Some(current_plan) = self
+            .memory
+            .increment_lease_if_resident(model_id, needed_ctx)?
         {
-            self.memory.increment_lease(model_id)?;
             return Ok(ActiveModelLease {
                 model_id: model_id.to_string(),
                 memory: self.memory.clone(),
@@ -352,9 +350,13 @@ impl ModelScheduler {
                 "Evicting idle model from Tier 1 VRAM to free space"
             );
 
-            let demoted_plan = self
+            let Some(demoted_plan) = self
                 .memory
-                .demote_model_from_vram(&candidate_id, target_demote_tier)?;
+                .demote_if_idle(&candidate_id, target_demote_tier)?
+            else {
+                // A request took a lease on it since the candidates were listed.
+                continue;
+            };
             if let Some(cand_backend) = self.backends.get(&candidate_id) {
                 cand_backend.apply_placement(&demoted_plan, None).await?;
             }
@@ -380,9 +382,12 @@ impl ModelScheduler {
                     for_model = %model_id,
                     "Moving idle model to Tier 3 to free host RAM"
                 );
-                let demoted_plan = self
+                let Some(demoted_plan) = self
                     .memory
-                    .demote_model_from_vram(&candidate_id, MemoryTier::Tier3NvmeSsd)?;
+                    .demote_if_idle(&candidate_id, MemoryTier::Tier3NvmeSsd)?
+                else {
+                    continue;
+                };
                 if let Some(cand_backend) = self.backends.get(&candidate_id) {
                     cand_backend.apply_placement(&demoted_plan, None).await?;
                 }
@@ -547,24 +552,30 @@ impl ModelScheduler {
             self.memory.set_enabled(model_id, true)?;
             return Ok(plan);
         }
-        let leases = self.memory.active_leases(model_id);
-        if leases > 0 {
-            return Err(HypnosError::Busy {
-                model: model_id.to_string(),
-                in_flight: leases,
-                limit: 0,
-            });
-        }
         let plan = if plan.primary_tier != MemoryTier::Tier3NvmeSsd || plan.pinned_ram_bytes > 0 {
-            let demoted = self
+            let Some(demoted) = self
                 .memory
-                .demote_model_from_vram(model_id, MemoryTier::Tier3NvmeSsd)?;
+                .demote_if_idle(model_id, MemoryTier::Tier3NvmeSsd)?
+            else {
+                return Err(HypnosError::Busy {
+                    model: model_id.to_string(),
+                    in_flight: self.memory.active_leases(model_id).max(1),
+                    limit: 0,
+                });
+            };
             if let Some(backend) = self.backends.get(model_id) {
                 backend.apply_placement(&demoted, None).await?;
             }
             self.memory.reconcile_vram();
             demoted
         } else {
+            if self.memory.active_leases(model_id) > 0 {
+                return Err(HypnosError::Busy {
+                    model: model_id.to_string(),
+                    in_flight: self.memory.active_leases(model_id),
+                    limit: 0,
+                });
+            }
             plan
         };
         if self.memory.is_enabled(model_id)? {
@@ -592,14 +603,13 @@ impl ModelScheduler {
             }
             MemoryTier::Tier2PinnedRam | MemoryTier::Tier3NvmeSsd => {
                 let _guard = self.transition_lock.lock().await;
-                if self.memory.active_leases(model_id) > 0 {
+                let Some(plan) = self.memory.demote_if_idle(model_id, target_tier)? else {
                     return Err(HypnosError::Busy {
                         model: model_id.to_string(),
-                        in_flight: self.memory.active_leases(model_id),
+                        in_flight: self.memory.active_leases(model_id).max(1),
                         limit: 0,
                     });
-                }
-                let plan = self.memory.demote_model_from_vram(model_id, target_tier)?;
+                };
                 if let Some(backend) = self.backends.get(model_id) {
                     backend.apply_placement(&plan, None).await?;
                 }

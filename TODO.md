@@ -50,7 +50,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 6   | 5   | 4   | 7    | 1   | 7     | 6   | 3    |
+| 2  | 6   | 5   | 4   | 8    | 2   | 7     | 6   | 3    |
 
 ---
 
@@ -85,6 +85,14 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       A C++ abort inside llama.cpp / sd.cpp takes the whole process down: document the
       supervisor expectation (run scripts, Docker restart policy, systemd unit) and add a
       per-engine crash counter to `/metrics` so restarts are visible.
+- [ ] 🟧 **PERF-7** `P2` Gemma 4 26B decodes at 12 tokens/s on the RTX 5090 laptop; VRAM is full
+      The request log and the soak show 12 tok/s for `gemma4:26b-q4` (README: ~100 tok/s on a
+      24 GB CUDA GPU). `/v1/memory/status` has the device full: 21.8 GB booked plus 3.9 GB
+      unaccounted on a 25.6 GB device, real free 0. On Windows (WDDM) CUDA allocations past the
+      device spill into system memory instead of failing, which would explain the decode rate.
+      Confirm with a smaller booking (`slots = 2` or a 8k context) and nvidia-smi, then either
+      lower the default booking for 24 GB cards or make the planner keep a margin above the
+      unaccounted reading (`vram_safety_margin_bytes` is 1 GiB).
 
 ## In Progress
 
@@ -101,6 +109,22 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       archives were never attached; the step now uploads into an existing or draft release.
 
 ## Done
+
+- [x] 🟥 **BUG-1** `P1` Eviction can unload a model between a fast-path lease and its request
+      Seen in the first soak run (TEST-1, 2026-10-30): an entities request answered 500 "model
+      'gliner2.5-multi' is not loaded" at the moment an image request evicted idle models. The
+      fast path in `acquire_model` reads the placement (read lock), then `increment_lease` takes
+      the write lock: an eviction running under the transition lock lists the model as idle in
+      between, demotes it, and the request runs on an unloaded engine. Make both sides atomic
+      under the models lock: `increment_lease_if_resident` (check tier and context, then count)
+      and `demote_if_idle` (check `active_leases == 0`, then apply the demotion) so an eviction
+      skips a model that just got a lease. Mock test in `hypnos-scheduler` (`hypnos-scheduler`,
+      `hypnos-memory`).
+      Fixed: `TieredMemoryManager::increment_lease_if_resident` (tier, layers and context checked
+      and the lease counted under the models write lock) is the fast path in `acquire_model`;
+      `demote_if_idle` (lease count checked and the placement applied under the same lock) is
+      what the eviction loops, `set_model_tier` and `set_model_enabled` use, skipping a candidate
+      that got a lease meanwhile. Scheduler test `eviction_skips_a_model_that_was_leased_meanwhile`.
 
 - [x] ⬜ **DOC-5** `P2` Write an operator's guide (sizing, knobs, telemetry, errors)
       `docs/operating.md` for people who run Hypnos rather than build it: sizing a box for a
