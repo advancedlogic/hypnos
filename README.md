@@ -49,7 +49,7 @@ Measured on one 24 GB CUDA GPU with the default lineup (full reports in [docs/be
 
 | Scenario | Result |
 | :--- | :--- |
-| Chat decode, Gemma 4 26B-A4B Q4 | ~100 tokens/s per stream |
+| Chat decode, Gemma 4 26B-A4B Q4 | ~100 tokens/s per stream on a 24 GB desktop GPU; **150** on an RTX 5090 laptop with 3 slots at 16k and an f16 KV cache (4 slots at 16k with q8_0 made llama.cpp re-capture its CUDA graph every step: 8 tokens/s, see [docs/bench/decode-slots-cuda-2026-10-30.md](docs/bench/decode-slots-cuda-2026-10-30.md)) |
 | Five-turn chat, time to first token per turn | 300 ms → **145 ms** with KV prefix reuse |
 | Follow-up question about the same image | 300 ms → **105 ms** (image not re-encoded) |
 | Four concurrent chat clients | **2.18x** the aggregate decode throughput of one (continuous batching) |

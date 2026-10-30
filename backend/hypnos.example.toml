@@ -117,8 +117,10 @@ priority = "high"
 #                                       # or /disable flips it at runtime without touching this file.
 # Execution slots sharing one persistent llama.cpp context (KV booking = slots x context). Requests
 # in different slots are decoded together, one llama_batch per step; 1 serves them one at a time.
-# 4 fits a 24 GB GPU next to the weights (about 0.9 GiB of KV per slot at 16k context).
-slots = 4
+# 3 slots at 16k with an f16 KV cache: 150 tokens/s per stream on an RTX 5090 laptop. 4 slots at
+# 16k (or a q8_0 cache with 2 or more slots at 16k) made llama.cpp re-capture its CUDA graph on
+# every step and decode at 8-27 tokens/s (PERF-7, docs/bench/decode-slots-cuda-2026-10-30.md).
+slots = 3
 # Reuse a slot's KV cache when a prompt extends what it processed last (multi-turn chats prefill
 # only the new turn; unchanged images are not re-encoded).
 prefix_cache = true
@@ -134,9 +136,9 @@ default_context_len = 16384
 max_context_len = 131072
 sliding_window_len = 1024
 global_attn_every_n_layers = 6          # 5 local SWA layers per 1 full global layer
-kv_dtype = "q8_0"
+kv_dtype = "f16"                        # q8_0 halves the KV cache but trips the CUDA-graph re-capture above
 non_layer_overhead_bytes = 2415919104   # token embeddings + 1.1 GiB vision tower (not splittable)
-activation_workspace_bytes = 805306368
+activation_workspace_bytes = 2147483648 # 2 GiB: llama.cpp's compute buffer is 2.2 GB at n_batch 2048 (measured)
 
 # -----------------------------------------------------------------------------
 # 2. Gemma 4 E4B (Q4_0) — Audio / Speech-to-Text (/v1/audio/transcriptions) + Chat

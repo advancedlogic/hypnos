@@ -69,7 +69,14 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       Kokoro and Gemma 4 E4B transcription, check the license, the API stability and whether its
       ggml builds shared cleanly; close the card with the numbers if it does not clearly win.
       After TEST-1 and TEST-2.
-- [ ] 🟧 **PERF-7** `P2` Gemma 4 26B decodes at 12 tokens/s on the RTX 5090 laptop; VRAM is full
+
+## In Progress
+
+_No cards yet._
+
+## Done
+
+- [x] 🟧 **PERF-7** `P2` Gemma 4 26B decodes at 12 tokens/s on the RTX 5090 laptop; VRAM is full
       The request log and the soak show 12 tok/s for `gemma4:26b-q4` (README: ~100 tok/s on a
       24 GB CUDA GPU). `/v1/memory/status` has the device full: 21.8 GB booked plus 3.9 GB
       unaccounted on a 25.6 GB device, real free 0. On Windows (WDDM) CUDA allocations past the
@@ -81,12 +88,16 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       sd.cpp failed with "reported free 0.00 MB" needing 518 MB of workspace: the planner should
       compare against the device's real free memory (it is read at every reconcile) and refuse or
       shrink a placement the device cannot hold, not only its own bookings.
-
-## In Progress
-
-_No cards yet._
-
-## Done
+      Resolved (`docs/bench/decode-slots-cuda-2026-10-30.md`): not the full device. The decode
+      rate depends on the slot configuration: 1 x 16k, 1 x 64k, 4 x 4k and (with f16 KV) 2 x
+      16k, 3 x 16k, 4 x 8k all decode at 142-157 tok/s; the old default 4 x 16k q8_0 at 8-10,
+      and 2 x 16k q8_0 at 27. With CUDA graphs disabled the old default runs at 70: llama.cpp
+      re-captures its CUDA graph on every step for those multi-stream cache shapes (no
+      consecutive-updates bail-out in b11982), an upstream report. Defaults changed: the 26B
+      runs with `slots = 3`, 16k, `kv_dtype = "f16"`, `activation_workspace_bytes` 2 GiB (the
+      2.2 GB compute buffer was the "unaccounted" VRAM). 150 tok/s per stream measured after
+      the change. The sd.cpp failure under load is the engine's runtime reserve, now in the
+      booking for the 26B; the planner's refusal to place on a full device was correct.
 
 - [x] ⬛ **BUILD-6** `P1` Cut the first release (v0.1.0) and prove the release pipeline
       No `v*` tag had ever been pushed: the archives, the Docker image on GHCR and the publish
