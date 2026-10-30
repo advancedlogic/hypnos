@@ -208,9 +208,9 @@ stream) carries `hypnos_telemetry`:
 | `engine` | engine timings; each field is present only when that modality measures it: `queue_ms`, `context_ms`, `prefill_ms`, `decode_ms`, `ttft_ms`, `prefill_tokens_per_s`, `decode_tokens_per_s`, `cached_tokens`, `concurrent_slots` (chat); `audio_secs`, `rtf`, `ttfa_ms` (audio); `pages`, `ms_per_page` (documents) |
 | `tier_switch_phases` | only when this request loaded a llama.cpp model into VRAM: `load_mode` (`mmap` or `read`), `weights_ms`, `projector_ms`, `context_ms`, `total_ms` |
 
-Speech responses are audio, so the same facts travel as headers: `x-hypnos-previous-tier`,
-`x-hypnos-gpu-layers`, `x-hypnos-switch-ms`, `x-hypnos-inference-ms`, `x-hypnos-audio-secs`,
-`x-hypnos-rtf`. A streaming speech response carries the first three only (the rest is unknown
+Speech responses are audio, so the same facts travel as headers: `x-hypnos-previous-tier`
+(spelled as in the JSON, `tier2_pinned_ram`), `x-hypnos-gpu-layers`, `x-hypnos-switch-ms`,
+`x-hypnos-inference-ms`, `x-hypnos-audio-secs`, `x-hypnos-rtf`. A streaming speech response carries the first three only (the rest is unknown
 when the headers go out).
 
 A client may ignore all of this; an SDK should expose it as an optional typed object because it
@@ -566,13 +566,16 @@ distinguished by `object`:
 | :--- | :--- | :--- |
 | `document.started` | once the document is read | `page_count`, `pages` (the page numbers that will follow), `id` (with `return_pictures`) |
 | `document.page` | per converted page, as soon as it is ready | the page object above |
-| `document` | last event | the full non-streaming response (joined `markdown`, `usage`, telemetry) |
+| `document` | last event | the non-streaming response (joined `markdown`, `usage`, telemetry) with `pages` empty: the pages already came as `document.page` events |
 | `error` | instead of `document` if the conversion fails | `error.message`, `error.type` |
+
+The stream then ends with the literal `data: [DONE]`, as chat streams do.
 
 A request the engine refuses up front (bad file, unsupported format) gets its HTTP error status;
 the stream only starts once the first event exists. Closing the connection stops the conversion at
-the next page. The `document.page` events let a client show pages progressively; the final
-`document` event is the one to store.
+the next page. The `document.page` events let a client show pages progressively; to store the
+result, take the final `document` event and put the collected `document.page` events into its
+`pages`.
 
 ### Pictures of a converted document
 

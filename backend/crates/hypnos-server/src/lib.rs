@@ -1070,7 +1070,12 @@ struct AudioStreamState {
 }
 
 fn speech_telemetry_headers(headers: &mut HeaderMap, telemetry: &ExecutionTelemetry) {
-    if let Ok(v) = HeaderValue::from_str(&format!("{:?}", telemetry.previous_tier)) {
+    // The same spelling as `previous_tier` in the JSON telemetry (`tier2_pinned_ram`).
+    let tier = serde_json::to_value(telemetry.previous_tier)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default();
+    if let Ok(v) = HeaderValue::from_str(&tier) {
         headers.insert("x-hypnos-previous-tier", v);
     }
     if let Ok(v) = HeaderValue::from_str(&telemetry.placement.gpu_layers.to_string()) {
@@ -1228,15 +1233,7 @@ async fn audio_speech_inner(
         HeaderValue::from_str(&out.content_type)
             .unwrap_or_else(|_| HeaderValue::from_static("audio/wav")),
     );
-    if let Ok(v) = HeaderValue::from_str(&format!("{:?}", telemetry.previous_tier)) {
-        headers.insert("x-hypnos-previous-tier", v);
-    }
-    if let Ok(v) = HeaderValue::from_str(&telemetry.placement.gpu_layers.to_string()) {
-        headers.insert("x-hypnos-gpu-layers", v);
-    }
-    if let Ok(v) = HeaderValue::from_str(&format!("{:.3}", telemetry.tier_switch_latency_ms)) {
-        headers.insert("x-hypnos-switch-ms", v);
-    }
+    speech_telemetry_headers(&mut headers, &telemetry);
     if let Ok(v) = HeaderValue::from_str(&format!("{:.1}", telemetry.inference_latency_ms)) {
         headers.insert("x-hypnos-inference-ms", v);
     }

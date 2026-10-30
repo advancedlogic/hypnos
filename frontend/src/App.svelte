@@ -756,7 +756,7 @@
         throw new Error(errData?.error?.message || `HTTP ${res.status}`);
       }
 
-      const prevTier = res.headers.get('x-hypnos-previous-tier') || 'Tier1GpuVram';
+      const prevTier = res.headers.get('x-hypnos-previous-tier') || 'tier1_gpu_vram';
       const gpuLayers = Number(res.headers.get('x-hypnos-gpu-layers') || 12);
       const switchMs = Number(res.headers.get('x-hypnos-switch-ms') || 0);
 
