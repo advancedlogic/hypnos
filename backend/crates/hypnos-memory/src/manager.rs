@@ -676,6 +676,29 @@ impl TieredMemoryManager {
         candidates.into_iter().map(|(id, _)| id.clone()).collect()
     }
 
+    /// Idle models that hold host RAM but no VRAM (warm Tier 2 weights, loaded CPU models), lowest
+    /// priority and least recently used first: what can go to Tier 3 when a CPU model needs RAM.
+    pub fn idle_ram_eviction_candidates(&self, exclude_model_id: &str) -> Vec<String> {
+        let guard = self.models.read();
+        let mut candidates: Vec<(&String, &ManagedModelMemory)> = guard
+            .iter()
+            .filter(|(id, m)| {
+                id.as_str() != exclude_model_id
+                    && m.active_leases == 0
+                    && m.placement.total_vram_bytes() == 0
+                    && m.placement.pinned_ram_bytes > 0
+                    && m.config.priority != hypnos_core::config::ModelPriority::RealtimePinned
+            })
+            .collect();
+        candidates.sort_by(|(_, a), (_, b)| {
+            a.config
+                .priority
+                .cmp(&b.config.priority)
+                .then_with(|| a.last_used.cmp(&b.last_used))
+        });
+        candidates.into_iter().map(|(id, _)| id.clone()).collect()
+    }
+
     /// Returns a full snapshot of the 3-tier hierarchy.
     pub fn status_snapshot(&self) -> MemoryHierarchyStatus {
         // Read before taking the models lock: `process_memory_bytes` takes it too, and a nested

@@ -4,8 +4,8 @@
 
 use async_trait::async_trait;
 use hypnos_core::config::{
-    AcceleratorKind, EngineKind, HardwareConfig, KvDataType, LimitsConfig, MemoryTier, Modality,
-    ModelArchitectureParams, ModelConfig, ModelPriority,
+    AcceleratorKind, EngineKind, ExecutionDevice, HardwareConfig, KvDataType, LimitsConfig,
+    MemoryTier, Modality, ModelArchitectureParams, ModelConfig, ModelPriority,
 };
 use hypnos_core::error::{HypnosError, Result};
 use hypnos_core::kv_cache::LayerPlacementPlan;
@@ -90,6 +90,7 @@ fn model(id: &str, weight_gb: u64, priority: ModelPriority, initial: MemoryTier)
         priority,
         slots: 1,
         prefix_cache: true,
+        device: Default::default(),
         arch: ModelArchitectureParams {
             num_layers: 10,
             num_kv_heads: 0,
@@ -106,13 +107,13 @@ fn model(id: &str, weight_gb: u64, priority: ModelPriority, initial: MemoryTier)
     }
 }
 
-fn hardware(vram_gb: u64) -> HardwareConfig {
+fn hardware(vram_gb: u64, ram_gb: u64) -> HardwareConfig {
     HardwareConfig {
         accelerator: AcceleratorKind::Vulkan, // no probing of this machine's GPU
         device_id: 0,
         vram_budget_bytes: vram_gb * GB,
         vram_safety_margin_bytes: 256 * 1024 * 1024,
-        pinned_ram_budget_bytes: 64 * GB,
+        pinned_ram_budget_bytes: ram_gb * GB,
         lock_host_memory: Some(false),
         simulate_physical_memory_bytes: 0,
         max_process_memory_bytes: 0,
@@ -124,6 +125,15 @@ fn build(
     models: Vec<ModelConfig>,
     queue: usize,
 ) -> (Arc<ModelScheduler>, Vec<Arc<MockBackend>>) {
+    build_with_ram(vram_gb, 64, models, queue)
+}
+
+fn build_with_ram(
+    vram_gb: u64,
+    ram_gb: u64,
+    models: Vec<ModelConfig>,
+    queue: usize,
+) -> (Arc<ModelScheduler>, Vec<Arc<MockBackend>>) {
     let mocks: Vec<Arc<MockBackend>> = models.iter().cloned().map(MockBackend::new).collect();
     let backends: Vec<Arc<dyn ModelBackend>> = mocks
         .iter()
@@ -131,7 +141,7 @@ fn build(
         .collect();
     // Physical RAM "unknown": Tier 2 keeps its configured budget instead of being capped by the
     // RAM of this machine (a 7 GB CI runner leaves too little for the evictions tested here).
-    let hw = hardware(vram_gb);
+    let hw = hardware(vram_gb, ram_gb);
     let mut caps = DeviceMemoryCapabilities::detect(&hw);
     caps.physical_memory_bytes = 0;
     caps.installed_memory_bytes = 0;
@@ -371,4 +381,57 @@ async fn manual_demotion_is_refused_while_leased() {
         .set_model_tier("a", MemoryTier::Tier2PinnedRam, None)
         .await
         .is_ok());
+}
+
+#[tokio::test]
+async fn cpu_model_books_ram_and_frees_it_from_idle_warm_models() {
+    let mut cpu = model("cpu", 1, ModelPriority::Normal, MemoryTier::Tier3NvmeSsd);
+    cpu.device = ExecutionDevice::Cpu;
+    cpu.arch.activation_workspace_bytes = 4 * GB;
+    // 10 GB of RAM, 8 of them held by two idle warm models: the CPU model (1 + 4 GB) needs one gone.
+    let (sched, mocks) = build_with_ram(
+        12,
+        10,
+        vec![
+            model(
+                "warm-low",
+                4,
+                ModelPriority::Low,
+                MemoryTier::Tier2PinnedRam,
+            ),
+            model(
+                "warm-high",
+                4,
+                ModelPriority::High,
+                MemoryTier::Tier2PinnedRam,
+            ),
+            cpu,
+        ],
+        4,
+    );
+    sched.initialize_startup_tiers().await.unwrap();
+    assert_eq!(sched.memory().used_pinned_ram_bytes(), 8 * GB);
+
+    let ctx = RequestContext::unbounded();
+    let lease = sched.acquire_model("cpu", None, 1, &ctx).await.unwrap();
+    assert_eq!(lease.placement.primary_tier, MemoryTier::Tier1GpuVram);
+    assert_eq!(
+        lease.placement.total_vram_bytes(),
+        0,
+        "a CPU model books no VRAM"
+    );
+    assert_eq!(lease.placement.gpu_layers, 0);
+    assert_eq!(lease.placement.pinned_ram_bytes, 5 * GB);
+    assert_eq!(lease.evicted_models, vec!["warm-low".to_string()]);
+    assert_eq!(
+        mocks[0].tiers().last().copied(),
+        Some(MemoryTier::Tier3NvmeSsd)
+    );
+    assert!(mocks[2].is_resident());
+    assert_eq!(sched.memory().used_vram_bytes(), 0);
+    drop(lease);
+
+    // Resident CPU models take the fast path like GPU ones.
+    let lease = sched.acquire_model("cpu", None, 1, &ctx).await.unwrap();
+    assert_eq!(lease.tier_switch_latency_ms, 0.0);
 }

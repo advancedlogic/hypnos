@@ -52,6 +52,12 @@ diffusion-rs-sys = { path = "vendor/diffusion-rs/sys" }
 # ONNX Runtime (Kokoro-82M TTS) and espeak-ng (grapheme-to-phoneme), both statically built.
 ort = { version = "=2.0.0-rc.15" }
 espeak-rs = "0.2.0"
+# docling.rs (document conversion): layout, TableFormer and OCR models on ONNX Runtime, PDFs parsed
+# and rendered in pure Rust. Every docling-* crate on one version: a newer docling-pdf does not
+# build against an older docling-core. docling-onnx owns the process's one ONNX Runtime environment.
+docling = { version = "=2.55.4", default-features = false, features = ["pdf"] }
+docling-pdf = { version = "=2.55.4", default-features = false, features = ["ml"] }
+docling-onnx = { version = "=2.55.4" }
 hound = "3.5"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 encoding_rs = "0.8"

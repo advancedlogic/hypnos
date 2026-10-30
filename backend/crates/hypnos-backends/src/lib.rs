@@ -5,15 +5,18 @@
 //! | `ggml_llama`    | llama.cpp + libmtmd (CUDA)      | gemma4:26b-q4, gemma4:e4b-q4, gemmaembedding2 |
 //! | `ggml_diffusion`| stable-diffusion.cpp (CUDA)     | moss-image                               |
 //! | `onnx_runtime`  | ONNX Runtime + espeak-ng        | kokoro-82m-q4                            |
+//! | `docling`       | docling.rs on ONNX Runtime (CPU)| docling                                  |
 //!
 //! No external runtime (Ollama, LM Studio, Python sidecars) is involved.
 
 pub mod diffusion;
+pub mod document;
 mod engine;
 pub mod gguf_inspector;
 pub mod kokoro;
 pub mod llama;
 pub mod media;
+mod onnx;
 mod worker;
 
 use async_trait::async_trait;
@@ -139,6 +142,7 @@ pub fn create_backend_for_model(
         EngineKind::GgmlLlama => Arc::new(llama::GgmlLlamaBackend::new(config, opts.clone())),
         EngineKind::GgmlDiffusion => Arc::new(diffusion::GgmlDiffusionBackend::new(config)),
         EngineKind::OnnxRuntime => Arc::new(kokoro::OnnxRuntimeBackend::new(config)),
+        EngineKind::Docling => Arc::new(document::DoclingBackend::new(config)),
         EngineKind::GgmlWhisper => Arc::new(UnavailableEngineBackend {
             reason: "whisper.cpp is not compiled into this build; use a gemma4 model (ggml_llama) for speech_to_text",
             config,

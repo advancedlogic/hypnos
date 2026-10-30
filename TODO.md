@@ -50,25 +50,12 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 2   | 4   | 2   | 6    | 1   | 4     | 4   | 1    |
+| 2  | 2   | 5   | 2   | 6    | 1   | 4     | 4   | 1    |
 
 ---
 
 ## Backlog
 
-- [ ] 🟩 **ENG-1** `P2` Add document conversion with docling.rs (PDF / images to Markdown)
-      Use the `docling` crate (docling-project's Rust port, MIT; ~2.55, all `docling-*` crates on
-      one version) on CPU: layout + TableFormer (+ OCR, formulas) in ONNX, pure-Rust PDF parsing
-      and rendering (lopdf, tiny-skia; no pdfium). It builds against our `ort =2.0.0-rc.15`.
-      Convert one page per pass (`page_range(p, p)`) with a warm pipeline: a 6-page PDF peaks at
-      12.7 GB in one call but 1.8-2.6 GB per page, so the model gets a fixed Tier 2 booking.
-      Endpoint `POST /v1/documents/convert` (multipart file or URL, `pages`, `ocr`,
-      `output_format` markdown | json) streams each page; stitch across pages (tables and lists
-      that continue, repeated headers / footers, heading levels). New modality
-      `document_conversion`, `onnx_runtime` engine, config entry with a model directory, the
-      models in `models.manifest`. Port from idu `rust/src/docling_convert.rs`: OCR retry for
-      PDFs with no text layer, `/aNNN` glyph-name cleanup, optional figure / table descriptions
-      through a loaded vision model. First measure warm per-page time and the int8 layout model.
 - [ ] 🟩 **ENG-2** `P2` Add GLiNER zero-shot named-entity extraction
       Run GLiNER ONNX exports on CPU through ONNX Runtime, like Kokoro (`onnx_runtime` engine,
       `realtime_pinned`): tokenizer via the `tokenizers` crate, span decoding and thresholding
@@ -84,12 +71,44 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       measured VRAM size and cap the arena with `gpu_mem_limit`; ships ORT as shared libraries
       plus cuDNN 9 in the CUDA archives and the Docker image, and moves Kokoro to the same ORT.
       Measure first how much of a page is model inference versus parsing and rendering.
+- [ ] 🟩 **ENG-4** `P2` Add audio.cpp for text-to-speech and optional speech-to-text
+      Vendor https://github.com/0xShug0/audio.cpp (pin + patches in `scripts/vendor.sh`) and link
+      it in-process as a new engine for `POST /v1/audio/speech`, next to Kokoro. Optionally offer
+      it for `POST /v1/audio/transcriptions` as an alternative to the llama.cpp/mtmd path,
+      selected per model in the config. Check its ggml does not clash with llama.cpp's (build
+      shared like sd.cpp if needed), then add models to `models.manifest` and the example configs.
 
 ## In Progress
 
 _No cards yet._
 
 ## Done
+
+- [x] 🟩 **ENG-1** `P2` Add document conversion with docling.rs (PDF / images to Markdown)
+      Use the `docling` crate (docling-project's Rust port, MIT; ~2.55, all `docling-*` crates on
+      one version) on CPU: layout + TableFormer (+ OCR, formulas) in ONNX, pure-Rust PDF parsing
+      and rendering (lopdf, tiny-skia; no pdfium). It builds against our `ort =2.0.0-rc.15`.
+      Convert one page per pass (`page_range(p, p)`) with a warm pipeline: a 6-page PDF peaks at
+      12.7 GB in one call but 1.8-2.6 GB per page, so the model gets a fixed Tier 2 booking.
+      Endpoint `POST /v1/documents/convert` (multipart file or URL, `pages`, `ocr`,
+      `output_format` markdown | json) streams each page; stitch across pages (tables and lists
+      that continue, repeated headers / footers, heading levels). New modality
+      `document_conversion`, `onnx_runtime` engine, config entry with a model directory, the
+      models in `models.manifest`. Port from idu `rust/src/docling_convert.rs`: OCR retry for
+      PDFs with no text layer, `/aNNN` glyph-name cleanup, optional figure / table descriptions
+      through a loaded vision model. First measure warm per-page time and the int8 layout model.
+      Shipped: `docling` engine (`hypnos-backends/src/document.rs`, docling 2.55.4) and
+      `POST /v1/documents/convert` (multipart or JSON with base64 / data URI / `url`; `pages`, `ocr`,
+      `output_format` markdown | json, `stream` = one SSE event per page, `describe_pictures`).
+      New `device = "cpu"`: Tier 1 books host RAM only and a CPU model short of RAM moves idle
+      RAM-only models to Tier 3. Measured on an M5 Max: models load in ~12 s (with the tier switch,
+      warmed by a blank image), ~0.24 s per page after that, TableFormer loads on the first table;
+      footprint 4.2 GB against a 4.1 GB booking, 1.0 GB after eviction. `join_pages` mends tables,
+      numbered lists and cut sentences; OCR is docling's own (pages without a text layer only).
+      All ONNX engines now share docling-onnx's environment: ort rc.15 allows one per process, so
+      Kokoro could not reload after an eviction before. `models.manifest` rows may name an https
+      base URL (no HF token sent there). Playground tab 6 "Documents", smoke test step 9, example
+      configs and default profile, notices (docling MIT, models Apache-2.0 / CDLA, MPL-2.0 crates).
 
 - [x] ⬛ **BUILD-2** `P2` Provide a Docker image with CUDA support
       Multi-stage Dockerfile (build on a CUDA devel image, run on a CUDA runtime image), models

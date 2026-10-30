@@ -134,6 +134,23 @@ impl KvCacheEstimator {
             .min(model.arch.max_context_len);
 
         let total_layers = model.arch.num_layers.max(1);
+        if model.runs_on_cpu() {
+            // Loaded means everything in host RAM: the weights plus the engine's working memory.
+            // On unified memory that RAM is the same pool, so the Tier 1 view still applies.
+            let ram = model
+                .total_weight_bytes
+                .saturating_add(model.arch.activation_workspace_bytes);
+            return (ram <= available_pinned_ram_bytes).then_some(LayerPlacementPlan {
+                primary_tier: MemoryTier::Tier1GpuVram,
+                gpu_layers: 0,
+                pinned_ram_layers: total_layers,
+                ssd_layers: 0,
+                vram_weight_bytes: 0,
+                vram_kv_and_workspace_bytes: 0,
+                pinned_ram_bytes: ram,
+                allocated_context_len: context_len,
+            });
+        }
         let min_gpu_layers =
             ((total_layers as f32) * model.min_gpu_layer_ratio.clamp(0.0, 1.0)).ceil() as u32;
         let min_gpu_layers = if is_unified_memory {
@@ -220,6 +237,7 @@ mod tests {
             priority: ModelPriority::High,
             slots: 1,
             prefix_cache: true,
+            device: Default::default(),
             arch: ModelArchitectureParams {
                 num_layers: 46,
                 num_kv_heads: 8,

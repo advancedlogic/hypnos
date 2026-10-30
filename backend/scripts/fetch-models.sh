@@ -9,6 +9,7 @@
 # HYPNOS_MODELS_MIN_FREE_GB (default 2) free; nothing is fetched when they do not fit.
 # HYPNOS_MODELS_DIR overrides the target folder (the configs expect backend/models/; symlink it).
 # HF_TOKEN, when set, is sent to Hugging Face (higher rate limits); the repositories are public.
+# A manifest repo that is an https:// URL is a plain download base (no token is sent there).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -47,10 +48,24 @@ queue() {
     fi
 }
 
+# file_url <repo> <remote path>: a Hugging Face repository, or a direct https:// download base.
+file_url() {
+    case "$1" in
+        https://*) echo "$1/$2" ;;
+        *) echo "$HF/$1/resolve/main/$2" ;;
+    esac
+}
+
+# auth_for <repo>: the HF token header, only for Hugging Face.
+auth_for() {
+    case "$1" in https://*) ;; *) [ -n "${HF_TOKEN:-}" ] && printf '%s\n' -H "Authorization: Bearer $HF_TOKEN" ;; esac
+}
+
 # remote_size <repo> <remote path>: byte size from a HEAD request (the last Content-Length after
-# Hugging Face's redirect to the file store); empty when unknown.
+# the redirect to the file store); empty when unknown.
 remote_size() {
-    curl -fsSIL ${AUTH[@]+"${AUTH[@]}"} "$HF/$1/resolve/main/$2" 2>/dev/null \
+    local hdr=(); while IFS= read -r a; do hdr+=("$a"); done < <(auth_for "$1")
+    curl -fsSIL ${hdr[@]+"${hdr[@]}"} "$(file_url "$1" "$2")" 2>/dev/null \
         | tr -d '\r' | awk 'tolower($1) == "content-length:" { n = $2 } END { print n }'
 }
 
@@ -58,8 +73,9 @@ remote_size() {
 download() {
     local repo="$1" remote="$2" dest="$3"
     mkdir -p "$(dirname "$dest")"
+    local hdr=(); while IFS= read -r a; do hdr+=("$a"); done < <(auth_for "$repo")
     echo "[models] $repo/$remote -> ${dest#$ROOT/}"
-    if curl -fL --retry 3 -C - "${PROGRESS[@]}" ${AUTH[@]+"${AUTH[@]}"} -o "$dest.part" "$HF/$repo/resolve/main/$remote"; then
+    if curl -fL --retry 3 -C - "${PROGRESS[@]}" ${hdr[@]+"${hdr[@]}"} -o "$dest.part" "$(file_url "$repo" "$remote")"; then
         mv -f "$dest.part" "$dest"
         fetched=$((fetched + 1))
     else

@@ -32,6 +32,9 @@ llama-cpp-2.workspace = true
 diffusion-rs-sys.workspace = true
 ort.workspace = true
 espeak-rs.workspace = true
+docling.workspace = true
+docling-pdf.workspace = true
+docling-onnx.workspace = true
 
 # Media / codec helpers
 hound.workspace = true

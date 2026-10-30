@@ -104,7 +104,39 @@ print(f"png bytes={len(b)} magic_ok={b[:8]==bytes([137,80,78,71,13,10,26,10])}")
 echo "     -> $res  ($(( $(date +%s) - t0 ))s)"
 echo "$res" | grep -q 'magic_ok=True' && ok "image generation" || bad "image generation"
 
-# 9. memory status ---------------------------------------------------------------------------
+# 9. document conversion -----------------------------------------------------------------------
+echo "-- documents/convert (docling, a generated one-page PDF) ..."
+json '
+import sys
+text = "Hypnos converts this sample page."
+objs = ["<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        None,
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+stream = f"BT /F1 18 Tf 72 700 Td ({text}) Tj ET"
+objs[3] = f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream"
+out, offsets = "%PDF-1.4\n", []
+for i, o in enumerate(objs, 1):
+    offsets.append(len(out)); out += f"{i} 0 obj\n{o}\nendobj\n"
+xref = len(out)
+out += f"xref\n0 {len(objs)+1}\n0000000000 65535 f \n" + "".join(f"{o:010d} 00000 n \n" for o in offsets)
+out += f"trailer\n<< /Size {len(objs)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+open(sys.argv[1], "w", encoding="latin-1").write(out)
+' "$OUT/sample.pdf"
+t0=$(date +%s)
+curl -s -m 600 "$HOST/v1/documents/convert" -F model=docling -F "file=@$OUT/sample.pdf;type=application/pdf" > "$OUT/document.json"
+res=$(json '
+import sys,json
+d=json.load(open(sys.argv[1]))
+if "markdown" not in d: print("ERR", d.get("error",{}).get("message")); sys.exit()
+pages, found = d["usage"]["pages"], "sample page" in d["markdown"]
+print(f"pages={pages} found={found}")
+' "$OUT/document.json" 2>/dev/null)
+echo "     -> $res  ($(( $(date +%s) - t0 ))s)"
+echo "$res" | grep -q 'found=True' && ok "document conversion" || bad "document conversion"
+
+# 10. memory status --------------------------------------------------------------------------
 curl -s -m 10 "$HOST/v1/memory/status" > "$OUT/memory_status.json"
 json 'import sys,json; d=json.load(open(sys.argv[1])); print("   VRAM used %.1f GiB / free %.1f GiB; models: %s" % (d["tier1_vram_used_bytes"]/2**30, d["tier1_vram_free_bytes"]/2**30, ", ".join(f"{m[\"id\"]}={m[\"current_tier\"]}" for m in d["models"])))' "$OUT/memory_status.json" 2>/dev/null
 

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 An OpenAI-compatible multi-modal inference server in Rust (`backend/`) plus a Svelte 5 + Tailwind
 playground (`frontend/`). All engines (llama.cpp + libmtmd, stable-diffusion.cpp, ONNX Runtime +
-espeak-ng) are compiled and linked **in-process**; there is no external runtime. The core idea is a
+espeak-ng, docling.rs) are compiled and linked **in-process**; there is no external runtime. The core idea is a
 3-tier memory hierarchy (Tier 1 GPU VRAM, Tier 2 pinned host RAM, Tier 3 memory-mapped NVMe) with a
 lease-based scheduler that promotes/evicts models on demand. See [README.md](README.md) for the
 model lineup, endpoint table and production behaviour.
@@ -154,6 +154,14 @@ keep that profile in sync with `hypnos.example.toml` when adding models or field
   the fp32 `model.onnx` on Apple Silicon, where fp16 overflows to an all-NaN (silent) waveform for
   some inputs; a non-finite waveform is returned as an error. The crate's `build.rs` copies
   `espeak-ng-data` next to the binary.
+- `document.rs`: `docling` (docling.rs crates, every `docling-*` pinned to one version).
+  `device = "cpu"`: the planner books its Tier 1 placement in host RAM only (`runs_on_cpu`), and
+  a CPU model short of RAM pushes idle RAM-only models to Tier 3. PDFs go one page per conversion
+  through a `WarmPipeline` (a whole document at once keeps every page's data until the end);
+  `join_pages` mends tables, numbered lists and sentences across breaks. `$DOCLING_RS_MODELS_DIR`
+  is set from `weights_path`'s folder, hence one docling model per server.
+- `onnx.rs`: ort rc.15 allows one ONNX Runtime environment per process, never rebuilt once
+  dropped. Every ONNX engine takes `docling_onnx::environment()`; never call `ort::init().build()`.
 
 ### Vendored engines (`backend/vendor/`)
 

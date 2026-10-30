@@ -26,6 +26,7 @@
 #   3. kokoro-82m-q4   (Text-to-Speech)                     ONNX Runtime + espeak-ng
 #   4. gemmaembedding2 (Vector Embeddings)                  llama.cpp
 #   5. moss-image      (Image Generation)                   stable-diffusion.cpp
+#   6. docling         (Document Conversion)                docling.rs on ONNX Runtime (CPU)
 #
 # Paths are relative to the working directory (run from `backend/`).
 # =============================================================================
@@ -224,3 +225,26 @@ max_context_len = 1024
 kv_dtype = "f16"
 non_layer_overhead_bytes = 6442450944   # text encoder + VAE are not block-splittable
 activation_workspace_bytes = 3221225472
+
+# -----------------------------------------------------------------------------
+# 6. docling — Document conversion (/v1/documents/convert): PDFs, images, DOCX/PPTX/XLSX, HTML
+#    docling.rs (docling-project/docling.rs, MIT): layout (int8), TableFormer and PP-OCRv6 models
+#    on ONNX Runtime, on the CPU; PDFs are parsed and rendered in pure Rust. weights_path is the
+#    layout model, and the other model files sit in the same folder (`./run.sh models docling`).
+#    Pages are converted one at a time, so this booking (models + working memory, all host RAM)
+#    holds for documents of any length. OCR runs only on pages without a text layer.
+# -----------------------------------------------------------------------------
+[[models]]
+id = "docling"
+modality = "document_conversion"
+engine = "docling"
+device = "cpu"                          # Tier 1 books host RAM, not VRAM
+weights_path = "models/docling/layout_heron_int8.onnx"
+total_weight_bytes = 335544320          # every docling model file (~310 MiB)
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = false                # unloading frees the models; reloading takes ~12 s
+priority = "normal"
+
+[models.arch]
+num_layers = 1
+activation_workspace_bytes = 3758096384 # 3.5 GiB peak while converting a page

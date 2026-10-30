@@ -26,7 +26,8 @@ the big ones come in when asked for, and nothing is evicted while a request is u
   layers on the GPU (CUDA).
 - **Drop-in for OpenAI clients.** `/v1/chat/completions` (streaming, images, audio), `/v1/embeddings`,
   `/v1/audio/transcriptions`, `/v1/audio/speech` (streaming), `/v1/images/generations`, with
-  optional API keys and in-process HTTPS.
+  optional API keys and in-process HTTPS. Plus `/v1/documents/convert`: PDFs, images and office
+  documents to Markdown with docling, page by page.
 - **Observable.** A live playground shows each model's tier as requests come in, every response
   carries its placement and timing, `/metrics` is Prometheus, and a request log keeps recent calls.
 - **Runs on CUDA (Windows, Linux) and Apple Silicon (Metal).**
@@ -207,9 +208,9 @@ On Windows: `set HYPNOS_CONFIG=my.toml` and then `run.bat start backend`.
 
 ## Default model lineup
 
-Every engine runs **inside the `hypnos` process**: llama.cpp + libmtmd, stable-diffusion.cpp and
-ONNX Runtime + espeak-ng are compiled and linked natively (CUDA or Metal). No Ollama, LM Studio or Python
-sidecar is involved.
+Every engine runs **inside the `hypnos` process**: llama.cpp + libmtmd, stable-diffusion.cpp,
+ONNX Runtime + espeak-ng and docling.rs are compiled and linked natively (CUDA or Metal). No Ollama,
+LM Studio or Python sidecar is involved.
 
 | Model ID | Modalities Served | Engine | Files (under `backend/models/`) | Default Tier Policy |
 | :--- | :--- | :--- | :--- | :--- |
@@ -218,6 +219,7 @@ sidecar is involved.
 | **`kokoro-82m-q4`** | **Text-to-Speech** (`/v1/audio/speech`) | `onnx_runtime` | `kokoro/model_fp16.onnx` (155 MiB) + `kokoro/voices/*.bin` | `RealtimePinned` (always resident; runs on CPU) |
 | **`gemmaembedding2`** | **Vector Embeddings** (`/v1/embeddings`) | `ggml_llama` | `embeddinggemma-2-Q8_0.gguf` (295 MiB) | `RealtimePinned` (always hot in Tier 1 VRAM) |
 | **`moss-image`** | **Image Generation** (`/v1/images/generations`) | `ggml_diffusion` | `MOSS-Image-SFT-Q4_K.gguf` (3.3 GiB) + `Qwen3.5-9B-Q4_K_M.gguf` (5.7 GiB) + `flux2-vae.safetensors` + `moss_tokenizer.json` | `Low` (promoted to Tier 1 VRAM on demand, evicts idle models) |
+| **`docling`** | **Document Conversion** (`/v1/documents/convert`) | `docling` | `docling/` (310 MiB: layout, TableFormer, OCR) | `Normal`, `device = "cpu"` (loaded on demand into host RAM, ~4 GiB booked, no VRAM) |
 
 ### Model files
 
@@ -226,7 +228,7 @@ sidecar is involved.
 resumes on the next run, and `./run.sh models moss-image` fetches a single model. The file list lives
 in [backend/models.manifest](backend/models.manifest); on Apple Silicon it picks the fp32 Kokoro graph.
 
-Download sources (all public Hugging Face repositories):
+Download sources (public Hugging Face repositories, and one GitHub release):
 
 | File | Source |
 | :--- | :--- |
@@ -238,6 +240,7 @@ Download sources (all public Hugging Face repositories):
 | `Qwen3.5-9B-Q4_K_M.gguf` | `unsloth/Qwen3.5-9B-GGUF` |
 | `flux2-vae.safetensors` | `Comfy-Org/MOSS-Image` (`vae/`) |
 | `moss_tokenizer.json` | `OpenMOSS-Team/MOSS-Image-Base` (`tokenizer/tokenizer.json`) |
+| `docling/` (`layout_heron_int8.onnx`, `tableformer/`, `ocr_*`) | `docling-project/docling.rs` GitHub release `models-v1` |
 
 Notes:
 - Kokoro's quantized exports (`model_q8f16.onnx`, `model_q4.onnx`) crash the statically linked
@@ -445,6 +448,17 @@ Behaviour that matters in production:
   or a WAV whose header declares an open-ended length (players read to end of stream) for `wav`.
   The first chunk is cut at the first clause boundary so playback starts after one short synthesis;
   `hypnos_tts_ttfa_ms` on `/metrics` tracks the time to first audio.
+- **Document conversion** (Hypnos extension): `POST /v1/documents/convert` takes a multipart
+  upload (`file`) or a JSON body (`file` as base64 or a data URI, or `url`) and returns
+  `{"object": "document", "pages": [...], "markdown": "...", "usage": {...}}`. Options: `pages`
+  (`"3"`, `"2-5"`), `ocr` (default true: pages without a text layer are read with OCR),
+  `output_format` (`json` adds each page's docling document), `stream` (one server-sent event per
+  page, then the joined document) and `describe_pictures` (a vision model such as `gemma4:e4b-q4`
+  writes a description under every picture). PDFs are converted one page at a time through models
+  that stay loaded (about 0.25 s a page on an M5 Max; the first table loads TableFormer), so memory
+  is the same for 5 pages or 500; the joined Markdown puts back tables, numbered lists and
+  sentences that a page break cut. Images, DOCX, PPTX, XLSX, HTML and Markdown work too.
+  `limits.max_document_bytes` (100 MiB) caps the input.
 - **Benchmark**: `backend/scripts/bench.sh [--host URL] [--out docs/bench/<name>.md]` runs the
   fixed execution scenarios from `docs/execution-efficiency-plan.md` (cold chat, five-turn chat,
   vision chat, concurrent clients, TTS, voice round trip) against a running server and prints a
@@ -466,13 +480,13 @@ hypnos/
 │       ├── hypnos-core/         # Config, KV-Cache + Gemma 4 SWA Estimator, OpenAI Schemas
 │       ├── hypnos-memory/       # CUDA / ROCm / Metal UMA Topology & OS Pinned RAM Manager
 │       ├── hypnos-scheduler/    # Lease-based Admission Control, Partial Offload & Eviction
-│       ├── hypnos-backends/     # Native llama.cpp+mtmd, stable-diffusion.cpp & ONNX Runtime engines
+│       ├── hypnos-backends/     # Native llama.cpp+mtmd, stable-diffusion.cpp, ONNX Runtime & docling engines
 │       └── hypnos-server/       # Axum HTTP/SSE OpenAI Server & Multi-Modal Lifecycle Tests
 └── frontend/                    # Svelte 5 (Runes) + Tailwind CSS Interactive Playground
     ├── package.json
     ├── vite.config.js
     └── src/
-        └── App.svelte           # Live 3-Tier Visualizer + 5-Tab Modality Playground
+        └── App.svelte           # Live 3-Tier Visualizer + Modality Playground tabs
 ```
 
 ---

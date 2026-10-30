@@ -7,6 +7,7 @@
   HYPNOS_MODELS_MIN_FREE_GB (default 2) free; nothing is fetched when they do not fit.
   HYPNOS_MODELS_DIR overrides the target folder (the configs expect backend\models\).
   HF_TOKEN, when set, is sent to Hugging Face (higher rate limits); the repositories are public.
+  A manifest repo that is an https:// URL is a plain download base (no token is sent there).
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File backend\scripts\fetch-models.ps1
@@ -47,6 +48,18 @@ if ($Model -ne "all" -and $ids -notcontains $Model) {
 $script:fetched = 0; $script:kept = 0; $script:failed = 0
 $queue = New-Object System.Collections.Generic.List[object]
 
+# A Hugging Face repository, or a direct https:// download base.
+function Get-FileUrl([string]$repoName, [string]$remote) {
+    if ($repoName.StartsWith("https://")) { return "$repoName/$remote" }
+    return "$hf/$repoName/resolve/main/$remote"
+}
+
+# The HF token header, only for Hugging Face.
+function Get-Auth([string]$repoName) {
+    if ($repoName.StartsWith("https://")) { return @() }
+    return $auth
+}
+
 # Remember a file that is not downloaded yet.
 function Add-ModelFile([string]$repoName, [string]$remote, [string]$dest) {
     if (Test-Path -LiteralPath $dest -PathType Leaf) { $script:kept++; return }
@@ -57,7 +70,8 @@ function Add-ModelFile([string]$repoName, [string]$remote, [string]$dest) {
 function Get-RemoteSize([string]$repoName, [string]$remote) {
     # No `2>$null`: with $ErrorActionPreference = "Stop", Windows PowerShell 5.1 turns redirected
     # native stderr into a terminating error. -s keeps curl quiet unless the request fails.
-    $headers = & $curl -fsSIL @auth "$hf/$repoName/resolve/main/$remote"
+    $hdr = Get-Auth $repoName
+    $headers = & $curl -fsSIL @hdr (Get-FileUrl $repoName $remote)
     if ($LASTEXITCODE -ne 0) { return $null }
     $size = $null
     foreach ($line in $headers) {
@@ -69,7 +83,8 @@ function Get-RemoteSize([string]$repoName, [string]$remote) {
 function Get-ModelFile([string]$repoName, [string]$remote, [string]$dest) {
     New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
     Write-Host "[models] $repoName/$remote -> $dest"
-    & $curl -fL --retry 3 -C - --progress-bar @auth -o "$dest.part" "$hf/$repoName/resolve/main/$remote"
+    $hdr = Get-Auth $repoName
+    & $curl -fL --retry 3 -C - --progress-bar @hdr -o "$dest.part" (Get-FileUrl $repoName $remote)
     if ($LASTEXITCODE -eq 0) {
         Move-Item -Force -LiteralPath "$dest.part" -Destination $dest
         $script:fetched++

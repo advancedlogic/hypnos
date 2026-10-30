@@ -11,7 +11,8 @@ use crate::kv_cache::LayerPlacementPlan;
 use crate::openai::{
     AudioSpeechOutput, AudioSpeechRequest, AudioStreamEvent, AudioTranscriptionRequest,
     AudioTranscriptionResponse, ChatCompletionRequest, ChatCompletionResponse, ChatStreamEvent,
-    EmbeddingRequest, EmbeddingResponse, ImageGenerationRequest, ImageGenerationResponse,
+    DocumentConversionRequest, DocumentStreamEvent, EmbeddingRequest, EmbeddingResponse,
+    ImageGenerationRequest, ImageGenerationResponse,
 };
 use crate::request::RequestContext;
 use async_trait::async_trait;
@@ -144,6 +145,22 @@ pub trait ModelBackend: Send + Sync {
             model: self.config().id.clone(),
             expected: self.modality(),
             actual: Modality::TextToSpeech,
+        })
+    }
+
+    /// Converts a document (`/v1/documents/convert`), pushing a `Started` event, one `Page` per
+    /// converted page, then `Done` (or `Error`) into `tx`. Must stop between pages once
+    /// `ctx.should_continue()` is false.
+    async fn convert_document(
+        &self,
+        _req: &DocumentConversionRequest,
+        _ctx: &RequestContext,
+        _tx: mpsc::Sender<DocumentStreamEvent>,
+    ) -> Result<()> {
+        Err(crate::error::HypnosError::ModalityMismatch {
+            model: self.config().id.clone(),
+            expected: self.modality(),
+            actual: Modality::DocumentConversion,
         })
     }
 

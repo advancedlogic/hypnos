@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod default_profile;
+mod documents;
 pub mod metrics;
 pub mod request_log;
 
@@ -193,6 +194,7 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
         .route("/v1/audio/transcriptions", post(audio_transcriptions))
         .route("/v1/audio/speech", post(audio_speech))
         .route("/v1/images/generations", post(image_generations))
+        .route("/v1/documents/convert", post(documents::convert_document))
         // Hypnos 3-Tier Memory Observability & Control Endpoints
         .route("/v1/memory/status", get(memory_status))
         .route("/v1/memory/tier", post(set_model_tier))

@@ -96,3 +96,26 @@ Content-Type: application/json
   "model": "moss-image",
   "prompt": "A futuristic Rust crab managing GPU memory tiers"
 }
+
+
+### 7. Document Conversion (docling, Hypnos extension)
+# Place a sample.pdf next to this file. Optional parts: pages ("2-5"), ocr (true/false),
+# output_format (markdown/json), stream (true: one event per page), describe_pictures (a vision model).
+POST {{host}}/v1/documents/convert
+Authorization: Bearer {{apiKey}}
+Content-Type: multipart/form-data; boundary=----HypnosBoundary
+
+------HypnosBoundary
+Content-Disposition: form-data; name="model"
+
+docling
+------HypnosBoundary
+Content-Disposition: form-data; name="describe_pictures"
+
+gemma4:e4b-q4
+------HypnosBoundary
+Content-Disposition: form-data; name="file"; filename="sample.pdf"
+Content-Type: application/pdf
+
+< ./sample.pdf
+------HypnosBoundary--

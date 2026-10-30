@@ -1738,6 +1738,7 @@ mod tests {
             priority: Default::default(),
             slots: 1,
             prefix_cache: true,
+            device: Default::default(),
             arch: Default::default(),
         };
         let a = media_id(&cfg, b"png-bytes");

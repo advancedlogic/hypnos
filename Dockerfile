@@ -54,7 +54,10 @@ LABEL org.opencontainers.image.title="Hypnos" \
       org.opencontainers.image.description="One OpenAI-compatible endpoint for every modality on one GPU" \
       org.opencontainers.image.source="https://github.com/advancedlogic/hypnos" \
       org.opencontainers.image.licenses="GPL-3.0-or-later"
+# Fonts: docling's page renderer substitutes them for the standard PDF fonts most documents
+# reference without embedding; the CUDA runtime image ships none.
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 curl ca-certificates \
+        fonts-liberation fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /dist/hypnos /opt/hypnos
 WORKDIR /opt/hypnos

@@ -1,6 +1,7 @@
 use hypnos_core::config::{
-    AcceleratorKind, EngineKind, HardwareConfig, HypnosConfig, KvDataType, LimitsConfig,
-    MemoryTier, Modality, ModelArchitectureParams, ModelConfig, ModelPriority, ServerConfig,
+    AcceleratorKind, EngineKind, ExecutionDevice, HardwareConfig, HypnosConfig, KvDataType,
+    LimitsConfig, MemoryTier, Modality, ModelArchitectureParams, ModelConfig, ModelPriority,
+    ServerConfig,
 };
 use std::path::PathBuf;
 
@@ -10,6 +11,7 @@ use std::path::PathBuf;
 /// 3. `kokoro-82m-q4`   — Text-to-Speech (ONNX Runtime + espeak-ng)
 /// 4. `gemmaembedding2` — Embeddings (llama.cpp, EmbeddingGemma 2)
 /// 5. `moss-image`      — Image Generation (stable-diffusion.cpp)
+/// 6. `docling`         — Document Conversion (docling.rs on ONNX Runtime, CPU)
 pub fn default_six_model_config() -> HypnosConfig {
     let gb: u64 = 1024 * 1024 * 1024;
     let mb: u64 = 1024 * 1024;
@@ -58,6 +60,7 @@ pub fn default_six_model_config() -> HypnosConfig {
                 priority: ModelPriority::High,
                 slots: 1,
                 prefix_cache: true,
+                device: Default::default(),
                 arch: ModelArchitectureParams {
                     num_layers: 30,
                     num_kv_heads: 8,
@@ -90,6 +93,7 @@ pub fn default_six_model_config() -> HypnosConfig {
                 priority: ModelPriority::High,
                 slots: 1,
                 prefix_cache: true,
+                device: Default::default(),
                 arch: ModelArchitectureParams {
                     num_layers: 42,
                     num_kv_heads: 2,
@@ -123,6 +127,7 @@ pub fn default_six_model_config() -> HypnosConfig {
                 priority: ModelPriority::RealtimePinned,
                 slots: 1,
                 prefix_cache: true,
+                device: Default::default(),
                 arch: ModelArchitectureParams {
                     num_layers: 12,
                     num_kv_heads: 0,
@@ -155,6 +160,7 @@ pub fn default_six_model_config() -> HypnosConfig {
                 priority: ModelPriority::RealtimePinned,
                 slots: 1,
                 prefix_cache: true,
+                device: Default::default(),
                 arch: ModelArchitectureParams {
                     num_layers: 24,
                     num_kv_heads: 2,
@@ -187,6 +193,7 @@ pub fn default_six_model_config() -> HypnosConfig {
                 priority: ModelPriority::Low,
                 slots: 1,
                 prefix_cache: true,
+                device: Default::default(),
                 arch: ModelArchitectureParams {
                     num_layers: 48,
                     num_kv_heads: 0,
@@ -199,6 +206,31 @@ pub fn default_six_model_config() -> HypnosConfig {
                     non_layer_overhead_bytes: 6 * gb,
                     activation_workspace_bytes: 3 * gb,
                     configured_keys: None,
+                },
+            },
+            // 6. docling.rs — Document Conversion on the CPU (Tier 1 books host RAM only)
+            ModelConfig {
+                id: "docling".to_string(),
+                modality: Modality::DocumentConversion,
+                additional_modalities: vec![],
+                engine: EngineKind::Docling,
+                weights_path: PathBuf::from("models/docling/layout_heron_int8.onnx"),
+                aux_weights_path: None,
+                text_encoder_path: None,
+                tokenizer_path: None,
+                voices_path: None,
+                total_weight_bytes: 320 * mb,
+                min_gpu_layer_ratio: 0.25,
+                initial_tier: MemoryTier::Tier3NvmeSsd,
+                keep_warm_in_ram: false,
+                priority: ModelPriority::Normal,
+                slots: 1,
+                prefix_cache: true,
+                device: ExecutionDevice::Cpu,
+                arch: ModelArchitectureParams {
+                    num_layers: 1,
+                    activation_workspace_bytes: 3584 * mb,
+                    ..ModelArchitectureParams::default()
                 },
             },
         ],
@@ -224,8 +256,14 @@ mod tests {
         let ids = |c: &HypnosConfig| c.models.iter().map(|m| m.id.clone()).collect::<Vec<_>>();
         assert_eq!(ids(&cuda), ids(&macos));
 
+        assert_eq!(ids(&super::default_six_model_config()), ids(&cuda));
+
         assert_eq!(macos.hardware.accelerator, AcceleratorKind::AppleMetalUma);
         assert_eq!(macos.hardware.lock_host_memory, Some(false));
-        assert!(macos.models.iter().all(|m| m.min_gpu_layer_ratio == 1.0));
+        assert!(macos
+            .models
+            .iter()
+            .filter(|m| !m.runs_on_cpu())
+            .all(|m| m.min_gpu_layer_ratio == 1.0));
     }
 }

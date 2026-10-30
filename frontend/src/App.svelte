@@ -113,6 +113,17 @@
   let imageResult = $state(null);
 
   // -------------------------------------------------------------------------
+  // Documents (POST /v1/documents/convert): PDF / image / office file to Markdown, page by page
+  // -------------------------------------------------------------------------
+  let docModel = $state('docling');
+  let docFile = $state(null);
+  let docPages = $state('');
+  let docOcr = $state(true);
+  let docDescribe = $state('');
+  let docProgress = $state(null); // { page_count, pages: [numbers], done: n }
+  let docResult = $state(null);
+
+  // -------------------------------------------------------------------------
   // 6. Request Logs (GET /v1/logs): every API call the server recorded
   // -------------------------------------------------------------------------
   const LOG_LEVELS = ['off', 'error', 'warn', 'info', 'debug', 'trace'];
@@ -218,7 +229,9 @@
     return 'bg-slate-700/60 text-slate-300 border-slate-600';
   }
 
-  function tierLabel(tier) {
+  // `placement` (optional): a Tier 1 model with no GPU layers runs on the CPU (device = "cpu").
+  function tierLabel(tier, placement) {
+    if (tier === 'tier1_gpu_vram' && placement && placement.gpu_layers === 0) return 'Tier 1 • loaded on CPU';
     if (tier === 'tier1_gpu_vram') return isUnifiedMemory ? 'Tier 1 • GPU resident' : 'Tier 1 • GPU VRAM';
     if (tier === 'tier2_pinned_ram') return isUnifiedMemory ? 'Tier 2 • Warm (page cache)' : 'Tier 2 • Pinned RAM';
     return 'Tier 3 • NVMe SSD';
@@ -747,6 +760,66 @@
     }
   }
 
+  // Streams the conversion: one server-sent event per page, then the joined document.
+  async function runDocumentConversion(e) {
+    e?.preventDefault();
+    lastError = '';
+    if (!docFile) {
+      lastError = 'Choose a document first (PDF, image, DOCX, PPTX, XLSX, HTML or Markdown).';
+      return;
+    }
+    isLoading = true;
+    docResult = null;
+    docProgress = null;
+    try {
+      const form = new FormData();
+      form.append('model', docModel);
+      form.append('stream', 'true');
+      form.append('ocr', String(docOcr));
+      if (docPages.trim()) form.append('pages', docPages.trim());
+      if (docDescribe.trim()) form.append('describe_pictures', docDescribe.trim());
+      form.append('file', docFile, docFile.name);
+      const res = await apiFetch(`/v1/documents/convert`, { method: 'POST', body: form });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error?.message || `HTTP ${res.status}`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const pages = [];
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let cut;
+        while ((cut = buffer.indexOf('\n\n')) >= 0) {
+          const chunk = buffer.slice(0, cut);
+          buffer = buffer.slice(cut + 2);
+          const line = chunk.split('\n').find((l) => l.startsWith('data: '));
+          if (!line || line === 'data: [DONE]') continue;
+          const ev = JSON.parse(line.slice(6));
+          if (ev.object === 'document.started') {
+            docProgress = { page_count: ev.page_count, pages: ev.pages, done: 0 };
+          } else if (ev.object === 'document.page') {
+            pages.push(ev);
+            docProgress = { ...docProgress, done: pages.length, last_ms: ev.ms };
+          } else if (ev.object === 'document') {
+            docResult = { ...ev, pages };
+            recordTelemetry(docModel, 'document_conversion', ev.hypnos_telemetry);
+          } else if (ev.object === 'error') {
+            throw new Error(ev.error?.message || 'conversion failed');
+          }
+        }
+      }
+      await fetchMemoryStatus();
+    } catch (err) {
+      lastError = err.message;
+    } finally {
+      isLoading = false;
+    }
+  }
+
   async function runImageGeneration(e) {
     e?.preventDefault();
     isLoading = true;
@@ -992,7 +1065,7 @@
                     <div class="flex items-center gap-2 flex-wrap">
                       <span class="font-mono font-semibold text-sm text-white">{m.id}</span>
                       <span class="text-[10px] px-2 py-0.5 rounded border font-medium {tierBadgeClass(m.current_tier)}">
-                        {tierLabel(m.current_tier)}
+                        {tierLabel(m.current_tier, m.placement)}
                       </span>
                     </div>
                     <div class="flex flex-wrap gap-1 mt-1">
@@ -1114,10 +1187,16 @@
             5. Image Gen (moss-image)
           </button>
           <button
+            onclick={() => (activeTab = 'documents')}
+            class="px-3.5 py-2 rounded-lg text-xs font-semibold transition {activeTab === 'documents' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/25' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'}"
+          >
+            6. Documents (docling)
+          </button>
+          <button
             onclick={() => (activeTab = 'logs')}
             class="px-3.5 py-2 rounded-lg text-xs font-semibold transition {activeTab === 'logs' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/25' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'}"
           >
-            6. Request Logs
+            7. Request Logs
           </button>
         </div>
 
@@ -1767,7 +1846,7 @@
                     Switch: <strong class="text-emerald-300">{imageResult.hypnos_telemetry.tier_switch_latency_ms.toFixed(2)}ms</strong>
                   </span>
                   <span>
-                    Evicted to RAM:
+                    Evicted:
                     <strong class="text-rose-300">
                       {imageResult.hypnos_telemetry.evicted_models.length > 0
                         ? imageResult.hypnos_telemetry.evicted_models.join(', ')
@@ -1802,6 +1881,110 @@
                   </div>
                 {/if}
               {/each}
+            </div>
+          {/if}
+
+        <!-- TAB 6: DOCUMENT CONVERSION (docling) -->
+        {:else if activeTab === 'documents'}
+          <form onsubmit={runDocumentConversion} class="space-y-4">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs text-slate-400 mb-1" for="doc-model">Document Model</label>
+                <input
+                  id="doc-model"
+                  type="text"
+                  bind:value={docModel}
+                  class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white"
+                />
+              </div>
+              <div>
+                <label class="block text-xs text-slate-400 mb-1" for="doc-pages">Pages (e.g. 2-5; empty = all)</label>
+                <input
+                  id="doc-pages"
+                  type="text"
+                  bind:value={docPages}
+                  placeholder="all"
+                  class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white"
+                />
+              </div>
+              <div>
+                <label class="block text-xs text-slate-400 mb-1" for="doc-describe">Describe pictures with (vision model, optional)</label>
+                <input
+                  id="doc-describe"
+                  type="text"
+                  bind:value={docDescribe}
+                  placeholder="gemma4:e4b-q4"
+                  class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white"
+                />
+              </div>
+            </div>
+
+            <div class="space-y-2">
+              <label class="block text-xs text-slate-400" for="doc-file">
+                Document: <strong class="text-slate-200">PDF</strong>, an image, DOCX, PPTX, XLSX, HTML or Markdown
+              </label>
+              <input
+                id="doc-file"
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.webp,.bmp,.docx,.pptx,.xlsx,.html,.htm,.md"
+                onchange={(e) => (docFile = e.currentTarget.files?.[0] ?? null)}
+                class="w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700"
+              />
+              <label class="flex items-center gap-2 text-xs text-slate-300">
+                <input type="checkbox" bind:checked={docOcr} class="accent-indigo-500" />
+                OCR pages that have no text layer (scans, images)
+              </label>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isLoading}
+              class="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs font-semibold text-white transition"
+            >
+              {#if isLoading && docProgress}
+                Converting page {Math.min(docProgress.done + 1, docProgress.pages.length)} of {docProgress.pages.length}...
+              {:else if isLoading}
+                Loading docling & reading the document...
+              {:else}
+                Convert via /v1/documents/convert (streamed page by page)
+              {/if}
+            </button>
+          </form>
+
+          {#if docProgress && !docResult}
+            <div class="h-1.5 rounded bg-slate-800 overflow-hidden">
+              <div
+                class="h-full bg-indigo-500 transition-all"
+                style={`width: ${(100 * docProgress.done) / Math.max(1, docProgress.pages.length)}%`}
+              ></div>
+            </div>
+          {/if}
+
+          {#if docResult}
+            <div class="rounded-lg border border-slate-800 bg-slate-950 p-3.5 space-y-2 text-xs">
+              <div class="flex flex-wrap justify-between gap-2 text-slate-400 font-mono">
+                <span>
+                  Pages: <strong class="text-white">{docResult.usage.pages}</strong> of {docResult.page_count}
+                  · tables {docResult.usage.tables} · pictures {docResult.usage.pictures}{docResult.usage.pictures_described != null ? ` (${docResult.usage.pictures_described} described)` : ''}
+                </span>
+                {#if docResult.hypnos_telemetry}
+                  <span>
+                    From: <strong class="text-amber-300">{docResult.hypnos_telemetry.previous_tier}</strong> ·
+                    Switch: <strong class="text-emerald-300">{docResult.hypnos_telemetry.tier_switch_latency_ms.toFixed(0)}ms</strong> ·
+                    {(docResult.hypnos_telemetry.engine?.ms_per_page ?? 0).toFixed(0)} ms/page
+                  </span>
+                {/if}
+              </div>
+              <div class="flex justify-end">
+                <a
+                  href={`data:text/markdown;charset=utf-8,${encodeURIComponent(docResult.markdown)}`}
+                  download={`${(docResult.filename || 'document').replace(/\.[^.]+$/, '')}.md`}
+                  class="text-indigo-300 hover:text-indigo-200 underline"
+                >
+                  Download Markdown
+                </a>
+              </div>
+              <pre class="font-mono text-emerald-100 bg-slate-900 p-3 rounded border border-slate-800 whitespace-pre-wrap max-h-[32rem] overflow-y-auto">{docResult.markdown}</pre>
             </div>
           {/if}
         {/if}
@@ -1845,7 +2028,7 @@
                   </span>
                   {#if entry.evicted_models?.length > 0}
                     <span class="text-rose-300">
-                      Evicted→RAM: {entry.evicted_models.join(', ')}
+                      Evicted: {entry.evicted_models.join(', ')}
                     </span>
                   {/if}
                 </div>

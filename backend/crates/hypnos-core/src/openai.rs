@@ -213,6 +213,8 @@ pub struct PromptTokensDetails {
 }
 
 /// Incremental events emitted by a streaming chat completion.
+// `Done` (with the engine timings) is sent once per stream; boxing it would only add indirection.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum ChatStreamEvent {
     /// A new piece of generated text.
@@ -474,6 +476,12 @@ pub struct EngineTiming {
     /// (1 means it never shared a decode step).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub concurrent_slots: Option<u32>,
+    /// Document conversion: pages converted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pages: Option<u32>,
+    /// Document conversion: mean conversion time per page (models already loaded excluded).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ms_per_page: Option<f64>,
 }
 
 impl ExecutionTelemetry {
@@ -503,6 +511,121 @@ impl ExecutionTelemetry {
         self.engine = engine;
         self
     }
+}
+
+// ============================================================================
+// Document conversion (Hypnos extension: POST /v1/documents/convert)
+// ============================================================================
+
+/// Converts a document (PDF, image, or an office / web format docling reads) to Markdown. JSON
+/// bodies carry the file as base64 (or a `data:` URI) in `file`, or a `url`; multipart bodies send
+/// the same fields as form parts with the document in `file`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DocumentConversionRequest {
+    pub model: String,
+    /// The document, base64-encoded or as a `data:` URI (JSON bodies only).
+    #[serde(default, skip_serializing)]
+    pub file: Option<String>,
+    /// The document's bytes, filled by the server from `file`, `url` or the multipart part.
+    #[serde(skip)]
+    pub file_bytes: Vec<u8>,
+    /// Fetch the document from this http(s) URL (needs `limits.allow_remote_image_urls`).
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Original file name; its extension helps detect the format.
+    #[serde(default)]
+    pub filename: Option<String>,
+    /// 1-based page or inclusive range, e.g. `"3"` or `"2-5"`; every page when absent.
+    #[serde(default)]
+    pub pages: Option<String>,
+    /// Read pages that have no text layer (scans, images) with OCR. Default true; turning it off
+    /// rebuilds the pipeline without the OCR models.
+    #[serde(default = "default_true")]
+    pub ocr: bool,
+    /// `markdown` (default) or `json`: `json` adds each page's docling document as `json`.
+    #[serde(default = "default_document_format")]
+    pub output_format: String,
+    /// Send each page as a server-sent event as soon as it is converted.
+    #[serde(default)]
+    pub stream: bool,
+    /// A vision model (e.g. `gemma4:e4b-q4`) that describes every picture; the description
+    /// replaces the picture's `<!-- image -->` placeholder in the Markdown.
+    #[serde(default)]
+    pub describe_pictures: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_document_format() -> String {
+    "markdown".to_string()
+}
+
+impl DocumentConversionRequest {
+    pub fn wants_json(&self) -> bool {
+        self.output_format.eq_ignore_ascii_case("json")
+    }
+}
+
+/// One converted page (or the whole document, for formats without pages).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DocumentPage {
+    /// 1-based page number; 1 for formats without pages.
+    pub page: u32,
+    pub markdown: String,
+    /// The page's docling document (`output_format = "json"` only), picture images removed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub json: Option<serde_json::Value>,
+    pub pictures: u32,
+    pub tables: u32,
+    /// Conversion time of this page in milliseconds.
+    pub ms: f64,
+    /// PNG data URIs of the page's pictures, in Markdown order (for `describe_pictures`).
+    #[serde(skip)]
+    pub picture_images: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DocumentUsage {
+    pub pages: u32,
+    pub pictures: u32,
+    pub tables: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pictures_described: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentConversionResponse {
+    /// Always `"document"`.
+    pub object: String,
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    /// Pages in the source document (not only the converted ones).
+    pub page_count: u32,
+    pub pages: Vec<DocumentPage>,
+    /// The converted pages joined into one document, with tables, numbered lists and paragraphs
+    /// that run across a page break put back together.
+    pub markdown: String,
+    pub usage: DocumentUsage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hypnos_telemetry: Option<ExecutionTelemetry>,
+}
+
+/// Incremental events emitted by a streaming document conversion.
+#[derive(Debug, Clone)]
+pub enum DocumentStreamEvent {
+    /// The document was read: how many pages it has and which ones will be converted.
+    Started {
+        page_count: u32,
+        pages: Vec<u32>,
+    },
+    Page(DocumentPage),
+    /// Every requested page is converted.
+    Done {
+        timing: EngineTiming,
+    },
+    Error(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

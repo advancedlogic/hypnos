@@ -136,6 +136,11 @@ const ENGINE_METRICS: &[EngineMetric] = &[
         help: "Image generation: request to last image (s).",
         bounds: SECONDS,
     },
+    EngineMetric {
+        name: "hypnos_document_ms_per_page",
+        help: "Document conversion: mean conversion time per page of a request (ms).",
+        bounds: LATENCY_MS,
+    },
 ];
 
 /// Per-model counters, in exposition order.
@@ -152,6 +157,7 @@ const ENGINE_COUNTERS: &[(&str, &str)] = &[
         "hypnos_prefix_cache_tokens_reused_total",
         "Prompt positions served from the KV cache instead of being prefilled.",
     ),
+    ("hypnos_document_pages_total", "Document pages converted."),
 ];
 
 #[derive(Debug, Default)]
@@ -241,6 +247,13 @@ impl Metrics {
 
     pub fn record_image(&self, model: &str, jct: Duration) {
         self.observe("hypnos_image_jct_s", model, Some(jct.as_secs_f64()));
+    }
+
+    pub fn record_document(&self, model: &str, t: &EngineTiming) {
+        self.observe("hypnos_document_ms_per_page", model, t.ms_per_page);
+        if let Some(pages) = t.pages {
+            self.count("hypnos_document_pages_total", model, u64::from(pages));
+        }
     }
 
     pub fn render(

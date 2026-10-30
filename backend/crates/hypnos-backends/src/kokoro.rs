@@ -20,7 +20,6 @@ use hypnos_core::openai::{
 };
 use hypnos_core::request::RequestContext;
 use hypnos_core::ModelBackend;
-use ort::environment::Environment;
 use ort::session::builder::AutoDevicePolicy;
 use ort::session::Session;
 use ort::value::Tensor;
@@ -181,8 +180,6 @@ fn resolve_voice<'a>(requested: &str, voices: &'a HashMap<String, Vec<f32>>) -> 
 }
 
 struct LoadedKokoro {
-    /// Kept alive for the session's lifetime.
-    _env: Environment,
     session: Session,
     voices: HashMap<String, Vec<f32>>,
     tokens_input: String,
@@ -255,11 +252,7 @@ fn load_kokoro(cfg: &ModelConfig, n_threads: i32) -> Result<LoadedKokoro> {
     }
 
     let started = Instant::now();
-    let env = ort::init()
-        .with_name("hypnos-kokoro")
-        .build()
-        .map_err(|e| HypnosError::BackendError(format!("ONNX Runtime init failed: {e}")))?;
-    let session = Session::builder(&env)
+    let session = Session::builder(crate::onnx::environment()?)
         .map_err(|e| HypnosError::BackendError(format!("ONNX session builder: {e}")))?
         .with_intra_threads(n_threads.clamp(1, 8) as usize)
         .map_err(|e| HypnosError::BackendError(format!("ONNX session options: {e}")))?
@@ -293,7 +286,6 @@ fn load_kokoro(cfg: &ModelConfig, n_threads: i32) -> Result<LoadedKokoro> {
         "Kokoro ONNX session resident"
     );
     Ok(LoadedKokoro {
-        _env: env,
         session,
         voices,
         tokens_input,

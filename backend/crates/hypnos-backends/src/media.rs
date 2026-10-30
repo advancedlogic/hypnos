@@ -47,26 +47,71 @@ fn load_url(url: &str, limits: &LimitsConfig) -> Result<Vec<u8>> {
         return decode_base64(payload);
     }
     if url.starts_with("http://") || url.starts_with("https://") {
-        if !limits.allow_remote_image_urls {
-            return Err(HypnosError::InvalidRequest(
-                "remote image URLs are disabled (limits.allow_remote_image_urls = false); send a data: URL".to_string(),
-            ));
-        }
-        let resp = ureq::get(url)
-            .timeout(std::time::Duration::from_secs(30))
-            .call()
-            .map_err(|e| HypnosError::InvalidRequest(format!("failed to fetch {url}: {e}")))?;
-        let mut buf = Vec::new();
-        resp.into_reader()
-            .take(limits.max_image_bytes.saturating_add(1))
-            .read_to_end(&mut buf)
-            .map_err(|e| HypnosError::InvalidRequest(format!("failed to read {url}: {e}")))?;
-        return Ok(buf);
+        return fetch_remote(url, limits.max_image_bytes, "image", limits);
     }
     Err(HypnosError::InvalidRequest(format!(
         "unsupported media URL scheme (expected data: or http(s)://): {}",
         url.chars().take(64).collect::<String>()
     )))
+}
+
+/// Downloads `url` (at most `limit` + 1 bytes, so the caller's size check can reject it) when
+/// `limits.allow_remote_image_urls` permits outbound fetches.
+fn fetch_remote(url: &str, limit: u64, what: &str, limits: &LimitsConfig) -> Result<Vec<u8>> {
+    if !limits.allow_remote_image_urls {
+        return Err(HypnosError::InvalidRequest(format!(
+            "remote {what} URLs are disabled (limits.allow_remote_image_urls = false); send the {what} itself"
+        )));
+    }
+    let resp = ureq::get(url)
+        .timeout(std::time::Duration::from_secs(30))
+        .call()
+        .map_err(|e| HypnosError::InvalidRequest(format!("failed to fetch {url}: {e}")))?;
+    let mut buf = Vec::new();
+    resp.into_reader()
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut buf)
+        .map_err(|e| HypnosError::InvalidRequest(format!("failed to read {url}: {e}")))?;
+    Ok(buf)
+}
+
+/// Resolves a document sent to `/v1/documents/convert` as base64 or a `data:` URI (`file`) or as
+/// an http(s) `url` (blocking), enforcing `limits.max_document_bytes`.
+pub fn load_document(
+    file: Option<&str>,
+    url: Option<&str>,
+    limits: &LimitsConfig,
+) -> Result<Vec<u8>> {
+    let limit = limits.max_document_bytes;
+    let bytes = match (
+        file.filter(|f| !f.is_empty()),
+        url.filter(|u| !u.is_empty()),
+    ) {
+        (Some(file), None) => {
+            let payload = file
+                .strip_prefix("data:")
+                .and_then(|rest| rest.split_once(','))
+                .map_or(file, |(_, payload)| payload);
+            check_size(payload.len() / 4 * 3, limit, "document")?;
+            decode_base64(payload)?
+        }
+        (None, Some(url)) if url.starts_with("http://") || url.starts_with("https://") => {
+            fetch_remote(url, limit, "document", limits)?
+        }
+        (None, Some(_)) => {
+            return Err(HypnosError::InvalidRequest(
+                "url must be an http(s) URL".to_string(),
+            ))
+        }
+        _ => {
+            return Err(HypnosError::InvalidRequest(
+                "send the document as `file` (base64 or a data: URI) or as `url`, not both"
+                    .to_string(),
+            ))
+        }
+    };
+    check_size(bytes.len(), limit, "document")?;
+    Ok(bytes)
 }
 
 pub fn decode_base64(payload: &str) -> Result<Vec<u8>> {

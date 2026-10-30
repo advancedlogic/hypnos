@@ -240,7 +240,7 @@ impl ModelScheduler {
                 .min(cfg.arch.max_context_len);
 
             if current_plan.primary_tier == MemoryTier::Tier1GpuVram
-                && current_plan.gpu_layers > 0
+                && (current_plan.gpu_layers > 0 || cfg.runs_on_cpu())
                 && current_plan.allocated_context_len >= needed_ctx
             {
                 self.memory.increment_lease(model_id)?;
@@ -271,7 +271,7 @@ impl ModelScheduler {
 
         // Double-check after acquiring transition_lock
         if current_plan.primary_tier == MemoryTier::Tier1GpuVram
-            && current_plan.gpu_layers > 0
+            && (current_plan.gpu_layers > 0 || cfg.runs_on_cpu())
             && current_plan.allocated_context_len >= needed_ctx
         {
             self.memory.increment_lease(model_id)?;
@@ -312,7 +312,7 @@ impl ModelScheduler {
         for candidate_id in candidates {
             let reason = match &target_plan {
                 None => EvictionReason::MemoryBudget,
-                Some(plan) if plan.gpu_layers < cfg.arch.num_layers => {
+                Some(plan) if !cfg.runs_on_cpu() && plan.gpu_layers < cfg.arch.num_layers => {
                     EvictionReason::FullGpuPlacement
                 }
                 Some(plan) if over_process_cap(plan).is_some() => EvictionReason::ProcessMemoryCap,
@@ -353,6 +353,38 @@ impl ModelScheduler {
                 plan_placement(&cfg, needed_ctx, batch_size, avail_vram, avail_ram, is_uma);
         }
 
+        // A CPU model needs host RAM, which evicting GPU models does not free: send idle models
+        // that only hold RAM (warm Tier 2 weights, other CPU models) to Tier 3 until it fits.
+        if target_plan.is_none() && cfg.runs_on_cpu() {
+            for candidate_id in self.memory.idle_ram_eviction_candidates(model_id) {
+                info!(
+                    evicting = %candidate_id,
+                    for_model = %model_id,
+                    "Moving idle model to Tier 3 to free host RAM"
+                );
+                let demoted_plan = self
+                    .memory
+                    .demote_model_from_vram(&candidate_id, MemoryTier::Tier3NvmeSsd)?;
+                if let Some(cand_backend) = self.backends.get(&candidate_id) {
+                    cand_backend.apply_placement(&demoted_plan, None).await?;
+                }
+                self.stats.evictions.fetch_add(1, Ordering::Relaxed);
+                self.memory.record_eviction(
+                    &candidate_id,
+                    model_id,
+                    EvictionReason::MemoryBudget,
+                    demoted_plan.primary_tier,
+                );
+                evicted_models.push(candidate_id);
+                (avail_vram, avail_ram) = self.available_for(&current_plan);
+                target_plan =
+                    plan_placement(&cfg, needed_ctx, batch_size, avail_vram, avail_ram, is_uma);
+                if target_plan.is_some() {
+                    break;
+                }
+            }
+        }
+
         let final_plan = target_plan.ok_or_else(|| {
             warn!(
                 model = %model_id,
@@ -361,10 +393,19 @@ impl ModelScheduler {
                 unaccounted_vram_mb = self.memory.unaccounted_vram_bytes() / (1024 * 1024),
                 "Insufficient VRAM/RAM even after evicting idle models"
             );
+            let (required_bytes, available_bytes) = if cfg.runs_on_cpu() {
+                (
+                    cfg.total_weight_bytes
+                        .saturating_add(cfg.arch.activation_workspace_bytes),
+                    avail_ram,
+                )
+            } else {
+                (cfg.total_weight_bytes, avail_vram)
+            };
             HypnosError::InsufficientMemory {
                 model: model_id.to_string(),
-                required_bytes: cfg.total_weight_bytes,
-                available_bytes: avail_vram,
+                required_bytes,
+                available_bytes,
             }
         })?;
 

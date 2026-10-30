@@ -3,7 +3,7 @@
 #
 # Columns (whitespace separated):
 #   model     model id from hypnos*.example.toml, selectable as `./run.sh models <model>`
-#   repo      Hugging Face repository
+#   repo      Hugging Face repository, or an https:// base URL the remote path is appended to
 #   remote    path inside the repository; a trailing `/` downloads every file in that folder
 #   local     path under backend/models/ (a trailing `/` for folders)
 #   platform  all | macos-arm64 | other   (other = everything except Apple Silicon)
@@ -21,3 +21,13 @@ moss-image       leejet/MOSS-Image-SFT-GGUF              MOSS-Image-SFT-Q4_K.ggu
 moss-image       unsloth/Qwen3.5-9B-GGUF                 Qwen3.5-9B-Q4_K_M.gguf                Qwen3.5-9B-Q4_K_M.gguf                all
 moss-image       Comfy-Org/MOSS-Image                    vae/flux2-vae.safetensors             flux2-vae.safetensors                 all
 moss-image       OpenMOSS-Team/MOSS-Image-Base           tokenizer/tokenizer.json              moss_tokenizer.json                   all
+# docling.rs's model release (layout int8, TableFormer, PP-OCRv6), laid out the way it looks them up.
+docling          https://github.com/docling-project/docling.rs/releases/download/models-v1  layout_heron_int8.onnx   docling/layout_heron_int8.onnx           all
+docling          https://github.com/docling-project/docling.rs/releases/download/models-v1  encoder_fp16.onnx        docling/tableformer/encoder_fp16.onnx    all
+docling          https://github.com/docling-project/docling.rs/releases/download/models-v1  decoder_kv.onnx          docling/tableformer/decoder_kv.onnx      all
+docling          https://github.com/docling-project/docling.rs/releases/download/models-v1  decoder_kv.onnx.data     docling/tableformer/decoder_kv.onnx.data all
+docling          https://github.com/docling-project/docling.rs/releases/download/models-v1  bbox.onnx                docling/tableformer/bbox.onnx            all
+docling          https://github.com/docling-project/docling.rs/releases/download/models-v1  bbox.onnx.data           docling/tableformer/bbox.onnx.data       all
+docling          https://github.com/docling-project/docling.rs/releases/download/models-v1  ocr_det.onnx             docling/ocr_det.onnx                     all
+docling          https://github.com/docling-project/docling.rs/releases/download/models-v1  ocr_rec_v6.onnx          docling/ocr_rec_v6.onnx                  all
+docling          https://github.com/docling-project/docling.rs/releases/download/models-v1  ocr_rec_v6_dict.txt      docling/ocr_rec_v6_dict.txt              all

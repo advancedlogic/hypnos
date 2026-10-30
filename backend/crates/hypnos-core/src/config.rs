@@ -58,6 +58,8 @@ pub enum Modality {
     Embeddings,
     /// Diffusion / DiT / Autoregressive image generation (/v1/images/generations)
     ImageGeneration,
+    /// PDF / image / office documents to Markdown or JSON (/v1/documents/convert)
+    DocumentConversion,
 }
 
 /// Underlying inference engine runtime used for a model.
@@ -72,6 +74,18 @@ pub enum EngineKind {
     GgmlDiffusion,
     /// ONNX Runtime (CUDA / ROCm / CoreML Execution Providers — Kokoro TTS, Embeddings)
     OnnxRuntime,
+    /// docling.rs on ONNX Runtime: layout, TableFormer and OCR models (document conversion)
+    Docling,
+}
+
+/// Where a model computes. GPU models are booked in Tier 1 VRAM; a CPU model's Tier 1 placement
+/// ("loaded and ready") books host RAM only: its weights plus `arch.activation_workspace_bytes`.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionDevice {
+    #[default]
+    Gpu,
+    Cpu,
 }
 
 /// KV Cache quantization data type for autoregressive models.
@@ -251,6 +265,9 @@ pub struct ModelConfig {
     /// are not re-encoded. Off means every request prefills from scratch.
     #[serde(default = "default_prefix_cache")]
     pub prefix_cache: bool,
+    /// `cpu` for engines that run on the host (docling): Tier 1 then books RAM, not VRAM.
+    #[serde(default)]
+    pub device: ExecutionDevice,
     /// Architecture parameters for KV cache & layer-split math
     #[serde(default)]
     pub arch: ModelArchitectureParams,
@@ -260,6 +277,11 @@ impl ModelConfig {
     /// Checks whether this model supports a given modality (either as its primary or additional modality).
     pub fn supports_modality(&self, target: Modality) -> bool {
         self.modality == target || self.additional_modalities.contains(&target)
+    }
+
+    /// `true` when the model computes on the host CPU (see [`ExecutionDevice`]).
+    pub fn runs_on_cpu(&self) -> bool {
+        self.device == ExecutionDevice::Cpu
     }
 
     /// Returns all supported modalities for this model.
@@ -508,6 +530,9 @@ pub struct LimitsConfig {
     /// Largest accepted image (data URL or remote download).
     #[serde(default = "default_max_image_bytes")]
     pub max_image_bytes: u64,
+    /// Largest accepted document for `/v1/documents/convert` (upload, base64 or remote download).
+    #[serde(default = "default_max_document_bytes")]
+    pub max_document_bytes: u64,
     /// Maximum total characters across chat messages / embedding inputs / TTS input.
     #[serde(default = "default_max_prompt_chars")]
     pub max_prompt_chars: usize,
@@ -517,7 +542,8 @@ pub struct LimitsConfig {
     /// Maximum images per `/v1/images/generations` request (`n`).
     #[serde(default = "default_max_images_per_request")]
     pub max_images_per_request: u32,
-    /// Whether `image_url` may reference http(s) URLs (outbound fetch) or only data: URLs.
+    /// Whether `image_url` and a document's `url` may reference http(s) URLs (outbound fetch), or
+    /// only data: URLs and uploads.
     #[serde(default = "default_true")]
     pub allow_remote_image_urls: bool,
 }
@@ -537,6 +563,9 @@ fn default_max_audio_bytes() -> u64 {
 fn default_max_image_bytes() -> u64 {
     32 * 1024 * 1024
 }
+fn default_max_document_bytes() -> u64 {
+    100 * 1024 * 1024
+}
 fn default_max_prompt_chars() -> usize {
     1_000_000
 }
@@ -555,6 +584,7 @@ impl Default for LimitsConfig {
             max_body_bytes: default_max_body_bytes(),
             max_audio_bytes: default_max_audio_bytes(),
             max_image_bytes: default_max_image_bytes(),
+            max_document_bytes: default_max_document_bytes(),
             max_prompt_chars: default_max_prompt_chars(),
             max_tokens_cap: default_max_tokens_cap(),
             max_images_per_request: default_max_images_per_request(),
@@ -781,10 +811,34 @@ impl HypnosConfig {
                         ));
                     }
                 }
+                EngineKind::Docling => {
+                    if m.modality != Modality::DocumentConversion {
+                        r.errors.push(format!(
+                            "'{id}': docling engine only implements document_conversion"
+                        ));
+                    }
+                    if m.device != ExecutionDevice::Cpu {
+                        r.errors.push(format!(
+                            "'{id}': docling runs on the CPU in this build; set device = \"cpu\""
+                        ));
+                    }
+                }
                 EngineKind::GgmlWhisper => {
                     r.errors.push(format!("'{id}': ggml_whisper is not compiled into this build; use ggml_llama with a Gemma 4 model for speech_to_text"));
                 }
                 EngineKind::GgmlLlama => {}
+            }
+            if m.engine == EngineKind::Docling
+                && m.arch.activation_workspace_bytes < 1024 * 1024 * 1024
+            {
+                r.warnings.push(format!(
+                    "'{id}': arch.activation_workspace_bytes is under 1 GiB; docling needs about 3.5 GiB per page while converting, which this booking does not cover"
+                ));
+            }
+            if m.modality == Modality::DocumentConversion && m.engine != EngineKind::Docling {
+                r.errors.push(format!(
+                    "'{id}': document_conversion needs engine = \"docling\""
+                ));
             }
             if m.arch.num_layers == 0 {
                 r.errors
@@ -826,6 +880,17 @@ impl HypnosConfig {
             }
         }
 
+        if self
+            .models
+            .iter()
+            .filter(|m| m.engine == EngineKind::Docling)
+            .count()
+            > 1
+        {
+            r.errors.push(
+                "only one docling model per server: docling.rs reads its models directory from the process environment".into(),
+            );
+        }
         if self.hardware.vram_budget_bytes > 0
             && self.hardware.vram_safety_margin_bytes >= self.hardware.vram_budget_bytes
         {
@@ -1046,5 +1111,53 @@ num_layers = 4
             .iter()
             .any(|e| e.contains("text_encoder_path")));
         assert!(report.errors.iter().any(|e| e.contains("aux_weights_path")));
+    }
+
+    #[test]
+    fn validate_checks_docling_models() {
+        let dir = std::env::temp_dir().join(format!("hypnos-docling-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("layout.onnx"), b"onnx").unwrap();
+        let docling = |id: &str, extra: &str| {
+            format!(
+                r#"
+[[models]]
+id = "{id}"
+modality = "document_conversion"
+engine = "docling"
+weights_path = "layout.onnx"
+{extra}
+[models.arch]
+activation_workspace_bytes = 3758096384
+"#
+            )
+        };
+        let cfg = HypnosConfig::from_toml_str(&docling("doc", "device = \"cpu\"")).unwrap();
+        assert!(cfg.models[0].runs_on_cpu());
+        let r = cfg.validate(&dir);
+        assert!(r.is_ok(), "{:?}", r.errors);
+
+        // On the GPU (not in this build), two of them, or the wrong engine: refused.
+        let cfg = HypnosConfig::from_toml_str(&docling("doc", "")).unwrap();
+        assert!(cfg
+            .validate(&dir)
+            .errors
+            .iter()
+            .any(|e| e.contains("device = \"cpu\"")));
+        let two = docling("a", "device = \"cpu\"") + &docling("b", "device = \"cpu\"");
+        let cfg = HypnosConfig::from_toml_str(&two).unwrap();
+        assert!(cfg
+            .validate(&dir)
+            .errors
+            .iter()
+            .any(|e| e.contains("only one docling")));
+        let wrong = docling("doc", "device = \"cpu\"")
+            .replace("engine = \"docling\"", "engine = \"ggml_llama\"");
+        let cfg = HypnosConfig::from_toml_str(&wrong).unwrap();
+        assert!(cfg
+            .validate(&dir)
+            .errors
+            .iter()
+            .any(|e| e.contains("document_conversion needs engine")));
     }
 }
