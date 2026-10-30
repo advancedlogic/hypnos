@@ -50,20 +50,25 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 2   | 3   | 2   | 6    | 1   | 4     | 4   | 1    |
+| 2  | 2   | 4   | 2   | 6    | 1   | 4     | 4   | 1    |
 
 ---
 
 ## Backlog
 
-- [ ] 🟩 **ENG-1** `P2` Add Docling document conversion (PDF / images to Markdown)
-      Serve Docling-style conversion in-process, without the Python library: run
-      `granite-docling-258M` (GGUF + mmproj) through the existing llama.cpp + mtmd path on page
-      images, then turn its DocTags output into Markdown / JSON. Needs a new modality
-      (`document_conversion`), a Hypnos extension endpoint (e.g. `POST /v1/documents/convert`,
-      multipart file or URL, `output_format`), PDF page rasterization (pdfium is BSD; avoid
-      AGPL MuPDF) and per-page streaming. Check the pinned llama.cpp supports the model; add it
-      to `models.manifest`, the example configs and the default profile.
+- [ ] 🟩 **ENG-1** `P2` Add document conversion with docling.rs (PDF / images to Markdown)
+      Use the `docling` crate (docling-project's Rust port, MIT; ~2.55, all `docling-*` crates on
+      one version) on CPU: layout + TableFormer (+ OCR, formulas) in ONNX, pure-Rust PDF parsing
+      and rendering (lopdf, tiny-skia; no pdfium). It builds against our `ort =2.0.0-rc.15`.
+      Convert one page per pass (`page_range(p, p)`) with a warm pipeline: a 6-page PDF peaks at
+      12.7 GB in one call but 1.8-2.6 GB per page, so the model gets a fixed Tier 2 booking.
+      Endpoint `POST /v1/documents/convert` (multipart file or URL, `pages`, `ocr`,
+      `output_format` markdown | json) streams each page; stitch across pages (tables and lists
+      that continue, repeated headers / footers, heading levels). New modality
+      `document_conversion`, `onnx_runtime` engine, config entry with a model directory, the
+      models in `models.manifest`. Port from idu `rust/src/docling_convert.rs`: OCR retry for
+      PDFs with no text layer, `/aNNN` glyph-name cleanup, optional figure / table descriptions
+      through a loaded vision model. First measure warm per-page time and the int8 layout model.
 - [ ] 🟩 **ENG-2** `P2` Add GLiNER zero-shot named-entity extraction
       Run GLiNER ONNX exports on CPU through ONNX Runtime, like Kokoro (`onnx_runtime` engine,
       `realtime_pinned`): tokenizer via the `tokenizers` crate, span decoding and thresholding
@@ -71,6 +76,14 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       (`entity_extraction`) and endpoint (e.g. `POST /v1/entities` with `model`, `text` or a
       list, `labels`, `threshold`) returning spans with label, offsets and score. Add a
       playground tab, the model to `models.manifest` and the example configs.
+      `gliner25-rs` (Apache-2.0, crates.io, used by idu) runs GLiNER2.5 boundary checkpoints and
+      accepts our ort; it uses `tokenizers` 0.23 (docling 0.20): check both build together.
+- [ ] 🟩 **ENG-3** `P3` Run document conversion on the GPU (Core ML, CUDA)
+      Follow-up to ENG-1, opt-in per model. macOS: docling's `coreml` feature (unified memory,
+      nothing extra to book). CUDA: create the ORT session on load and drop it on unload, book a
+      measured VRAM size and cap the arena with `gpu_mem_limit`; ships ORT as shared libraries
+      plus cuDNN 9 in the CUDA archives and the Docker image, and moves Kokoro to the same ORT.
+      Measure first how much of a page is model inference versus parsing and rendering.
 
 ## In Progress
 
