@@ -215,6 +215,17 @@ gliner25-rs 0.5.6, docling-onnx 2.55.4) and
 `vendor/VENDOR.md` explains each patch and how to bump a pin. Never edit vendor sources without
 regenerating the corresponding patch file.
 
+### Client SDKs (`sdk/`)
+
+`sdk/python`, `sdk/javascript`, `sdk/rust`: one client per language for every route of
+`docs/api.md`, with the same method names, error classes, retry policy (section 17) and
+per-model concurrency bound. Each has its own package manifest and is not part of the backend
+workspace. Their tests run against `backend/crates/hypnos-server/examples/mock_server.rs`: the
+real router, scheduler, auth and request log in front of mock engines for the default lineup,
+with `/mock/fail` (inject an engine error), `/mock/ready` and `/mock/reset`. A change to the
+API means a change to `docs/api.md`, the mock server and the three SDKs. In Python, edit
+`_async_client.py` and regenerate the sync client with `scripts/unasync.py`.
+
 ### Frontend
 
 Single-file app: `frontend/src/App.svelte` (Svelte 5 runes) renders the live 3-tier visualizer from

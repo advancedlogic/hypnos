@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hypnos-client"
+version = "0.2.0"
+description = "Python client for the Hypnos multi-modal inference server"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT OR Apache-2.0"
+authors = [{ name = "Hypnos contributors" }]
+keywords = ["hypnos", "llm", "inference", "openai", "client"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Typing :: Typed",
+    "Intended Audience :: Developers",
+]
+dependencies = ["httpx>=0.27,<1", "typing_extensions>=4.7"]
+
+[project.urls]
+Homepage = "https://github.com/advancedlogic/hypnos"
+Documentation = "https://github.com/advancedlogic/hypnos/blob/main/docs/api.md"
+
+[dependency-groups]
+dev = ["pytest>=8", "anyio>=4"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hypnos_client"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

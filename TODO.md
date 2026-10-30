@@ -70,9 +70,11 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       ggml builds shared cleanly; close the card with the numbers if it does not clearly win.
       After TEST-1 and TEST-2.
 
+## In Progress
+
 - [ ] 🟪 **API-7** `P2` Client SDKs in Python, Rust and JavaScript
       One package per language, generated from `docs/api.md`, published from this repo
-      (`sdk/python`, `sdk/rust`, `sdk/js`): typed requests and responses for every route
+      (`sdk/python`, `sdk/rust`, `sdk/javascript`): typed requests and responses for every route
       (OpenAI ones and the Hypnos extensions: documents and pictures, entities, memory status
       and tier control, enable/disable, logs), `hypnos_telemetry` as a typed optional, SSE
       parsing for chat and document streams with an abort/cancel handle, the retry policy of
@@ -82,10 +84,14 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       JavaScript/TypeScript: `fetch` + `ReadableStream`, npm `@hypnos/client`, works in Node
       and browsers. Each ships examples for all seven default models and a test suite against
       the mock-backend server (`backend/crates/hypnos-server/tests`) run in CI.
-
-## In Progress
-
-_No cards yet._
+      Started 2026-10-30. Shared test target: `cargo run -p hypnos-server --example
+      mock_server`, the real router, scheduler and auth in front of mock engines for the default
+      lineup, with `/mock/fail`, `/mock/ready` and `/mock/reset` to inject errors and flip
+      readiness. Python done (`sdk/python`: sync client generated from the async one by
+      `scripts/unasync.py`, 35 tests, examples for every model). Found on the way: the speech
+      headers spelled the tier `Tier3NvmeSsd` (now `tier3_nvme_ssd`, as in the JSON), and
+      docs/api.md did not say that a document stream's last event has empty `pages` and is
+      followed by `[DONE]`.
 
 ## Done
 
