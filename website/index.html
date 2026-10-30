@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hypnos</title>
+  <meta name="description" content="Hypnos is an OpenAI-compatible multi-modal inference server in one Rust process: chat, vision, speech, embeddings, images, documents and entities on one GPU, with a 3-tier memory scheduler.">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0d0f43">
+  <meta property="og:title" content="Hypnos">
+  <meta property="og:description" content="One OpenAI-compatible endpoint for every modality on one GPU, with a scheduler that decides what lives in VRAM so you don't have to.">
+  <meta property="og:image" content="assets/logo-256.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/logo-256.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    // Apply the stored theme before the first paint to avoid a flash.
+    try {
+      var t = localStorage.getItem('hypnos-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container header-row">
+      <a class="brand" href="#top" aria-label="Hypnos home">
+        <img src="assets/logo-256.png" alt="" width="36" height="36">
+        <span>Hypnos</span>
+      </a>
+      <nav class="nav" id="nav" aria-label="Sections">
+        <a href="#features">Features</a>
+        <a href="#memory">Memory tiers</a>
+        <a href="#endpoints">Endpoints</a>
+        <a href="#models">Models</a>
+        <a href="#quickstart">Quickstart</a>
+        <a href="https://github.com/advancedlogic/hypnos" rel="noopener">GitHub</a>
+      </nav>
+      <div class="header-actions">
+        <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+          <svg class="sun" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg class="moon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="icon-btn menu-btn" id="menu-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="nav">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- Hero -->
+    <section class="hero" id="top">
+      <div class="hero-glow" aria-hidden="true"></div>
+      <div class="container hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">Open source · Rust · CUDA and Metal</p>
+          <h1>One endpoint for every modality on one GPU.</h1>
+          <p class="lede">
+            Hypnos serves chat, vision, speech-to-text, text-to-speech, embeddings, image generation,
+            document conversion and entity extraction from a single process, through the OpenAI API.
+            A lease-based scheduler decides what lives in VRAM so you don't have to.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="#quickstart">Get started</a>
+            <a class="btn btn-ghost" href="https://github.com/advancedlogic/hypnos" rel="noopener">
+              <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+              View on GitHub
+            </a>
+          </div>
+          <ul class="hero-points">
+            <li><strong>No sidecars.</strong> llama.cpp, stable-diffusion.cpp, ONNX Runtime, docling.rs and GLiNER are linked in.</li>
+            <li><strong>One memory budget.</strong> Every engine books weights, KV cache and scratch space with the same planner.</li>
+            <li><strong>Drop-in.</strong> Works with any OpenAI client; optional API keys and in-process HTTPS.</li>
+          </ul>
+        </div>
+        <figure class="hero-demo">
+          <div class="window">
+            <div class="window-bar" aria-hidden="true"><span></span><span></span><span></span><em>playground · simulated 32 GB</em></div>
+            <img src="assets/demo.gif" alt="The playground: a chat request promotes Gemma 4 26B to the GPU, an image request evicts it for MOSS-Image, text-to-speech answers from a pinned model, and the next chat swaps the 26B back in." width="960" height="1005" loading="eager">
+          </div>
+          <figcaption>Real time on an Apple M5 Max limited to a simulated 32 GB: chat, image, speech, chat. The 26B model and MOSS-Image don't fit together, so each request evicts the other; Kokoro and the embedder stay pinned.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- Measured -->
+    <section class="stats" aria-label="Measured results">
+      <div class="container">
+        <div class="stat-grid">
+          <div class="stat"><span class="stat-value">~100<small> tok/s</small></span><span class="stat-label">Chat decode per stream, Gemma 4 26B-A4B Q4</span></div>
+          <div class="stat"><span class="stat-value">145<small> ms</small></span><span class="stat-label">Time to first token on a follow-up turn, with KV prefix reuse (from 300 ms)</span></div>
+          <div class="stat"><span class="stat-value">2.18<small>×</small></span><span class="stat-label">Aggregate decode throughput with four concurrent clients (continuous batching)</span></div>
+          <div class="stat"><span class="stat-value">385<small> ms</small></span><span class="stat-label">Time to first audio with streaming text-to-speech (from 5.4 s)</span></div>
+          <div class="stat"><span class="stat-value">84<small> ms</small></span><span class="stat-label">First token of a 15.8 GB model already in Tier 1; 0.99 s from Tier 2, 2.29 s from Tier 3</span></div>
+        </div>
+        <p class="stats-note">One 24 GB CUDA GPU with the default lineup; the swap figures on an Apple M5 Max (Metal). Full reports in <a href="https://github.com/advancedlogic/hypnos/tree/main/docs/bench" rel="noopener">docs/bench</a>.</p>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="section" id="features">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">Why Hypnos</p>
+          <h2>One process, one port, one memory budget.</h2>
+          <p class="section-lede">Built for the machine that has to serve a whole multi-modal stack at once, where VRAM is the bottleneck.</p>
+        </div>
+        <div class="feature-grid">
+          <article class="card">
+            <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 9h10M7 13h6"/></svg></div>
+            <h3>Engines linked in-process</h3>
+            <p>llama.cpp with libmtmd, stable-diffusion.cpp, ONNX Runtime with espeak-ng, docling.rs and GLiNER2.5 are compiled into the binary. No Python, no runner process, no second server competing for the GPU.</p>
+          </article>
+          <article class="card">
+            <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="1.6"/><circle cx="14" cy="12" r="1.6"/><circle cx="10" cy="18" r="1.6"/></svg></div>
+            <h3>Three memory tiers</h3>
+            <p>Tier 1 is GPU VRAM (Metal's share of unified memory on Apple Silicon), Tier 2 is page-locked host RAM that promotes over PCIe without touching the disk, Tier 3 is the memory-mapped model file on NVMe.</p>
+          </article>
+          <article class="card">
+            <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg></div>
+            <h3>Priorities, not timeouts</h3>
+            <p><code>realtime_pinned</code> models never leave the GPU, <code>high</code> ones are kept warm in RAM, <code>low</code> ones are evicted first. A lease keeps a model resident for exactly as long as a request uses it.</p>
+          </article>
+          <article class="card">
+            <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 17l5-5 4 4 7-7"/><path d="M15 9h5v5"/></svg></div>
+            <h3>Real VRAM reconciliation</h3>
+            <p>After every load and unload the planner compares its bookings with the device's actual free memory and never hands out more than the GPU really has. Models that don't fully fit run with part of their layers on the GPU.</p>
+          </article>
+          <article class="card">
+            <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg></div>
+            <h3>Drop-in for OpenAI clients</h3>
+            <p>Chat with streaming, images and audio, embeddings, transcription, speech with streaming synthesis, image generation. Optional API keys, in-process HTTPS, CORS for loopback by default.</p>
+          </article>
+          <article class="card">
+            <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></div>
+            <h3>Observable</h3>
+            <p>A live playground shows each model's tier as requests come in. Every response carries its placement and timing, <code>/metrics</code> is Prometheus, and a request log keeps recent calls.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Memory tiers -->
+    <section class="section section-alt" id="memory">
+      <div class="container tiers-grid">
+        <div class="tiers-copy">
+          <p class="eyebrow">How it works</p>
+          <h2>A scheduler that moves models, not a proxy that restarts servers.</h2>
+          <p>Each request asks the scheduler for a model. If it is already on the GPU with enough context reserved, the request runs at once. Otherwise the planner computes a placement, evicts idle lower-priority models, and promotes the weights from RAM or disk. The request holds a lease for the model's residency and releases it when the stream ends.</p>
+          <ul class="check-list">
+            <li>Promotion from pinned RAM goes over PCIe only; nothing is re-read from disk.</li>
+            <li>KV cache is booked per execution slot, with f16, q8_0 or q4_0 types and sliding-window awareness for Gemma 4.</li>
+            <li>CPU engines (docling, GLiNER) book host RAM only and leave VRAM alone.</li>
+            <li>Per-model admission queues answer 429 instead of piling up; disconnects cancel generation at the next token, chunk or step.</li>
+          </ul>
+        </div>
+        <div class="tiers-diagram" role="img" aria-label="Three memory tiers: GPU VRAM at the top holding the pinned embedder and Kokoro plus the active chat model, pinned host RAM in the middle holding the warm models, and the NVMe memory map at the bottom holding everything else. Arrows show promotion up and eviction down.">
+          <div class="tier tier-1">
+            <div class="tier-head"><span class="tier-num">Tier 1</span><span class="tier-name">GPU VRAM</span><span class="tier-tag">hot</span></div>
+            <div class="chips">
+              <span class="chip chip-pinned">gemmaembedding2</span>
+              <span class="chip chip-pinned">kokoro-82m</span>
+              <span class="chip chip-active">gemma4:26b <em>leased</em></span>
+            </div>
+          </div>
+          <div class="tier-arrows" aria-hidden="true"><span class="arrow up">promote</span><span class="arrow down">evict</span></div>
+          <div class="tier tier-2">
+            <div class="tier-head"><span class="tier-num">Tier 2</span><span class="tier-name">Pinned host RAM</span><span class="tier-tag">warm</span></div>
+            <div class="chips">
+              <span class="chip">gemma4:e4b</span>
+              <span class="chip chip-cpu">docling <em>cpu</em></span>
+            </div>
+          </div>
+          <div class="tier-arrows" aria-hidden="true"><span class="arrow up">stage</span><span class="arrow down">release</span></div>
+          <div class="tier tier-3">
+            <div class="tier-head"><span class="tier-num">Tier 3</span><span class="tier-name">NVMe memory map</span><span class="tier-tag">cold</span></div>
+            <div class="chips">
+              <span class="chip chip-cold">moss-image</span>
+              <span class="chip chip-cold">gliner2.5-multi</span>
+            </div>
+          </div>
+          <div class="tier-legend">
+            <span><i class="chip-swatch chip-pinned"></i> realtime pinned</span>
+            <span><i class="chip-swatch chip-active"></i> leased by a request</span>
+            <span><i class="chip-swatch"></i> idle</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Endpoints -->
+    <section class="section" id="endpoints">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">API surface</p>
+          <h2>The OpenAI routes you already use, plus two extensions.</h2>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Endpoint</th><th>What it serves</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>POST /v1/chat/completions</code></td><td>Text, vision and audio chat</td><td>SSE streaming, images and audio clips in messages, continuous batching across slots, KV prefix reuse</td></tr>
+              <tr><td><code>POST /v1/embeddings</code></td><td>Dense vector embeddings</td><td>Any GGUF embedding model llama.cpp loads</td></tr>
+              <tr><td><code>POST /v1/audio/transcriptions</code></td><td>Speech-to-text</td><td>Multipart or JSON; Gemma 4 audio through libmtmd</td></tr>
+              <tr><td><code>POST /v1/audio/speech</code></td><td>Text-to-speech</td><td><code>stream: true</code> returns PCM or an open-ended WAV as it is synthesized</td></tr>
+              <tr><td><code>POST /v1/images/generations</code></td><td>Image generation</td><td>stable-diffusion.cpp; MOSS-Image in the default lineup</td></tr>
+              <tr><td><code>POST /v1/documents/convert</code> <span class="pill">extension</span></td><td>PDFs, images and office files to Markdown or JSON</td><td>docling.rs page by page, OCR, picture descriptions through a vision model</td></tr>
+              <tr><td><code>POST /v1/entities</code> <span class="pill">extension</span></td><td>Zero-shot named-entity extraction</td><td>GLiNER2.5, labels chosen per request, multilingual</td></tr>
+              <tr><td><code>GET /v1/memory/status</code> · <code>POST /v1/memory/tier</code></td><td>Tier snapshot and manual moves</td><td>Refused with 429 while the model is leased</td></tr>
+              <tr><td><code>GET /metrics</code> · <code>/health</code> · <code>/ready</code> · <code>/v1/logs</code></td><td>Operations</td><td>Prometheus text, probes, recent request log with timing split</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-pair">
+          <figure class="code">
+            <figcaption>curl</figcaption>
+            <pre><code>curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gemma4:e4b-q4",
+       "messages": [{"role": "user", "content": "Hello!"}]}'</code></pre>
+            <button class="copy" type="button" aria-label="Copy">Copy</button>
+          </figure>
+          <figure class="code">
+            <figcaption>Python</figcaption>
+            <pre><code>from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="unused")
+print(client.chat.completions.create(
+    model="gemma4:e4b-q4",
+    messages=[{"role": "user", "content": "Hello!"}],
+).choices[0].message.content)</code></pre>
+            <button class="copy" type="button" aria-label="Copy">Copy</button>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- Models -->
+    <section class="section section-alt" id="models">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">Default lineup</p>
+          <h2>Seven models, every modality, about 33 GB of files.</h2>
+          <p class="section-lede">Downloaded with one command from public Hugging Face repositories. Bring your own: any GGUF that llama.cpp loads works for chat and embeddings, with the chat template read from the file.</p>
+        </div>
+        <div class="table-wrap">
+          <table class="models">
+            <thead><tr><th>Model</th><th>Serves</th><th>Engine</th><th>Size</th><th>Tier policy</th></tr></thead>
+            <tbody>
+              <tr><td><code>gemma4:26b-q4</code></td><td>Text generation + vision</td><td>ggml_llama</td><td>14.7 GiB</td><td><span class="pill pill-high">high</span> warm in RAM, promoted on demand</td></tr>
+              <tr><td><code>gemma4:e4b-q4</code></td><td>Audio, speech-to-text + chat</td><td>ggml_llama</td><td>5.2 GiB</td><td><span class="pill pill-high">high</span> warm in RAM, promoted on demand</td></tr>
+              <tr><td><code>kokoro-82m-q4</code></td><td>Text-to-speech</td><td>onnx_runtime</td><td>155 MiB</td><td><span class="pill pill-pinned">realtime pinned</span> always resident, runs on CPU</td></tr>
+              <tr><td><code>gemmaembedding2</code></td><td>Embeddings</td><td>ggml_llama</td><td>295 MiB</td><td><span class="pill pill-pinned">realtime pinned</span> always in VRAM</td></tr>
+              <tr><td><code>moss-image</code></td><td>Image generation</td><td>ggml_diffusion</td><td>9 GiB</td><td><span class="pill pill-low">low</span> promoted on demand, evicts idle models</td></tr>
+              <tr><td><code>docling</code></td><td>Document conversion</td><td>docling</td><td>310 MiB</td><td><span class="pill">normal</span> CPU, host RAM only, loads in 0.3 s</td></tr>
+              <tr><td><code>gliner2.5-multi</code></td><td>Entity extraction</td><td>gliner</td><td>1.15 GiB</td><td><span class="pill">normal</span> CPU, host RAM only, loads in under a second</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <figure class="code code-single">
+          <figcaption>backend/my.toml · a single-model config</figcaption>
+          <pre><code>[[models]]
+id = "qwen3:8b"                     # the "model" name clients send
+modality = "text_generation"        # or "embeddings"
+engine = "ggml_llama"
+weights_path = "models/Qwen3-8B-Q4_K_M.gguf"
+priority = "high"                   # realtime_pinned | high | normal | low
+initial_tier = "tier2_pinned_ram"   # stage in RAM at startup
+
+[models.arch]
+default_context_len = 8192          # the rest is read from the GGUF header
+kv_dtype = "q8_0"                   # f16 | q8_0 | q4_0</code></pre>
+          <button class="copy" type="button" aria-label="Copy">Copy</button>
+        </figure>
+      </div>
+    </section>
+
+    <!-- Quickstart -->
+    <section class="section" id="quickstart">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">Quickstart</p>
+          <h2>Running in two commands.</h2>
+          <p class="section-lede">Prebuilt archives for Linux x64 (CUDA), Windows x64 (CUDA) and macOS arm64 (Metal), a Docker image for CUDA, or a build from source in 10 to 20 minutes.</p>
+        </div>
+        <div class="tabs" data-tabs>
+          <div class="tab-list" role="tablist" aria-label="Install method">
+            <button role="tab" id="tab-prebuilt" aria-controls="panel-prebuilt" aria-selected="true" type="button">Prebuilt binaries</button>
+            <button role="tab" id="tab-docker" aria-controls="panel-docker" aria-selected="false" type="button" tabindex="-1">Docker (CUDA)</button>
+            <button role="tab" id="tab-source" aria-controls="panel-source" aria-selected="false" type="button" tabindex="-1">From source</button>
+          </div>
+          <div class="tab-panel" role="tabpanel" id="panel-prebuilt" aria-labelledby="tab-prebuilt">
+            <p>Unpack a <a href="https://github.com/advancedlogic/hypnos/releases" rel="noopener">release archive</a> and run everything from that folder. The archive includes the playground, the example config and a model downloader.</p>
+            <figure class="code">
+              <figcaption>shell</figcaption>
+              <pre><code>./scripts/fetch-models.sh   # the default lineup, ~33 GB into models/ (or one model id)
+./hypnos                    # reads hypnos.toml; API and playground on http://127.0.0.1:8080</code></pre>
+              <button class="copy" type="button" aria-label="Copy">Copy</button>
+            </figure>
+            <p class="fine">Windows: <code>powershell -ExecutionPolicy Bypass -File scripts\fetch-models.ps1</code>, then <code>.\hypnos.exe</code>. Linux needs glibc 2.39+, an NVIDIA driver 570+ and the CUDA 12 runtime libraries; macOS needs Apple Silicon and macOS 14+.</p>
+          </div>
+          <div class="tab-panel" role="tabpanel" id="panel-docker" aria-labelledby="tab-docker" hidden>
+            <p>Linux with an NVIDIA GPU and the NVIDIA Container Toolkit.</p>
+            <figure class="code">
+              <figcaption>shell</figcaption>
+              <pre><code>mkdir -p models
+docker run --rm -v ./models:/opt/hypnos/models --entrypoint ./scripts/fetch-models.sh \
+  ghcr.io/advancedlogic/hypnos                 # ~33 GB, or append one model id
+docker run --gpus all -p 8080:8080 -v ./models:/opt/hypnos/models ghcr.io/advancedlogic/hypnos</code></pre>
+              <button class="copy" type="button" aria-label="Copy">Copy</button>
+            </figure>
+            <p class="fine">Mount your own config over <code>/opt/hypnos/hypnos.toml</code> or point <code>HYPNOS_CONFIG</code> at one. Set <code>HYPNOS_API_KEYS</code> before publishing the port beyond localhost.</p>
+          </div>
+          <div class="tab-panel" role="tabpanel" id="panel-source" aria-labelledby="tab-source" hidden>
+            <p>Rust 1.92+ through rustup, CMake, Ninja and Node.js, plus either the CUDA toolkit with an NVIDIA GPU (MSVC 2022 on Windows) or an Apple Silicon Mac with the Xcode command line tools.</p>
+            <figure class="code">
+              <figcaption>shell</figcaption>
+              <pre><code>git clone https://github.com/advancedlogic/hypnos.git && cd hypnos
+./backend/scripts/setup-build-env.sh   # once per machine: GPU arch, toolchain pins
+./backend/scripts/vendor.sh            # pinned engine sources into backend/vendor/
+./run.sh models                        # the default lineup into backend/models/
+./run.sh build                         # backend + playground (Metal picked on Apple Silicon)
+./run.sh start                         # API on :8080, playground on :5173</code></pre>
+              <button class="copy" type="button" aria-label="Copy">Copy</button>
+            </figure>
+            <p class="fine">Windows: <code>setup-build-env.ps1</code> and <code>run.bat</code> with the same arguments. Design notes for Apple Silicon live in <a href="https://github.com/advancedlogic/hypnos/blob/main/docs/apple-silicon.md" rel="noopener">docs/apple-silicon.md</a>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Compare -->
+    <section class="section section-alt" id="compare">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">Where it fits</p>
+          <h2>Pick Hypnos when one machine has to serve the whole stack.</h2>
+        </div>
+        <div class="table-wrap">
+          <table class="compare">
+            <thead><tr><th></th><th>Hypnos</th><th>Ollama</th><th>LocalAI</th><th>llama-swap</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Shape</th><td>one process, engines linked in</td><td>one server, a runner process per loaded model</td><td>API gateway over separate backend processes</td><td>proxy that starts and stops one server per model</td></tr>
+              <tr><th scope="row">Focus</th><td>every modality on one GPU at once</td><td>LLMs, easy model library</td><td>broadest set of backends and formats</td><td>swapping any OpenAI-compatible server</td></tr>
+              <tr><th scope="row">What is loaded</th><td>shared memory planner, priorities, leases, warm RAM tier</td><td>load on request, unload after an idle timeout</td><td>per backend</td><td>one model or group at a time</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="fine">Ollama for the easiest install and a curated library, LocalAI for a backend Hypnos doesn't have, vLLM or SGLang for multi-user datacenter throughput. Hypnos is for a voice assistant or an agent with speech, images and retrieval on one box, where VRAM is the bottleneck.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <div class="footer-brand">
+        <img src="assets/logo-256.png" alt="" width="40" height="40">
+        <div>
+          <strong>Hypnos</strong>
+          <p>OpenAI-compatible multi-modal inference server with a 3-tier memory scheduler.</p>
+        </div>
+      </div>
+      <nav class="footer-links" aria-label="Project links">
+        <a href="https://github.com/advancedlogic/hypnos" rel="noopener">Source</a>
+        <a href="https://github.com/advancedlogic/hypnos/releases" rel="noopener">Releases</a>
+        <a href="https://github.com/advancedlogic/hypnos/blob/main/README.md" rel="noopener">README</a>
+        <a href="https://github.com/advancedlogic/hypnos/tree/main/docs" rel="noopener">Docs</a>
+        <a href="https://github.com/advancedlogic/hypnos/blob/main/backend/hypnos.example.toml" rel="noopener">Example config</a>
+      </nav>
+      <p class="footer-license">Source code under Apache-2.0 or MIT, at your option. Binaries built with the default engines link espeak-ng and are distributed under GPL-3.0-or-later. Model weights carry their own licenses.</p>
+    </div>
+  </footer>
+
+  <script src="script.js" defer></script>
+</body>
+</html>

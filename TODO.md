@@ -50,7 +50,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST |
 |----|-----|-----|-----|------|-----|-------|-----|------|
-| 2  | 3   | 5   | 2   | 6    | 1   | 5     | 4   | 1    |
+| 2  | 3   | 5   | 2   | 6    | 1   | 5     | 5   | 1    |
 
 ---
 
@@ -87,6 +87,26 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] ⬜ **DOC-4** `P2` Create the Hypnos website as a single page under `website/`
+      One static `website/index.html` (plus its CSS, JS and copied assets; no framework or build
+      step) presenting Hypnos: what it is, the 3-tier memory hierarchy with the lease-based
+      scheduler, the OpenAI-compatible endpoint table and model lineup from `README.md`, the
+      `assets/demo.gif` demo, quick-start (`run.sh` / `run.bat`, release archives) and links to
+      the GitHub repo and docs. Modern style: generous whitespace, one display and one body
+      typeface, responsive down to phone width, light and dark themes. Palette taken from
+      `assets/logo.png`: deep navy (about `#1b1b4f`) as the base, the logo's vivid orange (about
+      `#f26b0f`) as the single accent, white and light greys for surfaces and text; check text
+      contrast on both themes. Use the logo as favicon and in the header. Keep it servable from
+      GitHub Pages or any static host.
+      Shipped: `website/index.html` + `styles.css` + `script.js`, no build step; assets copied to
+      `website/assets/` (logo, 256 px and 64 px favicon renders, demo GIF). Sections: hero with the
+      demo, measured numbers, features, tier diagram, endpoint table, model lineup with a
+      single-model config, quickstart tabs (prebuilt / Docker / source), comparison, footer with
+      licenses. Palette sampled from the logo: navy `#0d0f43`, orange `#fd6000`; orange text uses
+      `#c24a00` (light) / `#ff8a3d` (dark) so every pair clears WCAG AA (lowest 4.5:1). Space
+      Grotesk + Inter from Google Fonts; theme follows the OS with a stored toggle; checked at
+      1280 px and 390 px in both themes with headless Chrome.
 
 - [x] 🟪 **API-2** `P2` Return the pictures docling extracts from a document
       `return_pictures` on `POST /v1/documents/convert` keeps the pictures the engine cuts out
