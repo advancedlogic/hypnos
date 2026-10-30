@@ -134,7 +134,8 @@ and eviction order. `POST /v1/memory/tier` moves a model manually and is refused
 
 `docs/apple-silicon.md` is the design and status record (`docs/operating.md` is the operator's
 guide: sizing, knobs per symptom, telemetry, errors, service recipes; keep it in step with new
-knobs, metrics and error types). On unified memory Tier 1 and Tier 2 share
+knobs, metrics and error types; `docs/api.md` is the HTTP API reference for client authors:
+keep it in step with new routes, fields, error types and stream events). On unified memory Tier 1 and Tier 2 share
 one physical pool: Tier 1 is Metal's working set (adopted from the device once llama.cpp starts),
 Tier 2 is what RAM leaves after it and a 4 GiB OS reserve, and placement is all-or-nothing (no
 partial GPU splits). `backend/hypnos.macos.example.toml` is the macOS profile. `[hardware]` also

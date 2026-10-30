@@ -437,6 +437,8 @@ check free space first.
 [docs/operating.md](docs/operating.md) is the operator's guide: sizing a machine for a lineup,
 which knob to turn for which symptom, reading the telemetry and `/metrics`, every error and its
 fix, log levels and redaction, upgrades, and the Docker / systemd / Windows service recipes.
+[docs/api.md](docs/api.md) is the HTTP API reference for client and SDK authors: every route,
+field, streaming format, error code and the retry and cancellation behaviour a client needs.
 
 | Endpoint | Purpose |
 | :--- | :--- |
