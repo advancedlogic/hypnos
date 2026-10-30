@@ -63,6 +63,12 @@ the Tier 3 runs ([report](docs/bench/swap-metal-2026-10-29.md)):
 
 ![Time to first token by start tier: Tier 3 2.29 s, Tier 2 0.99 s, Tier 1 84 ms](docs/bench/swap-metal-2026-10-29.svg)
 
+On CUDA (RTX 5090 laptop, Windows), the same model promotes from Tier 2 in 3.7-4.2 s after the
+PERF-6 changes, down from 7.5 s warm and 23-59 s when another model had just been loaded
+([report](docs/bench/swap-cuda-2026-10-30.md)): the weights are read through pinned staging
+buffers instead of a file mapping (2.4x faster upload), and Tier 2 pins a model's projector and
+text-encoder files with its weights.
+
 <!-- PERF-5: add the CUDA run (bench.sh --scenarios 7) next to the Metal one. -->
 
 ### How it compares
@@ -199,6 +205,10 @@ HYPNOS_CONFIG=my.toml ./run.sh start backend     # or: cd backend && ./target/re
 
 On Windows: `set HYPNOS_CONFIG=my.toml` and then `run.bat start backend`.
 
+- `use_mmap` (unset = automatic) decides how llama.cpp reads the weights: through pinned staging
+  buffers with asynchronous uploads when layers go to a CUDA device, a file mapping on Metal and
+  for CPU placements. Every Tier 1 load reports its phases (weights, projector, context) in the
+  log and in `hypnos_telemetry.tier_switch_phases`.
 - `[models.arch]` fields you leave out are read from the GGUF header at startup
   (`<arch>.block_count`, `.attention.head_count_kv`, `.attention.key_length`, `.context_length`,
   `.attention.sliding_window[_pattern]`) and logged; values you set always win, and a mismatch with

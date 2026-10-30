@@ -122,6 +122,9 @@ slots = 4
 # Reuse a slot's KV cache when a prompt extends what it processed last (multi-turn chats prefill
 # only the new turn; unchanged images are not re-encoded).
 prefix_cache = true
+# How the weights reach the GPU: unset = read the file through pinned staging buffers with
+# asynchronous uploads on CUDA (mmap on Metal and for CPU placements). `true` maps the file instead.
+# use_mmap = false
 
 [models.arch]
 num_layers = 30
@@ -238,7 +241,10 @@ tokenizer_path = "models/moss_tokenizer.json"
 total_weight_bytes = 9344134556         # 3.3 GiB DiT + 5.7 GiB Qwen3.5-9B + 0.3 GiB VAE
 min_gpu_layer_ratio = 0.25
 initial_tier = "tier3_nvme_ssd"
-keep_warm_in_ram = true
+# No Tier 2 for the image model: sd.cpp reloads it from the OS page cache in about a second, and
+# pinning its 9 GiB (DiT + text encoder + VAE) next to the chat models' 23 GiB locked a 64 GB
+# machine into swapping (PERF-6). Set true only with RAM to spare.
+keep_warm_in_ram = false
 priority = "low"
 
 [models.arch]

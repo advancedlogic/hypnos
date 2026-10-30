@@ -278,6 +278,11 @@ pub struct ModelConfig {
     /// `cpu` for engines that run on the host (docling): Tier 1 then books RAM, not VRAM.
     #[serde(default)]
     pub device: ExecutionDevice,
+    /// llama.cpp models: map the weights file (`true`) or read it through pinned staging buffers
+    /// with asynchronous uploads (`false`). Unset = automatic: `false` when layers go to a CUDA
+    /// device, `true` on Metal (unified memory, zero copy) and for CPU-only placements.
+    #[serde(default)]
+    pub use_mmap: Option<bool>,
     /// Architecture parameters for KV cache & layer-split math
     #[serde(default)]
     pub arch: ModelArchitectureParams,

@@ -84,17 +84,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       (429s, evictions, slow first token, OOM), how to read `hypnos_telemetry` and the `/metrics`
       histograms, what every 4xx / 5xx and error `type` means and the fix, log levels and
       redaction, upgrade and rollback, and the Docker / systemd / Windows service recipes.
-- [ ] 🟧 **PERF-6** `P1` Tier 2 -> Tier 1 promotion of the 26B takes 23-59 s on Windows CUDA
-      Seen while recording the demo on the RTX 5090 laptop (request log, 2026-10-30): the first
-      chat after startup promoted `gemma4:26b-q4` from pinned RAM in 23.2 s, and the chat after an
-      image generation in 58.7 s, against 0.99 s from Tier 2 on the M5 Max
-      (`docs/bench/swap-metal-2026-10-29.md`). Find where the time goes (`hypnos_telemetry`
-      has only the total switch; add phases: weight upload, context + KV allocation for
-      `slots x default_context_len`, mmproj load, warm-up), check that the CUDA path uploads from
-      the VirtualLock'd Tier 2 pages rather than re-reading the file through llama.cpp's own mmap,
-      and whether MOSS-Image's unload (text encoder, VAE) is paid inside the next promotion. This
-      is PERF-5's CUDA swap measurement (`bench.sh --scenarios 7`) with a target: Tier 2 should
-      beat Tier 3 clearly, and a 16 GB upload over PCIe 4/5 is 2-4 s, not 20-60.
 
 ## In Progress
 
@@ -111,6 +100,30 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       archives were never attached; the step now uploads into an existing or draft release.
 
 ## Done
+
+- [x] 🟧 **PERF-6** `P1` Tier 2 -> Tier 1 promotion of the 26B takes 23-59 s on Windows CUDA
+      Seen while recording the demo on the RTX 5090 laptop (request log, 2026-10-30): the first
+      chat after startup promoted `gemma4:26b-q4` from pinned RAM in 23.2 s, and the chat after an
+      image generation in 58.7 s, against 0.99 s from Tier 2 on the M5 Max
+      (`docs/bench/swap-metal-2026-10-29.md`). Find where the time goes (`hypnos_telemetry`
+      has only the total switch; add phases: weight upload, context + KV allocation for
+      `slots x default_context_len`, mmproj load, warm-up), check that the CUDA path uploads from
+      the VirtualLock'd Tier 2 pages rather than re-reading the file through llama.cpp's own mmap,
+      and whether MOSS-Image's unload (text encoder, VAE) is paid inside the next promotion. This
+      is PERF-5's CUDA swap measurement (`bench.sh --scenarios 7`) with a target: Tier 2 should
+      beat Tier 3 clearly, and a 16 GB upload over PCIe 4/5 is 2-4 s, not 20-60.
+      Shipped (`docs/bench/swap-cuda-2026-10-30.md`): phases per Tier 1 load (weights, projector,
+      context; log line + `hypnos_telemetry.tier_switch_phases`, `ModelBackend::last_load_phases`).
+      Found: (1) a file mapping feeds CUDA tensor by tensor through pageable memory on Windows
+      (6.5 s for 15.8 GB); llama.cpp's read path streams through pinned buffers at 5.5 GB/s
+      (2.7 s): `models.use_mmap` unset now means read on CUDA, mmap on Metal / CPU. (2) Tier 2
+      pinned only `weights_path`; the 1.2 GB projector was evicted from the page cache by the next
+      load and cost 4-7.5 s per promotion (the 23-59 s cases): `aux_weights_path` and
+      `text_encoder_path` are pinned with the weights. (3) With everything booked actually locked,
+      the 32 GiB budget plus the process starved a 64 GB machine (134 s eviction while paging):
+      MOSS-Image is no longer kept warm in the example profiles (sd.cpp reloads it in 0.9 s) and
+      the manager warns when the pinned budget exceeds half of physical RAM. Result: 3.7-4.2 s
+      per promotion, also right after an image (was 10.9 s), image request 11 s (was 49-144 s).
 
 - [x] 🟫 **MEM-3** `P3` Version the config and the model manifest with a migration path
       `HypnosConfig` has no schema version; the first breaking change to a field or to

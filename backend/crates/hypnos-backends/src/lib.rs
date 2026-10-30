@@ -57,6 +57,8 @@ pub struct BackendContextState {
     pub active_plan: LayerPlacementPlan,
     pub pinned_host_ptr: Option<usize>,
     pub gguf_header: Option<GgufHeaderSummary>,
+    /// Phases of the last Tier 1 load (llama.cpp engines).
+    pub last_load_phases: Option<hypnos_core::openai::LoadPhases>,
 }
 
 impl BackendContextState {
@@ -84,6 +86,7 @@ impl BackendContextState {
             },
             pinned_host_ptr: None,
             gguf_header,
+            last_load_phases: None,
         }
     }
 }

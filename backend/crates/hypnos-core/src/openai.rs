@@ -435,6 +435,27 @@ pub struct ExecutionTelemetry {
     /// factor for audio). Filled by the backend; absent fields were not measured.
     #[serde(default)]
     pub engine: EngineTiming,
+    /// Where the tier switch spent its time when this request loaded the model into Tier 1
+    /// (llama.cpp models); absent on the fast path and for the other engines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier_switch_phases: Option<LoadPhases>,
+}
+
+/// Phases of a llama.cpp load into Tier 1 (`hypnos_telemetry.tier_switch_phases`), milliseconds.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LoadPhases {
+    /// `mmap` (the file is mapped and copied tensor by tensor) or `read` (read into pinned
+    /// staging buffers and uploaded asynchronously); see `models.use_mmap`.
+    pub load_mode: String,
+    /// Weights read and placed (GPU upload included).
+    pub weights_ms: f64,
+    /// The multimodal projector (`aux_weights_path`), when there is one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projector_ms: Option<f64>,
+    /// Context creation: KV cache for `slots x allocated_context_len` and compute buffers.
+    pub context_ms: f64,
+    /// Everything the worker did from start to ready.
+    pub total_ms: f64,
 }
 
 /// What happened between the lease being granted and the response being produced. Every field is
@@ -504,6 +525,7 @@ impl ExecutionTelemetry {
             inference_latency_ms: 0.0,
             evicted_models: Vec::new(),
             engine,
+            tier_switch_phases: None,
         }
     }
 

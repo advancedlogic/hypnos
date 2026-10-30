@@ -76,6 +76,7 @@ fn model(id: &str, weight_gb: u64, priority: ModelPriority, initial: MemoryTier)
     ModelConfig {
         id: id.to_string(),
         enabled: true,
+        use_mmap: None,
         modality: Modality::TextGeneration,
         additional_modalities: vec![],
         engine: EngineKind::GgmlLlama,

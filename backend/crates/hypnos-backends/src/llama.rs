@@ -23,8 +23,8 @@ use hypnos_core::kv_cache::LayerPlacementPlan;
 use hypnos_core::openai::{
     AudioTranscriptionRequest, AudioTranscriptionResponse, ChatChoice, ChatCompletionRequest,
     ChatCompletionResponse, ChatMessage, ChatResponseMessage, ChatStreamEvent, EmbeddingData,
-    EmbeddingRequest, EmbeddingResponse, EmbeddingUsage, ExecutionTelemetry, PromptTokensDetails,
-    TokenUsage,
+    EmbeddingRequest, EmbeddingResponse, EmbeddingUsage, ExecutionTelemetry, LoadPhases,
+    PromptTokensDetails, TokenUsage,
 };
 use hypnos_core::request::RequestContext;
 use hypnos_core::ModelBackend;
@@ -73,6 +73,16 @@ pub(crate) struct LoadedLlama {
     pub mtmd: Option<MtmdContext>,
     pub model: LlamaModel,
     pub arch: String,
+    /// Weights and projector phases; the worker adds the context and the total.
+    pub phases: LoadPhases,
+}
+
+/// Whether to map the weights file or read it through pinned staging buffers: mapping is zero
+/// copy on Metal and fine for CPU placements, but a CUDA upload from a mapping goes tensor by
+/// tensor through pageable memory, while llama.cpp's read path streams through pinned buffers
+/// with asynchronous uploads (PERF-6: 7.3 s -> see docs/bench/swap-cuda-2026-10-30.md).
+pub(crate) fn default_use_mmap(gpu_layers: u32) -> bool {
+    !(cfg!(feature = "cuda") && gpu_layers > 0)
 }
 
 pub(crate) fn load_model(
@@ -97,15 +107,18 @@ pub(crate) fn load_model(
     } else {
         gpu_layers
     };
+    let use_mmap = cfg.use_mmap.unwrap_or_else(|| default_use_mmap(gpu_layers));
     let params = LlamaModelParams::default()
         .with_n_gpu_layers(n_gpu_layers)
-        .with_use_mmap(true);
+        .with_use_mmap(use_mmap);
     let model = LlamaModel::load_from_file(backend, &cfg.weights_path, &params).map_err(|e| {
         HypnosError::BackendError(format!(
             "llama.cpp could not load {}: {e:?}",
             cfg.weights_path.display()
         ))
     })?;
+    let weights_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let projector_started = Instant::now();
     let arch = model
         .meta_val_str("general.architecture")
         .unwrap_or_default();
@@ -140,16 +153,32 @@ pub(crate) fn load_model(
         None => None,
     };
 
+    let projector_ms = mtmd
+        .is_some()
+        .then(|| projector_started.elapsed().as_secs_f64() * 1000.0);
     info!(
         model = %cfg.id,
         arch = %arch,
         gpu_layers,
         n_layer = model.n_layer(),
         n_ctx,
-        load_secs = format!("{:.1}", started.elapsed().as_secs_f32()),
+        load_mode = if use_mmap { "mmap" } else { "read" },
+        weights_secs = format!("{:.1}", weights_ms / 1000.0),
+        projector_secs = projector_ms.map(|ms| format!("{:.1}", ms / 1000.0)),
         "llama.cpp model resident"
     );
-    Ok(LoadedLlama { mtmd, model, arch })
+    Ok(LoadedLlama {
+        mtmd,
+        model,
+        arch,
+        phases: LoadPhases {
+            load_mode: if use_mmap { "mmap" } else { "read" }.to_string(),
+            weights_ms,
+            projector_ms,
+            context_ms: 0.0,
+            total_ms: 0.0,
+        },
+    })
 }
 
 // ----------------------------------------------------------------------------
@@ -382,6 +411,10 @@ impl ModelBackend for GgmlLlamaBackend {
         &self.config
     }
 
+    fn last_load_phases(&self) -> Option<LoadPhases> {
+        self.state.read().last_load_phases.clone()
+    }
+
     fn is_resident(&self) -> bool {
         self.worker.lock().map(|g| g.is_some()).unwrap_or(false)
     }
@@ -403,7 +436,7 @@ impl ModelBackend for GgmlLlamaBackend {
         let n_threads = self.n_threads;
         let opts = self.opts.clone();
 
-        tokio::task::spawn_blocking(move || -> Result<()> {
+        let phases = tokio::task::spawn_blocking(move || -> Result<Option<LoadPhases>> {
             let mut guard = worker
                 .lock()
                 .map_err(|_| HypnosError::BackendError("worker mutex poisoned".into()))?;
@@ -412,7 +445,7 @@ impl ModelBackend for GgmlLlamaBackend {
                 if guard.take().is_some() {
                     info!(model = %cfg.id, to_tier = ?plan.primary_tier, "Released llama.cpp model from VRAM");
                 }
-                return Ok(());
+                return Ok(None);
             }
             let n_ctx = if plan.allocated_context_len > 0 {
                 plan.allocated_context_len
@@ -431,12 +464,12 @@ impl ModelBackend for GgmlLlamaBackend {
                         w.n_ctx = n_ctx;
                         debug!(model = %cfg.id, n_ctx, "Context rebuilt for the new window; weights already resident");
                     }
-                    Ok(())
+                    Ok(None)
                 }
                 _ => {
                     // Stop the previous residency first so VRAM is free before the new split loads.
                     *guard = None;
-                    let handle = spawn_worker(WorkerSpec {
+                    let (handle, phases) = spawn_worker(WorkerSpec {
                         cfg: cfg.clone(),
                         gpu_layers: plan.gpu_layers,
                         n_ctx,
@@ -448,12 +481,25 @@ impl ModelBackend for GgmlLlamaBackend {
                         gpu_layers: plan.gpu_layers,
                         n_ctx,
                     });
-                    Ok(())
+                    Ok(Some(phases))
                 }
             }
         })
         .await
-        .map_err(|e| HypnosError::BackendError(format!("load task panicked: {e}")))?
+        .map_err(|e| HypnosError::BackendError(format!("load task panicked: {e}")))??;
+        if let Some(phases) = phases {
+            info!(
+                model = %self.config.id,
+                load_mode = %phases.load_mode,
+                weights_ms = phases.weights_ms as u64,
+                projector_ms = phases.projector_ms.map(|v| v as u64),
+                context_ms = phases.context_ms as u64,
+                total_ms = phases.total_ms as u64,
+                "Tier 1 load phases"
+            );
+            self.state.write().last_load_phases = Some(phases);
+        }
+        Ok(())
     }
 
     async fn chat_completion(

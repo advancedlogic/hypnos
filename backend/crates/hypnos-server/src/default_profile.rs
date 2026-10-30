@@ -55,6 +55,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             ModelConfig {
                 id: "gemma4:26b-q4".to_string(),
                 enabled: true,
+                use_mmap: None,
                 modality: Modality::TextGeneration,
                 additional_modalities: vec![Modality::Vision],
                 engine: EngineKind::GgmlLlama,
@@ -89,6 +90,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             ModelConfig {
                 id: "gemma4:e4b-q4".to_string(),
                 enabled: true,
+                use_mmap: None,
                 modality: Modality::SpeechToText,
                 additional_modalities: vec![Modality::TextGeneration, Modality::Vision],
                 engine: EngineKind::GgmlLlama,
@@ -124,6 +126,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             ModelConfig {
                 id: "kokoro-82m-q4".to_string(),
                 enabled: true,
+                use_mmap: None,
                 modality: Modality::TextToSpeech,
                 additional_modalities: vec![],
                 engine: EngineKind::OnnxRuntime,
@@ -158,6 +161,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             ModelConfig {
                 id: "gemmaembedding2".to_string(),
                 enabled: true,
+                use_mmap: None,
                 modality: Modality::Embeddings,
                 additional_modalities: vec![],
                 engine: EngineKind::GgmlLlama,
@@ -192,6 +196,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             ModelConfig {
                 id: "moss-image".to_string(),
                 enabled: true,
+                use_mmap: None,
                 modality: Modality::ImageGeneration,
                 additional_modalities: vec![],
                 engine: EngineKind::GgmlDiffusion,
@@ -203,7 +208,7 @@ pub fn default_six_model_config() -> HypnosConfig {
                 total_weight_bytes: 9_344_134_556,
                 min_gpu_layer_ratio: 0.25,
                 initial_tier: MemoryTier::Tier3NvmeSsd,
-                keep_warm_in_ram: true,
+                keep_warm_in_ram: false, // sd.cpp reloads in ~1 s; pinning 9 GiB starves RAM
                 priority: ModelPriority::Low,
                 slots: 1,
                 prefix_cache: true,
@@ -226,6 +231,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             ModelConfig {
                 id: "docling".to_string(),
                 enabled: true,
+                use_mmap: None,
                 modality: Modality::DocumentConversion,
                 additional_modalities: vec![],
                 engine: EngineKind::Docling,
@@ -252,6 +258,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             ModelConfig {
                 id: "gliner2.5-multi".to_string(),
                 enabled: true,
+                use_mmap: None,
                 modality: Modality::EntityExtraction,
                 additional_modalities: vec![],
                 engine: EngineKind::Gliner,

@@ -20,6 +20,10 @@ pub struct ManagedModelMemory {
     pub enabled: bool,
     pub placement: LayerPlacementPlan,
     pub host_buffer: MmapWeightBuffer,
+    /// The model's other files (`aux_weights_path`: projector or VAE; `text_encoder_path`),
+    /// pinned and unpinned with the weights so a Tier 2 model loads warm as a whole
+    /// (PERF-6: a 1.1 GB projector evicted from the page cache cost 4-7 s per promotion).
+    pub aux_buffers: Vec<MmapWeightBuffer>,
     pub last_used: Instant,
     pub active_leases: usize,
     pub total_requests_served: u64,
@@ -171,6 +175,16 @@ impl TieredMemoryManager {
                 warn!(config_warning = %w);
             }
         }
+        if !is_uma
+            && capabilities.physical_memory_bytes > 0
+            && hw_config.pinned_ram_budget_bytes > capabilities.physical_memory_bytes / 2
+        {
+            warn!(
+                pinned_budget_gb = hw_config.pinned_ram_budget_bytes / (1024 * 1024 * 1024),
+                physical_gb = capabilities.physical_memory_bytes / (1024 * 1024 * 1024),
+                "hardware.pinned_ram_budget_bytes is over half of physical RAM: Tier 2 locks what it books (weights, projectors, text encoders), and with the process's own memory on top the OS can start paging; lower the budget or keep_warm_in_ram on fewer models"
+            );
+        }
         if hw_config.max_process_memory_bytes > 0 {
             match crate::process::process_footprint_bytes() {
                 Some(now) => info!(
@@ -196,8 +210,15 @@ impl TieredMemoryManager {
                 cfg.total_weight_bytes,
                 !is_uma,
             )?;
+            let aux_buffers = [&cfg.aux_weights_path, &cfg.text_encoder_path]
+                .into_iter()
+                .flatten()
+                .filter(|p| p.is_file())
+                .map(|p| MmapWeightBuffer::open_or_virtual(p, 0, !is_uma))
+                .collect::<Result<Vec<_>>>()?;
             if cfg.total_weight_bytes == 0 {
-                cfg.total_weight_bytes = host_buffer.len_bytes().max(512 * 1024 * 1024);
+                let aux: u64 = aux_buffers.iter().map(|b| b.len_bytes()).sum();
+                cfg.total_weight_bytes = (host_buffer.len_bytes() + aux).max(512 * 1024 * 1024);
             }
 
             let initial_placement = LayerPlacementPlan {
@@ -219,6 +240,7 @@ impl TieredMemoryManager {
                     enabled,
                     placement: initial_placement,
                     host_buffer,
+                    aux_buffers,
                     last_used: Instant::now(),
                     active_leases: 0,
                     total_requests_served: 0,
@@ -595,8 +617,14 @@ impl TieredMemoryManager {
         // Manage physical OS page pinning (`VirtualLock` / `mlock`)
         if new_plan.pinned_ram_bytes > 0 || new_plan.primary_tier == MemoryTier::Tier2PinnedRam {
             entry.host_buffer.pin_in_host_ram(self.lock_host_memory)?;
+            for aux in &mut entry.aux_buffers {
+                aux.pin_in_host_ram(self.lock_host_memory)?;
+            }
         } else if new_plan.primary_tier == MemoryTier::Tier3NvmeSsd {
             entry.host_buffer.unpin_from_host_ram()?;
+            for aux in &mut entry.aux_buffers {
+                aux.unpin_from_host_ram()?;
+            }
         }
 
         let host_ptr = entry.host_buffer.host_ptr();

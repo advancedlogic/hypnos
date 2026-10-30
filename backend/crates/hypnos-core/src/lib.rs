@@ -50,6 +50,11 @@ pub trait ModelBackend: Send + Sync {
     ) -> Result<()>;
 
     /// `true` when weights are currently loaded in the engine (Tier 1).
+    /// Phases of the most recent Tier 1 load (llama.cpp engines); `None` for the others.
+    fn last_load_phases(&self) -> Option<crate::openai::LoadPhases> {
+        None
+    }
+
     fn is_resident(&self) -> bool {
         false
     }

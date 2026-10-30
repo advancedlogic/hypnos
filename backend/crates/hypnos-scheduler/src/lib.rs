@@ -8,7 +8,7 @@
 use hypnos_core::config::{LimitsConfig, MemoryTier};
 use hypnos_core::error::{HypnosError, Result};
 use hypnos_core::kv_cache::{KvCacheEstimator, LayerPlacementPlan};
-use hypnos_core::openai::{EngineTiming, ExecutionTelemetry};
+use hypnos_core::openai::{EngineTiming, ExecutionTelemetry, LoadPhases};
 use hypnos_core::request::RequestContext;
 use hypnos_core::ModelBackend;
 use hypnos_memory::{EvictionReason, MemoryHierarchyStatus, TieredMemoryManager};
@@ -29,6 +29,8 @@ pub struct ActiveModelLease {
     pub placement: LayerPlacementPlan,
     pub tier_switch_latency_ms: f64,
     pub evicted_models: Vec<String>,
+    /// Where the switch spent its time when this lease loaded the model (llama.cpp engines).
+    pub load_phases: Option<LoadPhases>,
     _admission: OwnedSemaphorePermit,
 }
 
@@ -45,6 +47,7 @@ impl ActiveModelLease {
             inference_latency_ms,
             evicted_models: self.evicted_models.clone(),
             engine: EngineTiming::default(),
+            tier_switch_phases: self.load_phases.clone(),
         }
     }
 }
@@ -261,6 +264,7 @@ impl ModelScheduler {
                     placement: current_plan,
                     tier_switch_latency_ms: 0.0,
                     evicted_models: Vec::new(),
+                    load_phases: None,
                     _admission: admission,
                 });
             }
@@ -296,6 +300,7 @@ impl ModelScheduler {
                 placement: current_plan,
                 tier_switch_latency_ms: switch_start.elapsed().as_secs_f64() * 1000.0,
                 evicted_models: Vec::new(),
+                load_phases: None,
                 _admission: admission,
             });
         }
@@ -462,6 +467,7 @@ impl ModelScheduler {
             return Err(load_err);
         }
         self.memory.increment_lease(model_id)?;
+        let load_phases = backend.last_load_phases();
 
         // Compare the engine's real footprint with the booking; a large gap means the estimates in
         // the config are off and a later promotion could overcommit the device.
@@ -490,6 +496,7 @@ impl ModelScheduler {
             placement: final_plan,
             tier_switch_latency_ms: switch_ms,
             evicted_models,
+            load_phases,
             _admission: admission,
         })
     }

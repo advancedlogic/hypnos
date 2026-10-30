@@ -691,6 +691,7 @@ impl ModelBackend for OnnxRuntimeBackend {
                 inference_latency_ms: synth_ms,
                 evicted_models: Vec::new(),
                 engine,
+                tier_switch_phases: None,
             },
         })
     }

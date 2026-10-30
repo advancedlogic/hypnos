@@ -157,9 +157,17 @@ keep that profile in sync with `hypnos.example.toml` when adding models or field
 
 ### Engines (`hypnos-backends`)
 
-- `llama.rs`: `ggml_llama`. Text, vision, audio-in (via mtmd), embeddings. Currently one
-  `LlamaContext` per request behind a mutex; `docs/execution-efficiency-plan.md` is the plan to
-  move to persistent, batched contexts and is the reference for any work in that area.
+- `llama.rs`: `ggml_llama`. Text, vision, audio-in (via mtmd), embeddings. `engine.rs` /
+  `worker.rs`: one worker thread per resident model owns a persistent context with `slots`
+  execution slots (KV prefix reuse, continuous batching); `docs/execution-efficiency-plan.md`
+  is the reference for that area. Loading (PERF-6): `models.use_mmap` unset means the weights
+  are read through pinned staging buffers with asynchronous uploads on CUDA (llama.cpp's
+  `LLAMA_LOAD_MODE_NONE`, 2.4x faster than mapping on Windows) and mapped on Metal / CPU
+  placements; each Tier 1 load logs its phases and reports them as
+  `hypnos_telemetry.tier_switch_phases` (`ModelBackend::last_load_phases`). Tier 2 pins the
+  projector and text-encoder files with the weights (`ManagedModelMemory::aux_buffers`), so the
+  pinned budget must cover `total_weight_bytes` as a whole; the manager warns when the budget
+  exceeds half of physical RAM. Measurements: `docs/bench/swap-cuda-2026-10-30.md`.
 - `diffusion.rs`: `ggml_diffusion` (stable-diffusion.cpp, MOSS-Image). sd.cpp is built as a
   **shared** library so its ggml does not clash with llama.cpp's; the vendored build script copies
   the DLL/.so next to the binary.

@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use hypnos_core::config::{KvDataType, Modality, ModelConfig};
 use hypnos_core::error::{HypnosError, Result};
-use hypnos_core::openai::{ChatMessage, ChatStreamEvent, EngineTiming};
+use hypnos_core::openai::{ChatMessage, ChatStreamEvent, EngineTiming, LoadPhases};
 use hypnos_core::request::RequestContext;
 use llama_cpp_2::context::params::{KvCacheType, LlamaContextParams, LlamaPoolingType};
 use llama_cpp_2::context::session::{LlamaStateSeqFlags, SeqState};
@@ -408,12 +408,13 @@ pub(crate) struct WorkerSpec {
 }
 
 /// Starts the worker thread, loads the weights on it and waits until the context exists.
-pub(crate) fn spawn_worker(spec: WorkerSpec) -> Result<WorkerHandle<LlamaJob>> {
+/// Returns the handle and where the load spent its time.
+pub(crate) fn spawn_worker(spec: WorkerSpec) -> Result<(WorkerHandle<LlamaJob>, LoadPhases)> {
     let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
     let name = format!("llama-{}", spec.cfg.id);
     let handle = WorkerHandle::spawn(&name, move |inbox| run_worker(spec, inbox, ready_tx))?;
     match ready_rx.recv() {
-        Ok(Ok(())) => Ok(handle),
+        Ok(Ok(phases)) => Ok((handle, phases)),
         Ok(Err(e)) => Err(e),
         Err(_) => Err(HypnosError::BackendError(
             "engine worker exited before it was ready".into(),
@@ -421,7 +422,11 @@ pub(crate) fn spawn_worker(spec: WorkerSpec) -> Result<WorkerHandle<LlamaJob>> {
     }
 }
 
-fn run_worker(spec: WorkerSpec, inbox: WorkerInbox<LlamaJob>, ready: SyncSender<Result<()>>) {
+fn run_worker(
+    spec: WorkerSpec,
+    inbox: WorkerInbox<LlamaJob>,
+    ready: SyncSender<Result<LoadPhases>>,
+) {
     let WorkerSpec {
         cfg,
         gpu_layers,
@@ -429,6 +434,7 @@ fn run_worker(spec: WorkerSpec, inbox: WorkerInbox<LlamaJob>, ready: SyncSender<
         n_threads,
         opts,
     } = spec;
+    let load_started = Instant::now();
     let mut loaded = match load_model(&cfg, gpu_layers, n_ctx, n_threads) {
         Ok(l) => l,
         Err(e) => {
@@ -444,6 +450,8 @@ fn run_worker(spec: WorkerSpec, inbox: WorkerInbox<LlamaJob>, ready: SyncSender<
         }
     };
     let arch = loaded.arch.clone();
+    let mut phases = loaded.phases.clone();
+    let context_started = Instant::now();
     let model: &LlamaModel = &loaded.model;
     let mtmd: &mut Option<MtmdContext> = &mut loaded.mtmd;
     let mut engine = match Engine::new(
@@ -462,7 +470,9 @@ fn run_worker(spec: WorkerSpec, inbox: WorkerInbox<LlamaJob>, ready: SyncSender<
             return;
         }
     };
-    let _ = ready.send(Ok(()));
+    phases.context_ms = context_started.elapsed().as_secs_f64() * 1000.0;
+    phases.total_ms = load_started.elapsed().as_secs_f64() * 1000.0;
+    let _ = ready.send(Ok(phases));
 
     let tick = opts
         .kv_idle_timeout
@@ -1724,6 +1734,7 @@ mod tests {
         let mut cfg = hypnos_core::config::ModelConfig {
             id: "m".into(),
             enabled: true,
+            use_mmap: None,
             modality: Modality::TextGeneration,
             additional_modalities: vec![],
             engine: hypnos_core::config::EngineKind::GgmlLlama,
