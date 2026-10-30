@@ -1,6 +1,7 @@
 <script>
   // Svelte 5 Runes State
-  let backendUrl = $state('http://localhost:8080');
+  // The Vite dev server talks to the backend on 8080; a build is served by hypnos itself.
+  let backendUrl = $state(import.meta.env.DEV ? 'http://localhost:8080' : window.location.origin);
   // API key (server.api_keys), kept in this browser only. Storage can be unavailable (private
   // windows, blocked site data): the field then simply starts empty.
   const API_KEY_STORAGE = 'hypnos.apiKey';

@@ -76,8 +76,31 @@ speech, images and retrieval) and VRAM is the bottleneck.
 
 ## Quickstart
 
-Prebuilt binaries and a Docker image are not published yet (BUILD-1, BUILD-2), so for now Hypnos
-builds from source. The first build compiles every native engine and takes 10–20 minutes.
+### Prebuilt binaries
+
+Each [GitHub release](https://github.com/advancedlogic/hypnos/releases) has archives for Linux x64
+(CUDA), Windows x64 (CUDA) and macOS arm64 (Metal), with the playground, the example config and a
+model downloader included. Unpack one and run everything from that folder:
+
+```bash
+./scripts/fetch-models.sh     # the default lineup, ~31 GB into models/ (or one model id)
+./hypnos                      # reads hypnos.toml; API and playground on http://127.0.0.1:8080
+```
+
+On Windows: `powershell -ExecutionPolicy Bypass -File scripts\fetch-models.ps1`, then `.\hypnos.exe`.
+
+| Archive | Needs |
+| :--- | :--- |
+| `linux-x64-cuda` | glibc 2.35+ (Ubuntu 22.04+), NVIDIA driver 570+, CUDA 12 runtime libraries (`libcudart.so.12`, `libcublas.so.12`, `libcublasLt.so.12`) and `libgomp1` |
+| `windows-x64-cuda` | NVIDIA driver 570+, the release's `windows-x64-cuda12-runtime.zip` unpacked beside `hypnos.exe` (or the CUDA Toolkit 12.x), the MSVC 2015–2022 redistributable |
+| `macos-arm64-metal` | Apple Silicon, macOS 14+; run `xattr -dr com.apple.quarantine .` once in the folder (the binaries are not notarized) |
+
+The binaries link espeak-ng statically, so the archives are distributed under the GNU GPL v3 or
+later (see [License](#license)); each one includes the license texts and links its source tag.
+
+### From source
+
+The first build compiles every native engine and takes 10–20 minutes.
 
 **You need:** Rust 1.92+ through rustup, CMake 3.2x+, Ninja, Node.js (for the playground), and
 either the CUDA toolkit with an NVIDIA GPU (Windows needs MSVC 2022; see
@@ -445,4 +468,5 @@ licensed as above, without any additional terms or conditions.
 A `hypnos` binary built with the default engines statically links espeak-ng (GPL-3.0-or-later) for
 text-to-speech and is therefore distributed under the GPL v3 or later as a whole. Model weights are
 downloaded separately and are covered by their own licenses. See
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for every engine and its license.
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for every engine and its license; the GPL text is
+[licenses/GPL-3.0.txt](licenses/GPL-3.0.txt).

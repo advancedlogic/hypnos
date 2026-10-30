@@ -25,8 +25,10 @@ espeak-ng is GPL-3.0-or-later; the `espeak-rs-sys` crate (MIT) builds it from so
 statically. Hypnos's code stays MIT OR Apache-2.0, both of which are GPL-3.0 compatible, but a
 `hypnos` binary built with the default engines is a combined work that includes espeak-ng and is
 therefore distributed under the terms of the **GNU GPL v3 or later**. Anyone redistributing such a
-binary must provide the GPL text and the corresponding source (this repository plus the vendored
-sources at the pins in `backend/scripts/vendor.sh`). The phoneme data copied next to the binary
+binary must provide the GPL text ([licenses/GPL-3.0.txt](licenses/GPL-3.0.txt)) and the corresponding
+source (this repository plus the vendored sources at the pins in `backend/scripts/vendor.sh`). The
+release archives built by `backend/scripts/package-release.sh` ship both license texts, these
+notices and a link to their source tag. The phoneme data copied next to the binary
 (`espeak-ng-data/`) is part of espeak-ng and under the same license.
 
 ## Rust crates

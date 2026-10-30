@@ -12,8 +12,11 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-MANIFEST="$ROOT/backend/models.manifest"
-MODELS_DIR="${HYPNOS_MODELS_DIR:-$ROOT/backend/models}"
+# Relative to this script, so the same paths work in the repository (backend/scripts) and in a
+# release archive (<archive>/scripts, with models.manifest and models/ beside it).
+BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MANIFEST="$BASE/models.manifest"
+MODELS_DIR="${HYPNOS_MODELS_DIR:-$BASE/models}"
 HF="https://huggingface.co"
 WANT="${1:-all}"
 

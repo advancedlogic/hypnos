@@ -39,6 +39,7 @@ use serde_json::json;
 use std::{
     collections::VecDeque,
     convert::Infallible,
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -48,6 +49,7 @@ use std::{
 use tokio::sync::mpsc;
 use tower_http::{
     cors::{AllowOrigin, CorsLayer},
+    services::ServeDir,
     timeout::TimeoutLayer,
 };
 use tracing::{info, warn};
@@ -215,6 +217,23 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
         .layer(DefaultBodyLimit::max(body_limit))
         .layer(cors_layer(allowed_origins))
         .with_state(state)
+}
+
+/// Where the built playground lives: `server.frontend_dir` when set, else a `frontend/` directory
+/// beside the executable that holds an `index.html` (release archives, the Docker image).
+pub fn playground_dir(configured: Option<&std::path::Path>) -> Option<PathBuf> {
+    if let Some(dir) = configured {
+        return Some(dir.to_path_buf());
+    }
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?.join("frontend");
+    dir.join("index.html").is_file().then_some(dir)
+}
+
+/// Serves the playground for every path no API route matched. It is added after the API layers,
+/// so static files skip authentication and the request log (the API calls it makes do not).
+pub fn with_playground(router: Router, dir: &std::path::Path) -> Router {
+    router.fallback_service(ServeDir::new(dir).append_index_html_on_directories(true))
 }
 
 /// Routes whose calls go into the request log (inference and manual tier changes; not the

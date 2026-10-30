@@ -14,9 +14,11 @@
 #>
 param([string]$Model = "all")
 $ErrorActionPreference = "Stop"
-$repo = Resolve-Path (Join-Path $PSScriptRoot "..\..")
-$manifest = Join-Path $repo "backend\models.manifest"
-$modelsDir = if ($env:HYPNOS_MODELS_DIR) { $env:HYPNOS_MODELS_DIR } else { Join-Path $repo "backend\models" }
+# Relative to this script, so the same paths work in the repository (backend\scripts) and in a
+# release archive (<archive>\scripts, with models.manifest and models\ beside it).
+$base = Resolve-Path (Join-Path $PSScriptRoot "..")
+$manifest = Join-Path $base "models.manifest"
+$modelsDir = if ($env:HYPNOS_MODELS_DIR) { $env:HYPNOS_MODELS_DIR } else { Join-Path $base "models" }
 $hf = "https://huggingface.co"
 
 # Windows PowerShell aliases `curl` to Invoke-WebRequest (no resume); call the real binary

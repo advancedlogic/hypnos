@@ -50,6 +50,9 @@ cd backend && cargo build --release -p hypnos-server --no-default-features --fea
 # Model files (~31 GB, listed in backend/models.manifest) into backend/models/
 ./run.sh models [model-id]             # run.bat models on Windows
 
+# Release archive from an existing release build + `npm run build` (what release.yml runs per platform)
+./backend/scripts/package-release.sh macos-arm64-metal --version v0.1.0 --out dist
+
 # Lint (scope to workspace crates; --all would format the vendored bindings)
 cd backend && cargo fmt -p hypnos-core -p hypnos-memory -p hypnos-scheduler -p hypnos-backends -p hypnos-server -- --check
 cd backend && cargo clippy -p hypnos-core -p hypnos-memory -p hypnos-scheduler --all-targets -- -D warnings
@@ -62,6 +65,8 @@ Build notes:
   Ninja; the Visual Studio generator ignores `CUDAHOSTCXX`.
 - `.github/workflows/ci.yml` runs fmt + clippy, the CPU (Linux, Windows) and Metal (macOS) builds
   and tests, and the frontend build on every push to main and every PR.
+- `.github/workflows/release.yml` builds the CUDA (Linux, Windows) and Metal archives on a `v*` tag
+  and publishes them as a GitHub release; a manual run only builds them as artifacts.
 - `backend/backend.http` has ready-made requests for the VS Code REST Client extension.
 
 ## Architecture

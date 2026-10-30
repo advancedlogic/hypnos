@@ -34,7 +34,7 @@ dashmap = "5.5"
 bytes = "1.6"
 memmap2 = "0.9"
 axum = { version = "0.7", features = ["multipart", "macros"] }
-tower-http = { version = "0.5", features = ["cors", "trace", "timeout", "limit"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "timeout", "limit", "fs"] }
 futures = "0.3"
 tokio-stream = "0.1"
 uuid = { version = "1.8", features = ["v4", "serde"] }

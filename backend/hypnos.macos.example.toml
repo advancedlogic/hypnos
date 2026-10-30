@@ -44,6 +44,8 @@ log_format = "pretty"
 # Generate one with: openssl rand -hex 32
 # api_keys = ["..."]
 # metrics_require_auth = false        # true: /metrics needs a key too (/health, /ready stay open)
+# Built playground served at /. Unset: frontend/ beside the executable, if present (release archives).
+# frontend_dir = "../frontend/dist"
 # HTTPS in-process (PEM files). Must stay the last part of [server]: keys below it would belong to it.
 # [server.tls]
 # cert_path = "certs/hypnos.crt"

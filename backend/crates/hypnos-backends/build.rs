@@ -11,8 +11,11 @@ fn main() {
     // macOS: dyld does not search the executable's directory, and libstable-diffusion.dylib is
     // installed as @rpath/... and copied next to the test binaries (target/<profile>/deps).
     // Link args only apply to this package's own targets; hypnos-server emits the same for its binary.
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
-        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
+    match std::env::var("CARGO_CFG_TARGET_OS").as_deref() {
+        Ok("macos") => println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path"),
+        // Linux: find libstable-diffusion.so beside the binary without LD_LIBRARY_PATH.
+        Ok("linux") => println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN"),
+        _ => {}
     }
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));

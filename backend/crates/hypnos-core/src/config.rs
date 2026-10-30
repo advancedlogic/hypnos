@@ -412,6 +412,11 @@ pub struct ServerConfig {
     /// Also require a key on `/metrics`. `/health` and `/ready` always stay open for probes.
     #[serde(default)]
     pub metrics_require_auth: bool,
+    /// Directory with the built playground (`frontend/` after `npm run build`, i.e. `dist/`) to
+    /// serve at `/`. Unset: a `frontend/` directory next to the executable is served if it has an
+    /// `index.html` (release archives and the Docker image ship it there), otherwise nothing.
+    #[serde(default)]
+    pub frontend_dir: Option<PathBuf>,
     /// HTTPS: serve TLS in-process with this PEM certificate chain and private key.
     /// Plain HTTP when absent.
     #[serde(default)]
@@ -479,6 +484,7 @@ impl Default for ServerConfig {
             request_log_capacity: default_request_log_capacity(),
             api_keys: Vec::new(),
             metrics_require_auth: false,
+            frontend_dir: None,
             tls: None,
         }
     }
@@ -840,6 +846,15 @@ impl HypnosConfig {
             r.warnings.push(
                 "server.api_keys has a key shorter than 16 characters; use long random keys (e.g. `openssl rand -hex 32`)".into(),
             );
+        }
+        if let Some(dir) = &self.server.frontend_dir {
+            let index = resolve(dir).join("index.html");
+            if !index.is_file() {
+                r.errors.push(format!(
+                    "server.frontend_dir has no index.html: {}",
+                    index.display()
+                ));
+            }
         }
         if let Some(tls) = &self.server.tls {
             for (label, path) in [("cert_path", &tls.cert_path), ("key_path", &tls.key_path)] {

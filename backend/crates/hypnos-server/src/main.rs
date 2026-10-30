@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
 use axum_server::tls_rustls::RustlsConfig;
 use hypnos_core::config::HypnosConfig;
-use hypnos_server::{build_router, default_profile::default_six_model_config, AppState};
+use hypnos_server::{
+    build_router, default_profile::default_six_model_config, playground_dir, with_playground,
+    AppState,
+};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use tokio::net::TcpListener;
@@ -95,6 +98,7 @@ async fn main() -> Result<()> {
 
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     let allowed_origins = config.server.allowed_origins.clone();
+    let playground = playground_dir(config.server.frontend_dir.as_deref());
     // Load the certificate now, so a bad PEM fails before the (slow) model startup.
     let tls = match &config.server.tls {
         Some(t) => {
@@ -143,7 +147,11 @@ async fn main() -> Result<()> {
         "Hypnos 3-Tier Memory Coordinator ready"
     );
 
-    let app = build_router(state.clone(), &allowed_origins);
+    let mut app = build_router(state.clone(), &allowed_origins);
+    if let Some(dir) = &playground {
+        info!(dir = %dir.display(), "Serving the playground at /");
+        app = with_playground(app, dir);
+    }
     let listener = TcpListener::bind(&bind_addr)
         .await
         .with_context(|| format!("binding {bind_addr}"))?;

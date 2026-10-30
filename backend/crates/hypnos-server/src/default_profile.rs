@@ -25,6 +25,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             log_format: "pretty".to_string(),
             api_keys: Vec::new(), // HYPNOS_API_KEYS
             metrics_require_auth: false,
+            frontend_dir: None,
             tls: None,
         },
         limits: LimitsConfig::default(),

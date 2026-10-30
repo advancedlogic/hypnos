@@ -56,13 +56,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Backlog
 
-- [ ] ⬛ **BUILD-1** `P1` Publish prebuilt release binaries
-      The 10-20 min native build plus vendoring, CMake/Ninja and the CUDA host-compiler pin stop
-      most people. Release workflow producing archives for Windows x64 (CUDA), Linux x64 (CUDA)
-      and macOS arm64 (Metal), each with the sd.cpp shared library, `espeak-ng-data`, the
-      example config and the built frontend. Document the CUDA runtime / driver requirement.
-      Archives are GPL-3.0-or-later as a whole (espeak-ng, see `THIRD-PARTY-NOTICES.md`): ship
-      `LICENSE-*`, the GPL-3.0 text and the notices, and link the tagged source.
 - [ ] ⬛ **BUILD-2** `P2` Provide a Docker image with CUDA support
       Multi-stage Dockerfile (build on a CUDA devel image, run on a CUDA runtime image), models
       mounted as a volume, config via mount or env. Publish to GHCR from the release workflow
@@ -90,6 +83,21 @@ _No cards yet._
 
 ## Done
 
+- [x] ⬛ **BUILD-1** `P1` Publish prebuilt release binaries
+      The 10-20 min native build plus vendoring, CMake/Ninja and the CUDA host-compiler pin stop
+      most people. Release workflow producing archives for Windows x64 (CUDA), Linux x64 (CUDA)
+      and macOS arm64 (Metal), each with the sd.cpp shared library, `espeak-ng-data`, the
+      example config and the built frontend. Document the CUDA runtime / driver requirement.
+      Archives are GPL-3.0-or-later as a whole (espeak-ng, see `THIRD-PARTY-NOTICES.md`): ship
+      `LICENSE-*`, the GPL-3.0 text and the notices, and link the tagged source.
+      Shipped: `release.yml` (tag `v*` publishes, manual run only builds) for linux-x64-cuda
+      (ubuntu-22.04 + NVIDIA apt CUDA 12.8), windows-x64-cuda (Jimver CUDA 12.8, plus a separate
+      cudart/cuBLAS DLL zip) and macos-arm64-metal, packaged by `backend/scripts/package-release.sh`
+      with SHA256SUMS. Archives run in place: hypnos serves the bundled playground at `/`
+      (`server.frontend_dir` or `frontend/` beside the binary), espeak-ng-data is found beside the
+      executable (it used the build machine's path), Linux gets a `$ORIGIN` rpath, and
+      `fetch-models` resolves the manifest relative to the script. GPL text in `licenses/`.
+      macOS archive verified locally (playground, sd.cpp dylib, TTS); the CUDA jobs only run on a tag.
 - [x] ⬛ **BUILD-3** `P2` Re-enable CI
       `.github/workflows/ci.yml` is fully commented out. Restore the engine-free jobs: CPU-only
       `cargo build --workspace --no-default-features`, `cargo test --workspace`, scoped `cargo fmt

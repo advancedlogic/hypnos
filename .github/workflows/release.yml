@@ -1,0 +1,166 @@
+name: release
+
+# A pushed tag `v*` builds every archive and publishes a GitHub release with them. Running the
+# workflow by hand builds the same archives as workflow artifacts and publishes nothing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CMAKE_GENERATOR: Ninja
+  LLAMA_LIB_PROFILE: Release
+  # CUDA builds leave CMAKE_CUDA_ARCHITECTURES to ggml's portable default for this toolkit
+  # (PTX for Maxwell..Hopper plus Ampere, Ada and Blackwell device code), like llama.cpp releases.
+  CUDA_VERSION: "12.8.1"
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci && npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+  build:
+    name: ${{ matrix.platform }}
+    needs: frontend
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ubuntu-22.04 sets the glibc floor of the Linux binary (2.35).
+          - { platform: linux-x64-cuda, os: ubuntu-22.04, cargo: "" }
+          - { platform: windows-x64-cuda, os: windows-2022, cargo: "" }
+          - { platform: macos-arm64-metal, os: macos-15, cargo: "--no-default-features --features metal" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: lukka/get-cmake@latest
+
+      - name: Free disk space (Linux)
+        if: runner.os == 'Linux'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: CUDA toolkit (Linux, NVIDIA apt repository)
+        if: runner.os == 'Linux'
+        run: |
+          v="${CUDA_VERSION%.*}"; v="${v/./-}"
+          curl -fsSLO https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libclang-dev \
+            "cuda-nvcc-$v" "cuda-cudart-dev-$v" "cuda-cccl-$v" "cuda-driver-dev-$v" "libcublas-dev-$v"
+          cuda="/usr/local/cuda-${CUDA_VERSION%.*}"
+          [ -e /usr/local/cuda ] || sudo ln -s "$cuda" /usr/local/cuda
+          echo "$cuda/bin" >> "$GITHUB_PATH"
+          echo "CUDA_PATH=$cuda" >> "$GITHUB_ENV"
+
+      - name: CUDA toolkit (Windows)
+        if: runner.os == 'Windows'
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: network
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
+
+      - name: MSVC developer environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: macOS deployment target
+        if: runner.os == 'macOS'
+        run: echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"
+
+      - name: Vendor engine sources (pinned commits + patches)
+        shell: bash
+        run: ./backend/scripts/vendor.sh
+
+      - name: Build
+        working-directory: backend
+        shell: bash
+        run: cargo build --release -p hypnos-server ${{ matrix.cargo }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+      - name: Package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME}"
+          [[ "$GITHUB_REF" == refs/tags/* ]] || version="$(git describe --tags --always)"
+          ./backend/scripts/package-release.sh ${{ matrix.platform }} --version "$version" --out dist
+
+      # cudart / cuBLAS are redistributable; shipped separately like llama.cpp's cudart archive,
+      # so the main download stays small for machines with the CUDA toolkit installed.
+      - name: CUDA runtime DLLs (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME}"
+          [[ "$GITHUB_REF" == refs/tags/* ]] || version="$(git describe --tags --always)"
+          bin="$(cygpath -u "$CUDA_PATH")/bin"
+          mkdir -p dist/cudart
+          cp "$bin"/cudart64_12.dll "$bin"/cublas64_12.dll "$bin"/cublasLt64_12.dll dist/cudart/
+          (cd dist/cudart && 7z a -tzip -mx=7 "../hypnos-$version-windows-x64-cuda12-runtime.zip" ./*.dll >/dev/null)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hypnos-${{ matrix.platform }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hypnos-*
+          merge-multiple: true
+          path: dist
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum -- *.tar.gz *.zip > SHA256SUMS
+          cat > notes.md <<EOF
+          Prebuilt archives for ${GITHUB_REF_NAME}. Unpack, then follow \`README.txt\` inside
+          (download models with \`scripts/fetch-models\`, run \`hypnos\`, open http://127.0.0.1:8080).
+
+          | Archive | Needs |
+          | :--- | :--- |
+          | \`linux-x64-cuda\` | glibc 2.35+, NVIDIA driver 570+, CUDA 12 runtime (cudart, cuBLAS), libgomp1 |
+          | \`windows-x64-cuda\` | NVIDIA driver 570+, plus \`windows-x64-cuda12-runtime.zip\` unpacked beside \`hypnos.exe\` (or the CUDA Toolkit 12.x) |
+          | \`macos-arm64-metal\` | Apple Silicon, macOS 14+ |
+
+          The binaries link espeak-ng statically, so each archive is distributed under the GNU GPL
+          v3 or later (text included); Hypnos's own code is MIT OR Apache-2.0. Corresponding source:
+          https://github.com/${GITHUB_REPOSITORY}/tree/${GITHUB_REF_NAME}
+          EOF
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "Hypnos $GITHUB_REF_NAME" --notes-file notes.md \
+            -- *.tar.gz *.zip SHA256SUMS
