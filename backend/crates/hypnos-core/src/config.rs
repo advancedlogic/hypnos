@@ -1230,7 +1230,7 @@ max_queue = 4
         );
         let cfg = HypnosConfig::from_toml_str(&toml).unwrap();
         assert_eq!(cfg.config_version, 1, "absent means 1");
-        assert_eq!(cfg.unknown_keys, vec!["server.prot", "limits.max_queue"]);
+        assert_eq!(cfg.unknown_keys, vec!["limits.max_queue", "server.prot"]); // table order
         let report = cfg.validate(std::path::Path::new("."));
         assert!(report
             .warnings
@@ -1244,7 +1244,7 @@ max_queue = 4
         .unwrap();
         assert_eq!(
             cfg.unknown_keys,
-            vec!["models[0].weihgts", "models[0].arch.num_layerz"]
+            vec!["models[0].arch.num_layerz", "models[0].weihgts"]
         );
         // Versions: newer than this build is refused, 0 is refused, current passes.
         let newer = format!(
