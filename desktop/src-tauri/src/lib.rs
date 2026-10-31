@@ -1,18 +1,10 @@
+mod hypnos;
 mod local_server;
 
-use std::collections::HashSet;
-use std::sync::Mutex;
-
-use serde_json::json;
-use tauri::ipc::CapabilityBuilder;
-use tauri::{Manager, State};
+use tauri::Manager;
 
 /// The keychain service name; the account is the server's origin, so each server keeps its key.
 const KEYCHAIN_SERVICE: &str = "dev.hypnos.desktop";
-
-/// Origins the HTTP plugin may reach beyond the loopback ones of `capabilities/default.json`.
-#[derive(Default)]
-struct AllowedOrigins(Mutex<HashSet<String>>);
 
 /// `http://host:port` of a server URL; only http and https are accepted.
 fn origin_of(server_url: &str) -> Result<String, String> {
@@ -25,31 +17,6 @@ fn origin_of(server_url: &str) -> Result<String, String> {
 
 fn keychain_entry(server_url: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(KEYCHAIN_SERVICE, &origin_of(server_url)?).map_err(|e| e.to_string())
-}
-
-/// Lets the main window's HTTP client reach `server_url`'s origin. Capabilities cannot be
-/// removed at runtime, so an origin used earlier stays reachable until the app restarts.
-#[tauri::command]
-fn allow_server(
-    app: tauri::AppHandle,
-    allowed: State<AllowedOrigins>,
-    server_url: String,
-) -> Result<(), String> {
-    let origin = origin_of(&server_url)?;
-    let mut origins = allowed.0.lock().unwrap();
-    if origins.contains(&origin) {
-        return Ok(());
-    }
-    let capability = CapabilityBuilder::new(format!("server-{}", origins.len()))
-        .window("main")
-        .permission_scoped(
-            "http:default",
-            vec![json!({ "url": format!("{origin}/*") })],
-            Vec::<serde_json::Value>::new(),
-        );
-    app.add_capability(capability).map_err(|e| e.to_string())?;
-    origins.insert(origin);
-    Ok(())
 }
 
 /// The API key saved for this server in the OS keychain, if any.
@@ -78,17 +45,24 @@ fn set_api_key(server_url: String, api_key: Option<String>) -> Result<(), String
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
-            app.manage(AllowedOrigins::default());
+            app.manage(hypnos::Hypnos::default());
             app.manage(local_server::LocalServer::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            allow_server,
             get_api_key,
             set_api_key,
+            hypnos::hypnos_connect,
+            hypnos::hypnos_probe,
+            hypnos::hypnos_test,
+            hypnos::hypnos_memory_status,
+            hypnos::hypnos_models,
+            hypnos::hypnos_set_routes,
+            hypnos::hypnos_route,
+            hypnos::hypnos_chat,
+            hypnos::hypnos_chat_cancel,
             local_server::local_server_detect,
             local_server::local_server_start,
             local_server::local_server_stop,

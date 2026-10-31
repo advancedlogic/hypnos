@@ -1,20 +1,13 @@
-import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
-const sdk = fileURLToPath(new URL('../sdk/javascript/src', import.meta.url));
-
-// The SDK is compiled from its TypeScript sources, so it needs no separate build step.
+// The UI talks to Hypnos only through the Tauri commands (src-tauri/src/hypnos.rs).
 export default defineConfig({
   plugins: [svelte()],
-  resolve: {
-    alias: { '@hypnos/client': `${sdk}/index.ts` },
-  },
   clearScreen: false,
   server: {
     port: 1420,
     strictPort: true,
-    fs: { allow: ['.', sdk] },
   },
   envPrefix: ['VITE_', 'TAURI_ENV_'],
   build: {

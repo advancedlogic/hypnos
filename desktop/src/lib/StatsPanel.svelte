@@ -1,8 +1,9 @@
 <script>
   import { onMount } from 'svelte';
   import { formatBytes, formatMs, tierName } from './format.js';
+  import * as api from './hypnos.js';
 
-  let { client, status, lastResponse } = $props();
+  let { status, lastResponse } = $props();
 
   const POLL_MS = 1500;
   const TIERS = ['tier1_gpu_vram', 'tier2_pinned_ram', 'tier3_nvme_ssd'];
@@ -64,17 +65,19 @@
 
   // Polls while the panel is mounted (it unmounts when collapsed) and the window is visible.
   onMount(() => {
-    const controller = new AbortController();
+    let live = true;
     let timer;
     const poll = async () => {
       clearTimeout(timer);
       if (document.hidden) return;
       try {
-        memory = await client.memoryStatus({ signal: controller.signal });
+        const next = await api.memoryStatus();
+        if (!live) return;
+        memory = next;
         error = null;
       } catch (e) {
-        if (controller.signal.aborted) return;
-        error = 'No memory status';
+        if (!live) return;
+        error = api.errorMessage(e);
       }
       now = Date.now();
       timer = setTimeout(poll, POLL_MS);
@@ -83,7 +86,7 @@
     document.addEventListener('visibilitychange', onVisibility);
     poll();
     return () => {
-      controller.abort();
+      live = false;
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisibility);
     };

@@ -1,5 +1,5 @@
 import { load, save } from './storage.js';
-import { describeError } from './errors.js';
+import * as api from './hypnos.js';
 
 const CHATS_KEY = 'chats';
 const LAST_MODEL_KEY = 'lastModel';
@@ -25,22 +25,12 @@ export class ChatStore {
   lastModel = $state(null);
   /** The telemetry of the most recent response, for the stats panel. */
   lastTelemetry = $state(null);
-  /** Chat id -> AbortController of the response being generated. Not persisted. */
+  /** Chat id -> request id of the answer being generated. Not persisted. */
   running = $state({});
 
   current = $derived(this.chats.find((c) => c.id === this.currentId) ?? null);
 
-  #client;
   #saveTimer;
-
-  constructor(client) {
-    this.#client = client;
-  }
-
-  /** The client for new requests, after the connection settings changed. */
-  setClient(client) {
-    this.#client = client;
-  }
 
   async init() {
     const chats = await load(CHATS_KEY, []);
@@ -116,12 +106,13 @@ export class ChatStore {
   }
 
   stop(id) {
-    this.running[id]?.abort();
+    const requestId = this.running[id];
+    if (requestId) api.cancelChat(requestId);
   }
 
   async #generate(chat) {
-    const controller = new AbortController();
-    this.running[chat.id] = controller;
+    const requestId = crypto.randomUUID();
+    this.running[chat.id] = requestId;
     chat.messages.push({ role: 'assistant', content: '', model: chat.model, pending: true });
     // Mutate through the proxy so the UI follows the stream.
     const answer = chat.messages.at(-1);
@@ -134,18 +125,19 @@ export class ChatStore {
       .map(({ role, content }) => ({ role, content }));
     if (chat.system.trim()) history.unshift({ role: 'system', content: chat.system });
 
-    let stream;
-    controller.signal.addEventListener('abort', () => stream?.close(), { once: true });
     try {
-      stream = await this.#client.chatStream(chat.model, history, { signal: controller.signal });
-      for await (const piece of stream.text()) answer.content += piece;
-      answer.telemetry = stream.telemetry;
-      answer.usage = stream.usage;
-      if (stream.telemetry) this.lastTelemetry = { model: chat.model, telemetry: stream.telemetry, usage: stream.usage };
+      const { cancelled } = await api.chat(requestId, chat.model, history, {
+        onDelta: (text) => (answer.content += text),
+        onDone: ({ telemetry, usage }) => {
+          answer.telemetry = telemetry ?? undefined;
+          answer.usage = usage ?? undefined;
+          if (telemetry) this.lastTelemetry = { model: chat.model, telemetry, usage };
+        },
+      });
+      if (cancelled) answer.stopped = true;
     } catch (e) {
-      if (!controller.signal.aborted) answer.error = describeError(e);
+      answer.error = api.errorMessage(e);
     } finally {
-      if (controller.signal.aborted) answer.stopped = true;
       delete answer.pending;
       delete this.running[chat.id];
       chat.updatedAt = Date.now();

@@ -78,18 +78,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
 
-- [ ] 🩵 **DESK-6** `P1` Route every server call through the Rust SDK in `src-tauri`
-      Add `hypnos-client` (`sdk/rust`, path dependency) to the Tauri crate and expose Tauri
-      commands for each call the app makes: health/ready, models, memory status, chat (stream
-      over a `tauri::ipc::Channel`, cancel by id), transcription, speech, images, document
-      conversion. The webview stops talking HTTP: drop the JS SDK alias and
-      `tauri-plugin-http` (the Rust client has no CORS or scope problem; `allow_server` goes),
-      keep the connection (URL + keychain key) in Rust state. Add a `ModelRouter` that picks
-      the model for each job from `/v1/memory/status` `modalities` (never hard-coded ids):
-      the chat's model when it serves the modality, else the first enabled model that does,
-      overridable per modality in the settings. Errors map to the same sentences as
-      `errors.js`. Base for DESK-7..11.
-
 - [ ] 🩵 **DESK-7** `P1` Attach images, documents, audio and video to a message
       Paperclip button + drag and drop + paste; chips with name, size and a remove button above
       the composer. Routing (in Rust, DESK-6): images -> `image_url` data URL parts (needs a
@@ -153,6 +141,28 @@ _No cards yet._
 
 ## Done
 
+- [x] 🩵 **DESK-6** `P1` Route every server call through the Rust SDK in `src-tauri`
+      Add `hypnos-client` (`sdk/rust`, path dependency) to the Tauri crate and expose Tauri
+      commands for each call the app makes: health/ready, models, memory status, chat (stream
+      over a `tauri::ipc::Channel`, cancel by id), transcription, speech, images, document
+      conversion. The webview stops talking HTTP: drop the JS SDK alias and
+      `tauri-plugin-http` (the Rust client has no CORS or scope problem; `allow_server` goes),
+      keep the connection (URL + keychain key) in Rust state. Add a `ModelRouter` that picks
+      the model for each job from `/v1/memory/status` `modalities` (never hard-coded ids):
+      the chat's model when it serves the modality, else the first enabled model that does,
+      overridable per modality in the settings. Errors map to the same sentences as
+      `errors.js`. Base for DESK-7..11.
+      Done: `src-tauri/src/hypnos.rs` with `hypnos_connect` / `probe` / `test` / `models` /
+      `memory_status` / `route` / `set_routes` / `chat` (Channel) / `chat_cancel`; the client
+      and the routes live in Rust state, the key is read from the keychain there. JS SDK
+      alias, `tauri-plugin-http`, `allow_server` and the HTTP permission are gone (the app is
+      Tauri-only: no browser mode). `route` + 3 unit tests; errors become
+      `{ kind, message, detail, retryAfterSecs }` (errors.js removed). Settings gain "Models
+      for each job". The media commands (transcription, speech, images, documents) land with
+      DESK-7..11, where their inputs live in Rust (file paths, the mic buffer, playback).
+      Ignored live test `chats_and_cancels_through_the_sdk` passes against the running server;
+      no lease is left after a cancel.
+
 - [x] 🩵 **DESK-5** `P3` Start and stop a local Hypnos server from the app
       Optional: bundle or locate the `hypnos` binary and run it as a Tauri sidecar with a
       chosen config, show its log (`/v1/logs`), stop it on quit. Decide first whether the
@@ -176,6 +186,7 @@ _No cards yet._
       "Start a local server" when unreachable): binary, config, port, start with the app,
       live log; starting it switches the connection to `http://127.0.0.1:<port>`. Ignored
       test `starts_logs_and_stops_a_real_server` (Tauri mock app + real binary) passes.
+      (commit 5590302)
 
 - [x] ⬜ **DOC-6** `P2` Document the desktop app
       `desktop/README.md` (prerequisites per OS, dev and build commands, connecting to a

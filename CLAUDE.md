@@ -240,14 +240,13 @@ Tauri 2 + Svelte 5 + Tailwind 3 (same versions as `frontend/`), its own `package
 `src-tauri/` crate outside the backend workspace. It never bundles the server;
 `src-tauri/src/local_server.rs` can start an installed `hypnos` (detected or chosen), stream its
 output to the UI and stop it on quit, with health checks through `hypnos-client` (`sdk/rust`, a
-path dependency; DESK-6 moves every call there). Its real-server test is `#[ignore]`d and needs
-`HYPNOS_TEST_BINARY` / `HYPNOS_TEST_CONFIG`.
-Vite aliases `@hypnos/client` to `sdk/javascript/src`, so the SDK needs no build step (an SDK API
-change can break the app). Requests go through `tauri-plugin-http` because the webview origin
-(`tauri://localhost`) fails the server's loopback-only CORS default; the capability allows
-loopback, and the Rust command `allow_server` adds a runtime capability for a saved remote
-origin. `get_api_key` / `set_api_key` keep the API key in the OS keychain (`keyring`), keyed by
-origin; chats and the server URL live in `tauri-plugin-store`. `ChatStore`
+path dependency). Every server call is a command in `src-tauri/src/hypnos.rs` on `hypnos-client`
+(chat tokens over a `tauri::ipc::Channel`, cancel by request id); the webview has no HTTP
+permission, and an SDK API change can break the app. `route` picks the model per modality from
+`/v1/memory/status` `modalities` (chat model, then the settings' choice, then a Tier 1 model),
+never hard-coded ids. The real-server tests are `#[ignore]`d (`HYPNOS_TEST_URL`;
+`HYPNOS_TEST_BINARY` / `HYPNOS_TEST_CONFIG`). `get_api_key` / `set_api_key` keep the API key in
+the OS keychain (`keyring`), keyed by origin; chats and the server URL live in `tauri-plugin-store`. `ChatStore`
 (`src/lib/chats.svelte.js`) owns chats and streaming; `StatsPanel.svelte` polls
 `/v1/memory/status` only while open. A change to `/v1/memory/status`, telemetry or errors in
 `docs/api.md` may need a change here too. `desktop/README.md` is its guide.

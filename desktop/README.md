@@ -8,9 +8,9 @@ It does not contain the server. Point it at a running Hypnos (`./run.sh start ba
 release archive, the Docker image, another machine), or let it start an installed `hypnos` on
 this machine from its Local server dialog.
 
-Built with Tauri 2, Svelte 5 (runes) and Tailwind 3, the same web stack as `frontend/`. It talks
-to the server through the JavaScript SDK in `sdk/javascript` (compiled from its sources, no
-separate build step).
+Built with Tauri 2, Svelte 5 (runes) and Tailwind 3, the same web stack as `frontend/`. Every call
+to the server is made by the Rust side with the Rust SDK (`sdk/rust`); the web UI only calls the
+app's commands.
 
 ## Using it
 
@@ -28,7 +28,10 @@ separate build step).
   every 1.5 s while open and the window is visible.
 - **Connection** (click the status in the header, or Cmd/Ctrl+,): server URL and, if the server
   sets `server.api_keys`, an API key. The key is kept in the system keychain (macOS Keychain,
-  Windows Credential Manager, Secret Service on Linux), one per server. The header shows
+  Windows Credential Manager, Secret Service on Linux), one per server. Below them, the model for
+  each job (images in messages, speech to text, text to speech, image generation, documents and
+  URLs): Automatic uses the chat's model when it serves that job, else a model already on the
+  GPU, else any enabled model that serves it. The header shows
   Connecting, Unreachable, API key refused, Warming up (models still loading) or Ready, and the
   app reconnects by itself when the server comes back.
 
@@ -80,18 +83,22 @@ npx tauri build            # installers for this OS under src-tauri/target/relea
 `run.bat build desktop` / `run.bat start desktop` do the same on Windows. The `desktop` target is
 never part of `all`. `HYPNOS_PROFILE=debug` builds and starts the debug binary.
 
-`npm run dev` alone serves the UI in a browser on http://localhost:1420. It then uses the
-browser's fetch, which the server's default CORS policy accepts from loopback origins; the API key
-is kept in memory only.
+The UI needs the Tauri side for every server call, so it does not run in a plain browser.
 
 ## How it reaches the server
 
-The webview's origin (`tauri://localhost`, `http://tauri.localhost` on Windows) is not a loopback
-origin, so the server's default CORS policy would refuse it. Requests therefore go through
-Tauri's HTTP plugin, which sends them from the Rust side. Its scope allows `localhost` and
-`127.0.0.1` (`src-tauri/capabilities/default.json`); a server elsewhere is allowed when it is
-saved in the connection settings (the `allow_server` command adds a runtime capability for that
-origin only, kept until the app quits).
+`src-tauri/src/hypnos.rs` holds one `hypnos_client::Client` for the current server (its URL from
+the store, its key from the keychain) and exposes commands: `hypnos_connect`, `hypnos_probe`,
+`hypnos_test`, `hypnos_models`, `hypnos_memory_status`, `hypnos_route`, `hypnos_set_routes`,
+`hypnos_chat` (tokens stream back over a Tauri `Channel`) and `hypnos_chat_cancel` (drops the
+stream, which closes the connection, which is how the server is told to stop). Because the
+requests leave from Rust, the server's CORS policy and the webview's origin play no part, and
+the webview has no HTTP permission at all. Failed commands reject with
+`{ kind, message, detail, retryAfterSecs }`, where `message` is the sentence the UI shows.
+
+`route` picks the model for a job from `/v1/memory/status` `modalities`, never from hard-coded
+ids: the chat's model when it serves the modality, then the model chosen in the settings, then
+an enabled model that serves it, preferring one already in Tier 1.
 
 ## Layout
 
@@ -100,8 +107,8 @@ desktop/
 ├── src/
 │   ├── App.svelte            # shell: header, status loop, model list, panels
 │   └── lib/
-│       ├── hypnos.js         # SDK client over the Tauri HTTP plugin, server probe
-│       ├── connection.js     # server URL (store) + API key (keychain)
+│       ├── hypnos.js         # the server commands (connect, probe, models, chat, route, ...)
+│       ├── connection.js     # server URL (store) + API key (keychain), then hypnos_connect
 │       ├── chats.svelte.js   # ChatStore: chats, streaming, stop, persistence
 │       ├── Chat.svelte       # model picker, messages, composer
 │       ├── Sidebar.svelte    # conversation list
@@ -111,15 +118,17 @@ desktop/
 │       ├── localServer.js    # its commands, events and saved settings
 │       └── Markdown.svelte   # marked + DOMPurify, copy buttons on code blocks
 └── src-tauri/
-    ├── src/lib.rs            # plugins (http, store) + commands: allow_server, get/set_api_key
+    ├── src/lib.rs            # store plugin, keychain commands (get/set_api_key), command list
+    ├── src/hypnos.rs         # every server call on hypnos-client, the model router, errors
     ├── src/local_server.rs   # find, start, stop and log a hypnos process (health via hypnos-client)
-    ├── capabilities/         # what the window may call; HTTP limited to loopback
+    ├── capabilities/         # what the window may call: core + store, no HTTP
     ├── icons/                # generated from app-icon.png (assets/logo.png on a tile)
     └── tauri.conf.json
 ```
 
-Tests: `cd src-tauri && cargo test`. The local-server test runs a real server and is ignored by
-default: `HYPNOS_TEST_BINARY=../../backend/target/release/hypnos HYPNOS_TEST_CONFIG=<config with
+Tests: `cd src-tauri && cargo test`. Two tests need a real server and are ignored by default:
+`HYPNOS_TEST_URL=http://127.0.0.1:9999 cargo test hypnos -- --ignored` chats, cancels and checks
+the errors through the commands; the local-server test starts one itself: `HYPNOS_TEST_BINARY=../../backend/target/release/hypnos HYPNOS_TEST_CONFIG=<config with
 one small model> cargo test -- --ignored` (it uses port 9997).
 
 To regenerate the icons after changing `src-tauri/icons/app-icon.png`:

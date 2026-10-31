@@ -1,6 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { inTauri } from './hypnos.js';
 import { load, save } from './storage.js';
 
 const SETTINGS_KEY = 'localServer';
@@ -10,7 +9,7 @@ export const DEFAULT_PORT = 9999;
 export async function loadLocalSettings() {
   const saved = await load(SETTINGS_KEY, null);
   if (saved?.binary) return saved;
-  const found = inTauri ? await invoke('local_server_detect') : {};
+  const found = await invoke('local_server_detect');
   return { binary: found.binary ?? '', config: found.config ?? '', port: DEFAULT_PORT, autoStart: false, ...saved };
 }
 

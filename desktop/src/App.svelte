@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
-  import { createClient, probe, inTauri } from './lib/hypnos.js';
+  import * as api from './lib/hypnos.js';
+  import { load, save } from './lib/storage.js';
   import { connectionFor, loadConnection, saveConnection } from './lib/connection.js';
   import * as localServer from './lib/localServer.js';
   import LocalServer from './lib/LocalServer.svelte';
@@ -14,19 +15,22 @@
   const POLL_MS = 3000;
   const MODELS_MS = 10000;
   const PANEL_KEY = 'hypnos.desktop.panelOpen';
+  const ROUTES_KEY = 'routes';
 
   /** `{ url, apiKey }`, loaded from the store and the keychain at start. */
   let connection = $state(null);
-  let client = $derived(connection && createClient({ baseUrl: connection.url, apiKey: connection.apiKey || undefined }));
+  /** Bumped each time the Rust client points at a (new) server; the loops below restart on it. */
+  let connected = $state(0);
+  /** Modality -> model id chosen in the settings (absent = automatic). */
+  let routes = $state({});
 
-  const store = new ChatStore(null);
+  const store = new ChatStore();
 
   let status = $state({ state: 'connecting', health: null });
-  let models = $state([]);
   let panelOpen = $state(readPanelOpen());
   let settingsOpen = $state(false);
   let localOpen = $state(false);
-  /** `{ binary, config, port, autoStart }` and the process status (DESK-5), Tauri only. */
+  /** `{ binary, config, port, autoStart }` and the process status (DESK-5). */
   let localSettings = $state(null);
   let localStatus = $state(null);
 
@@ -75,6 +79,7 @@
     const next = await connectionFor(url);
     await saveConnection(next);
     connection = next;
+    connected++;
   }
 
   async function saveLocalSettings(next) {
@@ -110,68 +115,73 @@
     }
   }
 
-  async function onSaveSettings(next) {
+  async function onSaveSettings(next, nextRoutes) {
     await saveConnection(next);
     connection = next;
+    connected++;
+    routes = nextRoutes;
+    await save(ROUTES_KEY, nextRoutes);
+    await api.setRoutes(nextRoutes);
     settingsOpen = false;
   }
 
-  /** The enabled models that answer `/v1/chat/completions`, with their current tier. */
-  async function loadModels(c, signal) {
-    const [list, memory] = await Promise.all([c.models({ signal }), c.memoryStatus({ signal })]);
-    const modalities = new Map(memory.models.map((m) => [m.id, m.modalities ?? [m.modality]]));
-    models = list.data.filter((m) => (modalities.get(m.id) ?? [m.modality]).includes('text_generation'));
-  }
+  /** Every enabled model (with `modalities` and tier); the chat picker shows the chat ones. */
+  let allModels = $state([]);
 
-  // Each client (a new server or key) gets its own status loop; the loop keeps going while the
-  // server is down, so the app recovers by itself when it comes back.
+  // A status loop per connection; it keeps going while the server is down, so the app recovers
+  // by itself when it comes back. A cancelled loop drops the answer of its last probe.
   $effect(() => {
-    const c = client;
-    if (!c) return;
-    store.setClient(c);
+    if (!connected) return;
     status = { state: 'connecting', health: null };
-    models = [];
-    const controller = new AbortController();
+    allModels = [];
+    let live = true;
     let timer;
     const tick = async () => {
       try {
-        status = await probe(c, controller.signal);
-      } catch {
-        return;
+        const next = await api.probe();
+        if (live) status = next;
+      } catch (e) {
+        console.warn(api.errorMessage(e));
       }
-      timer = setTimeout(tick, POLL_MS);
+      if (live) timer = setTimeout(tick, POLL_MS);
     };
     tick();
     return () => {
-      controller.abort();
+      live = false;
       clearTimeout(timer);
     };
   });
 
   // The model list follows the server: loaded once it is ready, then refreshed for the tiers.
   $effect(() => {
-    const c = client;
-    if (!c || serverState !== 'ready') return;
-    const controller = new AbortController();
+    if (!connected || serverState !== 'ready') return;
+    let live = true;
     let timer;
     const refresh = async () => {
       try {
-        await loadModels(c, controller.signal);
-      } catch {
-        if (controller.signal.aborted) return;
+        const next = await api.models();
+        if (live) allModels = next;
+      } catch (e) {
+        console.warn(api.errorMessage(e));
       }
-      timer = setTimeout(refresh, MODELS_MS);
+      if (live) timer = setTimeout(refresh, MODELS_MS);
     };
     refresh();
     return () => {
-      controller.abort();
+      live = false;
       clearTimeout(timer);
     };
   });
 
+  let models = $derived(allModels.filter((m) => m.modalities.includes('text_generation')));
+
   onMount(async () => {
     connection = await loadConnection();
-    if (inTauri) initLocalServer();
+    routes = await load(ROUTES_KEY, {});
+    await api.setRoutes(routes);
+    await api.connect(connection.url);
+    connected++;
+    initLocalServer();
     await store.init();
     if (!store.current) store.newChat();
   });
@@ -203,7 +213,7 @@
           <span class="text-slate-500 font-mono">{new URL(connection.url).host}</span>
         {/if}
       </button>
-      {#if inTauri && localSettings}
+      {#if localSettings}
         <button
           class="relative p-1.5 rounded-md text-slate-400 hover:text-slate-100 hover:bg-slate-800"
           onclick={() => (localOpen = true)}
@@ -242,12 +252,14 @@
 
     <main class="flex-1 min-w-0">
       <Chat {store} {models} {serverState} onsettings={() => (settingsOpen = true)}
-        onlocalserver={inTauri && localSettings ? () => (localOpen = true) : null} />
+        onlocalserver={localSettings ? () => (localOpen = true) : null} />
     </main>
 
-    {#if panelOpen && client}
+    {#if panelOpen && connected}
       <aside class="w-80 shrink-0 border-l border-slate-800 bg-slate-900/40 overflow-y-auto">
-        <StatsPanel {client} {status} lastResponse={store.lastTelemetry} />
+        {#key connected}
+          <StatsPanel {status} lastResponse={store.lastTelemetry} />
+        {/key}
       </aside>
     {/if}
   </div>
@@ -265,5 +277,5 @@
 {/if}
 
 {#if settingsOpen && connection}
-  <Settings {connection} onsave={onSaveSettings} onclose={() => (settingsOpen = false)} />
+  <Settings {connection} {routes} models={allModels} onsave={onSaveSettings} onclose={() => (settingsOpen = false)} />
 {/if}

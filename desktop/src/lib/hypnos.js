@@ -1,39 +1,48 @@
-import { AuthenticationError, Client } from '@hypnos/client';
-import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
+import { Channel, invoke } from '@tauri-apps/api/core';
+
+// Every server call is a command of the Rust side (src-tauri/src/hypnos.rs, on the Rust SDK).
+// A failed command rejects with `{ kind, message, detail, retryAfterSecs }`: `message` is a
+// sentence for the user, `kind` what to branch on (`busy`, `starting`, `unauthorized`, ...).
 
 export const DEFAULT_SERVER_URL = 'http://localhost:9999';
 
-/** True inside the Tauri webview, false in a plain browser (`npm run dev`). */
-export const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+/** Uses this server from now on, with the API key saved for it in the keychain. */
+export const connect = (url) => invoke('hypnos_connect', { url });
+
+/** `{ state, health }`: `unreachable`, `unauthorized`, `starting` (models loading) or `ready`. */
+export const probe = () => invoke('hypnos_probe');
+
+/** Like `probe`, for a server and key not in use yet (the settings' Test connection). */
+export const test = (url, apiKey) => invoke('hypnos_test', { url, apiKey: apiKey || null });
+
+export const memoryStatus = () => invoke('hypnos_memory_status');
+
+/** The enabled models with all their `modalities` and their tier. */
+export const models = () => invoke('hypnos_models');
+
+/** Modality -> model id chosen in the settings; absent modalities are routed automatically. */
+export const setRoutes = (routes) => invoke('hypnos_set_routes', { routes });
+
+/** The model that would serve `modality` now, preferring `preferred` when it can. */
+export const route = (modality, preferred) => invoke('hypnos_route', { modality, preferred: preferred ?? null });
 
 /**
- * A client for the Hypnos server. Inside Tauri the requests go through the Rust HTTP plugin:
- * the webview's origin (`tauri://localhost`) is not a loopback origin, so the server's default
- * CORS policy would refuse it. In a browser the global fetch is used.
+ * Streams an answer: `onDelta(text)` per piece, `onDone({ telemetry, usage, finishReason })` at
+ * the end. Resolves to `{ cancelled }`; `cancelChat(requestId)` stops it.
  */
-export function createClient({ baseUrl = DEFAULT_SERVER_URL, apiKey } = {}) {
-  return new Client({ baseUrl, apiKey, fetch: inTauri ? tauriFetch : undefined });
+export function chat(requestId, model, messages, { onDelta, onDone }) {
+  const onEvent = new Channel();
+  onEvent.onmessage = (e) => {
+    if (e.event === 'delta') onDelta(e.text);
+    else if (e.event === 'done') onDone(e);
+  };
+  return invoke('hypnos_chat', { requestId, model, messages, onEvent });
 }
 
-/**
- * One look at the server: `unreachable`, `unauthorized` (the API key is missing or refused),
- * `starting` (up, models still loading) or `ready`. `/health` is open to everyone and
- * `GET /v1/models` checks the key even during startup, so each state is told apart.
- */
-export async function probe(client, signal) {
-  let health;
-  try {
-    health = await client.health({ signal });
-  } catch (e) {
-    if (signal?.aborted) throw e;
-    return { state: 'unreachable', health: null, error: String(e?.message ?? e) };
-  }
-  try {
-    await client.models({ signal });
-  } catch (e) {
-    if (signal?.aborted) throw e;
-    if (e instanceof AuthenticationError) return { state: 'unauthorized', health };
-  }
-  const ready = await client.isReady({ signal });
-  return { state: ready ? 'ready' : 'starting', health };
+export const cancelChat = (requestId) => invoke('hypnos_chat_cancel', { requestId });
+
+/** The sentence to show for a rejected command (or any other error). */
+export function errorMessage(e) {
+  if (e?.detail) console.warn(e.detail);
+  return e?.message ?? String(e);
 }

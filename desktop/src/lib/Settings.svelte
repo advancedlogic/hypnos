@@ -1,14 +1,26 @@
 <script>
   import { onMount, untrack } from 'svelte';
-  import { createClient, probe, inTauri } from './hypnos.js';
-  import { allowServer, normalizeUrl } from './connection.js';
+  import * as api from './hypnos.js';
+  import { normalizeUrl } from './connection.js';
 
-  let { connection, onsave, onclose } = $props();
+  /** `routes`: modality -> model id; `models`: the enabled models with their `modalities`. */
+  let { connection, routes, models, onsave, onclose } = $props();
 
   // The form starts from the current connection and is applied on Save.
-  const initial = untrack(() => ({ ...connection }));
+  const initial = untrack(() => ({ ...connection, routes: { ...routes } }));
   let url = $state(initial.url);
   let apiKey = $state(initial.apiKey);
+  let chosen = $state(initial.routes);
+
+  // The jobs the app hands to a model besides the chat itself (DESK-7..11 use them).
+  const JOBS = [
+    ['vision', 'Images in messages'],
+    ['speech_to_text', 'Speech to text'],
+    ['text_to_speech', 'Text to speech'],
+    ['image_generation', 'Image generation'],
+    ['document_conversion', 'Documents and URLs'],
+  ];
+  const servingModels = (modality) => models.filter((m) => m.modalities.includes(modality));
   let showKey = $state(false);
   let testing = $state(false);
   let saving = $state(false);
@@ -35,12 +47,11 @@
     }
     testing = true;
     try {
-      await allowServer(normalized);
-      const outcome = await probe(createClient({ baseUrl: normalized, apiKey: apiKey || undefined }));
+      const outcome = await api.test(normalized, apiKey);
       const r = RESULTS[outcome.state];
       result = { ...r, text: outcome.health ? `${r.text} (Hypnos ${outcome.health.version})` : r.text };
     } catch (e) {
-      result = { text: String(e?.message ?? e), tone: 'text-rose-300' };
+      result = { text: api.errorMessage(e), tone: 'text-rose-300' };
     } finally {
       testing = false;
     }
@@ -57,7 +68,8 @@
     }
     saving = true;
     try {
-      await onsave({ url: normalized, apiKey: apiKey.trim() });
+      const picked = Object.fromEntries(Object.entries(chosen).filter(([, id]) => id));
+      await onsave({ url: normalized, apiKey: apiKey.trim() }, picked);
     } catch (err) {
       result = { text: `Could not save: ${err?.message ?? err}`, tone: 'text-rose-300' };
     } finally {
@@ -105,9 +117,32 @@
         </button>
       </div>
       <span class="block text-[11px] text-slate-500">
-        {inTauri ? 'Kept in the system keychain, one key per server.' : 'Kept in memory for this session only (browser mode).'}
+        Kept in the system keychain, one key per server.
       </span>
     </label>
+
+    {#if models.length}
+      <div class="space-y-2 pt-1">
+        <h3 class="text-xs text-slate-400">Models for each job <span class="text-slate-600">(automatic picks the chat's model when it can, else one already loaded)</span></h3>
+        <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 items-center">
+          {#each JOBS as [modality, label] (modality)}
+            <label for="route-{modality}" class="text-xs text-slate-400">{label}</label>
+            <select
+              id="route-{modality}"
+              bind:value={chosen[modality]}
+              class="rounded-md bg-slate-950 border border-slate-700 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value={undefined}>Automatic</option>
+              {#each servingModels(modality) as m (m.id)}
+                <option value={m.id}>{m.id}</option>
+              {:else}
+                <option value={undefined} disabled>No model serves this</option>
+              {/each}
+            </select>
+          {/each}
+        </div>
+      </div>
+    {/if}
 
     {#if result}
       <p class="text-xs {result.tone}">{result.text}</p>

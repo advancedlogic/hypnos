@@ -1,15 +1,11 @@
 import { LazyStore } from '@tauri-apps/plugin-store';
-import { inTauri } from './hypnos.js';
 
-// Inside Tauri the data lives in the app's data directory (plugin-store); in a plain browser
-// (`npm run dev`) it falls back to localStorage.
-const store = inTauri ? new LazyStore('hypnos-desktop.json', { autoSave: false }) : null;
+// Chats and settings live in the app's data directory (tauri-plugin-store).
+const store = new LazyStore('hypnos-desktop.json', { autoSave: false });
 
 export async function load(key, fallback) {
   try {
-    if (store) return (await store.get(key)) ?? fallback;
-    const raw = localStorage.getItem(key);
-    return raw === null ? fallback : JSON.parse(raw);
+    return (await store.get(key)) ?? fallback;
   } catch (e) {
     console.warn(`could not load ${key}`, e);
     return fallback;
@@ -18,12 +14,8 @@ export async function load(key, fallback) {
 
 export async function save(key, value) {
   try {
-    if (store) {
-      await store.set(key, value);
-      await store.save();
-    } else {
-      localStorage.setItem(key, JSON.stringify(value));
-    }
+    await store.set(key, value);
+    await store.save();
   } catch (e) {
     console.warn(`could not save ${key}`, e);
   }
