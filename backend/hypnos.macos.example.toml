@@ -130,6 +130,10 @@ min_gpu_layer_ratio = 1.0               # unified memory: all layers or none
 initial_tier = "tier2_pinned_ram"       # Pre-stage in pinned RAM on boot for fast promotion
 keep_warm_in_ram = true
 priority = "high"
+# Mixture-of-Experts offload (MEM-5): "on" keeps the 12 GiB of expert tensors in host memory and
+# runs them on the CPU (~2.8 GiB of weights left on the GPU); "auto" does it for as few layers as
+# needed when the model does not fit whole. On Apple Silicon it saves nothing (one memory pool) and only slows the model down: leave it off.
+# moe_offload = "off"
 # enabled = false                       # keep the block but take the model out of service (not
 #                                       # pre-staged, hidden from /v1/models, requests answer 404;
 #                                       # missing weights are tolerated). POST /v1/models/{id}/enable

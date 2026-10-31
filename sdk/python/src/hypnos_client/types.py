@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Literal, Optional, TypedDict, Union
 from typing_extensions import NotRequired
 
 MemoryTier = Literal["tier1_gpu_vram", "tier2_pinned_ram", "tier3_nvme_ssd"]
+MoeOffload = Literal["off", "auto", "on"]
 Modality = Literal[
     "text_generation",
     "vision",
@@ -35,6 +36,8 @@ class Placement(TypedDict):
     vram_kv_and_workspace_bytes: int
     pinned_ram_bytes: int
     allocated_context_len: int
+    cpu_expert_layers: NotRequired[int]
+    """Layers whose MoE expert tensors run on the CPU (``moe_offload``); absent on older servers."""
 
 
 class EngineTiming(TypedDict, total=False):
@@ -408,6 +411,15 @@ class ModelSwitch(TypedDict):
     placement: Placement
 
 
+class MoeOffloadSwitch(TypedDict):
+    """``POST /v1/models/{id}/moe-offload``."""
+
+    model: str
+    moe_offload: MoeOffload
+    applies: Literal["now", "next_load"]
+    placement: Placement
+
+
 class TierMove(TypedDict):
     model: str
     placement: Placement
@@ -431,6 +443,8 @@ class ModelStatus(TypedDict):
     priority: str
     current_tier: MemoryTier
     placement: Placement
+    moe_offload: NotRequired[MoeOffload]
+    expert_bytes: NotRequired[int]
     active_leases: int
     idle_seconds: float
     total_requests_served: int

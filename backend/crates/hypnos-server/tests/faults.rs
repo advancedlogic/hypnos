@@ -153,6 +153,7 @@ fn model(id: &str) -> ModelConfig {
         id: id.to_string(),
         enabled: true,
         use_mmap: None,
+        moe_offload: Default::default(),
         modality: Modality::TextGeneration,
         additional_modalities: vec![],
         engine: EngineKind::GgmlLlama,
@@ -180,6 +181,7 @@ fn model(id: &str) -> ModelConfig {
             kv_dtype: KvDataType::F16,
             non_layer_overhead_bytes: 64 * 1024 * 1024,
             activation_workspace_bytes: 64 * 1024 * 1024,
+            expert_bytes: 0,
             configured_keys: None,
         },
     }
@@ -483,4 +485,53 @@ async fn kv_parking_is_off_by_default_and_switched_by_the_api() {
     )
     .unwrap();
     assert_eq!(off["enabled"], false);
+}
+
+#[tokio::test]
+async fn moe_offload_is_switched_per_model_by_the_api() {
+    let engine = Arc::new(MockEngine {
+        config: model("m"),
+        resident: AtomicBool::new(false),
+        fail_loads: AtomicBool::new(false),
+        fail_generation: AtomicBool::new(false),
+        device_oom: AtomicUsize::new(0),
+        generations: AtomicUsize::new(0),
+        placements: Mutex::new(Vec::new()),
+    });
+    let app = build_router(state(engine), &[]);
+    let resp = post(&app, "/v1/models/m/moe-offload", r#"{"mode": "on"}"#).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = serde_json::from_str(&text(resp).await).unwrap();
+    assert_eq!(body["moe_offload"], "on");
+    assert_eq!(
+        body["applies"], "now",
+        "not resident: the next load uses it"
+    );
+    let memory: serde_json::Value =
+        serde_json::from_str(&text(get(&app, "/v1/memory/status").await).await).unwrap();
+    let m = memory["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == "m")
+        .unwrap()
+        .clone();
+    assert_eq!(m["moe_offload"], "on");
+    assert_eq!(
+        m["placement"]["cpu_expert_layers"], 0,
+        "a dense model ignores the mode"
+    );
+
+    assert_eq!(
+        post(&app, "/v1/models/m/moe-offload", r#"{"mode": "sideways"}"#)
+            .await
+            .status(),
+        422
+    );
+    assert_eq!(
+        post(&app, "/v1/models/nope/moe-offload", r#"{"mode": "on"}"#)
+            .await
+            .status(),
+        404
+    );
 }

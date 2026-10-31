@@ -467,6 +467,8 @@ pub(crate) fn media_id(cfg: &ModelConfig, bytes: &[u8]) -> String {
 pub(crate) struct WorkerSpec {
     pub cfg: ModelConfig,
     pub gpu_layers: u32,
+    /// Layers whose expert tensors stay in host memory (MEM-5).
+    pub cpu_expert_layers: u32,
     /// Context window per slot.
     pub n_ctx: u32,
     pub n_threads: i32,
@@ -498,13 +500,14 @@ fn run_worker(
     let WorkerSpec {
         cfg,
         gpu_layers,
+        cpu_expert_layers,
         n_ctx,
         n_threads,
         opts,
         parked,
     } = spec;
     let load_started = Instant::now();
-    let mut loaded = match load_model(&cfg, gpu_layers, n_ctx, n_threads) {
+    let mut loaded = match load_model(&cfg, gpu_layers, cpu_expert_layers, n_ctx, n_threads) {
         Ok(l) => l,
         Err(e) => {
             let _ = ready.send(Err(e));
@@ -2053,6 +2056,7 @@ mod tests {
             id: "m".into(),
             enabled: true,
             use_mmap: None,
+            moe_offload: Default::default(),
             modality: Modality::TextGeneration,
             additional_modalities: vec![],
             engine: hypnos_core::config::EngineKind::GgmlLlama,

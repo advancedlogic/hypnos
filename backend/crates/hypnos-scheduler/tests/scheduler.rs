@@ -85,6 +85,7 @@ fn model(id: &str, weight_gb: u64, priority: ModelPriority, initial: MemoryTier)
         id: id.to_string(),
         enabled: true,
         use_mmap: None,
+        moe_offload: Default::default(),
         modality: Modality::TextGeneration,
         additional_modalities: vec![],
         engine: EngineKind::GgmlLlama,
@@ -112,6 +113,7 @@ fn model(id: &str, weight_gb: u64, priority: ModelPriority, initial: MemoryTier)
             kv_dtype: KvDataType::F16,
             non_layer_overhead_bytes: 64 * 1024 * 1024,
             activation_workspace_bytes: 64 * 1024 * 1024,
+            expert_bytes: 0,
             configured_keys: None,
         },
     }

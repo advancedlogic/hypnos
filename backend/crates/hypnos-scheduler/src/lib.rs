@@ -603,6 +603,41 @@ impl ModelScheduler {
     /// Disabling evicts it to Tier 3 first and, like a manual tier move, is refused while the
     /// model is leased. Enabling only flips the switch: the model loads on its next request.
     /// Returns the model's placement afterwards.
+    /// Changes a model's Mixture-of-Experts offload mode at runtime (MEM-5) and says whether it
+    /// already applies. The mode takes effect at the next Tier 1 placement: an idle resident model
+    /// is moved to Tier 2 now (its next request loads it with the new placement; with
+    /// `hardware.kv_park` its conversations come back too), a busy one changes on its next load.
+    pub async fn set_moe_offload(
+        &self,
+        model_id: &str,
+        mode: hypnos_core::config::MoeOffload,
+    ) -> Result<(LayerPlacementPlan, bool)> {
+        let _guard = self.transition_lock.lock().await;
+        let (cfg, plan) = self.memory.get_model_state(model_id)?;
+        self.memory.set_moe_offload(model_id, mode)?;
+        let resident = plan.primary_tier == MemoryTier::Tier1GpuVram;
+        if cfg.moe_offload == mode || !resident {
+            return Ok((plan, !resident));
+        }
+        match self
+            .memory
+            .demote_if_idle(model_id, MemoryTier::Tier2PinnedRam)?
+        {
+            Some(demoted) => {
+                if let Some(backend) = self.backends.get(model_id) {
+                    backend.apply_placement(&demoted, None).await?;
+                }
+                self.memory.reconcile_vram();
+                info!(model = %model_id, ?mode, "MoE offload changed; unloaded from VRAM to reload with it");
+                Ok((demoted, true))
+            }
+            None => {
+                info!(model = %model_id, ?mode, "MoE offload changed; applies at the next load (model busy)");
+                Ok((plan, false))
+            }
+        }
+    }
+
     pub async fn set_model_enabled(
         &self,
         model_id: &str,

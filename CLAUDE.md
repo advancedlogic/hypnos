@@ -176,7 +176,14 @@ weights, duplicate ids, impossible budgets, bad engine/modality combos; a model 
 (`apply_placement`: demotion or a new layer split) a `LlamaJob::Park` copies each used idle slot's
 `state_seq_get` plus its keys and SWA checkpoint into the pool, and `spawn_worker` restores them
 right after the context exists when the `ParkSignature` (weights, per-slot `n_ctx`, slots, KV type)
-matches; `tier_switch_phases` reports `kv_restore_ms` / `kv_restored_tokens`. If the config path does not
+matches; `tier_switch_phases` reports `kv_restore_ms` / `kv_restored_tokens`. `moe_offload`
+(`off` / `auto` / `on`, per model; `POST /v1/models/{id}/moe-offload` at runtime, which unloads an
+idle resident model so the next load uses it) is MEM-5: `gguf.rs` sums the `*_exps` tensor bytes
+into `arch.expert_bytes`, `compute_optimal_placement` tries full-GPU placements with the experts of
+the last `n` layers in host memory (`LayerPlacementPlan::cpu_expert_layers`; `on` = all, `auto` =
+the smallest `n` that fits, discrete GPUs only) before a layer split, and `load_model` adds the
+`cpu_expert_pattern` tensor override (it includes Gemma 4's fused `ffn_gate_up_exps`, which the
+bindings' `add_cpu_moe_override` misses). If the config path does not
 exist, the server falls back to `default_profile::default_six_model_config()` in `hypnos-server`;
 keep that profile in sync with `hypnos.example.toml` when adding models or fields.
 

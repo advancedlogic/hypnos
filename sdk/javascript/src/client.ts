@@ -24,6 +24,8 @@ import type {
   MemoryTier,
   ModelList,
   ModelSwitch,
+  MoeOffload,
+  MoeOffloadSwitch,
   Picture,
   PictureList,
   Speech,
@@ -453,6 +455,14 @@ export class Client {
   /** `POST /v1/models/{id}/disable`; refused with `ModelBusyError` while leased. */
   disableModel(model: string, opts: CallOptions = {}): Promise<ModelSwitch> {
     return this.json("POST", `/v1/models/${encodeURIComponent(model)}/disable`, { signal: opts.signal });
+  }
+
+  /** `POST /v1/models/{id}/moe-offload`: `applies` is `"now"` or `"next_load"` (the model was busy). */
+  setMoeOffload(model: string, mode: MoeOffload, opts: CallOptions = {}): Promise<MoeOffloadSwitch> {
+    return this.json("POST", `/v1/models/${encodeURIComponent(model)}/moe-offload`, {
+      json: { mode },
+      signal: opts.signal,
+    });
   }
 
   // --- chat ----------------------------------------------------------------------------------

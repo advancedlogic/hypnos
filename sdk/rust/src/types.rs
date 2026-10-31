@@ -32,6 +32,29 @@ impl MemoryTier {
     }
 }
 
+/// A Mixture-of-Experts model's expert offload (`POST /v1/models/{id}/moe-offload`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MoeOffload {
+    /// Experts follow their layer (default).
+    Off,
+    /// Experts of as few layers as needed move to the CPU before any layer split (discrete GPUs).
+    Auto,
+    /// Every layer's experts run on the CPU.
+    On,
+}
+
+impl MoeOffload {
+    /// The wire spelling (`auto`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Auto => "auto",
+            Self::On => "on",
+        }
+    }
+}
+
 // --- shared ---------------------------------------------------------------------------------
 
 /// Where a model lives (`LayerPlacementPlan`, appendix of `docs/api.md`).
@@ -52,6 +75,9 @@ pub struct Placement {
     pub pinned_ram_bytes: u64,
     #[serde(default)]
     pub allocated_context_len: u32,
+    /// Layers whose MoE expert tensors run on the CPU (`moe_offload`); 0 for dense models.
+    #[serde(default)]
+    pub cpu_expert_layers: u32,
 }
 
 /// Engine timings; each field is present only when the modality measures it.
@@ -880,6 +906,16 @@ pub struct ModelSwitch {
     pub placement: Placement,
 }
 
+/// `POST /v1/models/{id}/moe-offload`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MoeOffloadSwitch {
+    pub model: String,
+    pub moe_offload: MoeOffload,
+    /// `"now"` or `"next_load"` (the model was busy).
+    pub applies: String,
+    pub placement: Placement,
+}
+
 /// `POST /v1/memory/tier`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TierMove {
@@ -915,6 +951,12 @@ pub struct ModelStatus {
     pub priority: String,
     pub current_tier: MemoryTier,
     pub placement: Placement,
+    /// `None` from servers older than the MoE offload switch.
+    #[serde(default)]
+    pub moe_offload: Option<MoeOffload>,
+    /// Bytes of MoE expert tensors; 0 for a dense model.
+    #[serde(default)]
+    pub expert_bytes: u64,
     #[serde(default)]
     pub active_leases: u32,
     #[serde(default)]

@@ -85,6 +85,7 @@ impl BackendContextState {
                 vram_kv_and_workspace_bytes: 0,
                 pinned_ram_bytes: 0,
                 allocated_context_len: 0,
+                cpu_expert_layers: 0,
             },
             pinned_host_ptr: None,
             gguf_header,

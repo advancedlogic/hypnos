@@ -33,6 +33,7 @@ console.log(reply.hypnos_telemetry?.tier_switch_latency_ms);
 | `documentPictures`, `documentPicture`, `documentPictureBytes`, `deleteDocument` | `/v1/documents/{id}/pictures[/{n}]`, `DELETE /v1/documents/{id}` |
 | `entities` | `POST /v1/entities` |
 | `models`, `enableModel`, `disableModel` | `/v1/models`, `/v1/models/{id}/enable\|disable` |
+| `setMoeOffload` | `POST /v1/models/{id}/moe-offload` |
 | `memoryStatus`, `setTier` | `/v1/memory/status`, `/v1/memory/tier` |
 | `kvPark`, `setKvPark` | `GET`/`POST /v1/memory/kv-park` |
 | `logs`, `log`, `clearLogs`, `setLogLevel` | `/v1/logs*` |

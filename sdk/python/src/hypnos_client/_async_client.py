@@ -42,6 +42,8 @@ from .types import (
     MemoryTier,
     ModelList,
     ModelSwitch,
+    MoeOffload,
+    MoeOffloadSwitch,
     Picture,
     PictureList,
     TierMove,
@@ -215,6 +217,16 @@ class AsyncClient:
     async def disable_model(self, model: str) -> ModelSwitch:
         """``POST /v1/models/{id}/disable``; refused with :class:`ModelBusyError` while leased."""
         return cast(ModelSwitch, await self._json("POST", f"/v1/models/{model}/disable"))
+
+    async def set_moe_offload(self, model: str, mode: MoeOffload) -> MoeOffloadSwitch:
+        """``POST /v1/models/{id}/moe-offload``: ``"off"``, ``"auto"`` or ``"on"``.
+
+        ``applies`` in the reply is ``"now"`` or ``"next_load"`` (the model was busy).
+        """
+        return cast(
+            MoeOffloadSwitch,
+            await self._json("POST", f"/v1/models/{model}/moe-offload", json={"mode": mode}),
+        )
 
     # --- chat --------------------------------------------------------------------------------
 

@@ -264,6 +264,38 @@ model is leased. Response:
 { "model": "gemma4:e4b-q4", "enabled": false, "placement": { "...": "see appendix" } }
 ```
 
+### `POST /v1/models/{id}/moe-offload`
+
+**Hypnos extension.** Sets a Mixture-of-Experts model's expert offload: its expert tensors stay
+in host memory and run on the CPU while attention, the dense layers and the KV cache stay on the
+GPU, so the model needs far less VRAM (the 26B: about 2.8 GiB of weights instead of 14.7 GiB) at
+the cost of speed (on Apple Silicon: decode about half, prefill about 14x slower). Default from
+the model's `moe_offload` in the config; not persisted.
+
+```json
+POST /v1/models/gemma4:26b-q4/moe-offload
+{ "mode": "auto" }
+```
+
+| `mode` | Effect |
+| :--- | :--- |
+| `"off"` | experts follow their layer (default) |
+| `"auto"` | when the model does not fit the GPU whole, the experts of as few layers as needed move to the CPU before any layer split; discrete GPUs only (no effect on unified memory) |
+| `"on"` | every layer's experts run on the CPU |
+
+Response:
+
+```json
+{ "model": "gemma4:26b-q4", "moe_offload": "auto", "applies": "now",
+  "placement": { "...": "see appendix" } }
+```
+
+`applies` is `"now"` when the model was idle or not loaded (an idle resident model is unloaded
+to Tier 2, and its next request loads it with the new placement; with KV parking its
+conversations come back too) and `"next_load"` when it was busy. A dense model accepts the mode
+and ignores it. An unknown mode is 422, an unknown model 404. `/v1/memory/status` shows each
+model's `moe_offload`, `expert_bytes` (0 for a dense model) and `placement.cpu_expert_layers`.
+
 ---
 
 ## 7. Chat completions (text, vision, audio in, tools)
@@ -741,6 +773,7 @@ Open during startup staging. The full snapshot of the three tiers (bytes unless 
       "modalities": ["text_generation", "vision"], "engine": "ggml_llama",
       "total_weight_bytes": 15814641056, "priority": "high",
       "current_tier": "tier1_gpu_vram", "placement": { "…": "appendix" },
+      "moe_offload": "off", "expert_bytes": 12846382080,
       "active_leases": 1, "idle_seconds": 0.0, "total_requests_served": 812 } ],
   "recent_evictions": [ { "model": "moss-image", "for_model": "gemma4:26b-q4", "reason": "…",
                           "to_tier": "tier3_nvme_ssd", "unix_ms": 1793481500000 } ]
@@ -915,6 +948,7 @@ the release tag.
 | `vram_kv_and_workspace_bytes` | KV cache plus compute workspace booked in VRAM |
 | `pinned_ram_bytes` | bytes pinned in host RAM |
 | `allocated_context_len` | the context window the current placement funds, across all slots |
+| `cpu_expert_layers` | layers (counted from the last) whose Mixture-of-Experts expert tensors run on the CPU from host memory while the rest of the layer is on the GPU (`moe_offload`, section 6); their bytes are in `pinned_ram_bytes`, not `vram_weight_bytes`. 0 for dense models and with `moe_offload: off` |
 
 **`EngineTiming`**: see section 5. All durations are milliseconds; rates are per second; `rtf` is
 processing seconds per audio second.

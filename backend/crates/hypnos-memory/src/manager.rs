@@ -111,6 +111,11 @@ pub struct ModelTierSnapshot {
     pub engine: hypnos_core::config::EngineKind,
     pub total_weight_bytes: u64,
     pub priority: hypnos_core::config::ModelPriority,
+    /// Mixture-of-Experts offload mode (`off`, `auto`, `on`); `placement.cpu_expert_layers` says
+    /// how many layers' experts run on the CPU now.
+    pub moe_offload: hypnos_core::config::MoeOffload,
+    /// Bytes of expert tensors (0 = dense model, `moe_offload` has no effect).
+    pub expert_bytes: u64,
     pub current_tier: MemoryTier,
     pub placement: LayerPlacementPlan,
     pub active_leases: usize,
@@ -232,6 +237,7 @@ impl TieredMemoryManager {
                 vram_kv_and_workspace_bytes: 0,
                 pinned_ram_bytes: 0,
                 allocated_context_len: 0,
+                cpu_expert_layers: 0,
             };
 
             let enabled = cfg.enabled;
@@ -538,6 +544,21 @@ impl TieredMemoryManager {
         Ok(())
     }
 
+    /// Changes the model's Mixture-of-Experts offload mode (MEM-5). It applies to the next
+    /// placement; the scheduler unloads an idle resident model so that happens on its next request.
+    pub fn set_moe_offload(
+        &self,
+        model_id: &str,
+        mode: hypnos_core::config::MoeOffload,
+    ) -> Result<()> {
+        let mut guard = self.models.write();
+        let entry = guard
+            .get_mut(model_id)
+            .ok_or_else(|| HypnosError::ModelNotFound(model_id.to_string()))?;
+        entry.config.moe_offload = mode;
+        Ok(())
+    }
+
     /// Commits a new `LayerPlacementPlan` for `model_id`, updating Tier 1 VRAM and Tier 2 Pinned RAM
     /// accounting and pinning/unpinning OS host pages as needed.
     ///
@@ -621,6 +642,7 @@ impl TieredMemoryManager {
                     vram_kv_and_workspace_bytes: 0,
                     pinned_ram_bytes: needed_ram,
                     allocated_context_len: 0,
+                    cpu_expert_layers: 0,
                 };
             }
             warn!(model = %cfg.id, "Tier 2 pinned RAM budget exhausted; demoting to Tier 3 instead");
@@ -634,6 +656,7 @@ impl TieredMemoryManager {
             vram_kv_and_workspace_bytes: 0,
             pinned_ram_bytes: 0,
             allocated_context_len: 0,
+            cpu_expert_layers: 0,
         }
     }
 
@@ -845,6 +868,8 @@ impl TieredMemoryManager {
                 engine: m.config.engine,
                 total_weight_bytes: m.config.total_weight_bytes,
                 priority: m.config.priority,
+                moe_offload: m.config.moe_offload,
+                expert_bytes: m.config.arch.expert_bytes,
                 current_tier: m.placement.primary_tier,
                 placement: m.placement.clone(),
                 active_leases: m.active_leases,

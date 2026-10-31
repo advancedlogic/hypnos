@@ -229,6 +229,7 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
         .route("/v1/models", get(list_models))
         .route("/v1/models/:id/enable", post(enable_model))
         .route("/v1/models/:id/disable", post(disable_model))
+        .route("/v1/models/:id/moe-offload", post(set_moe_offload))
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/embeddings", post(embeddings))
         .route("/v1/audio/transcriptions", post(audio_transcriptions))
@@ -529,6 +530,30 @@ async fn disable_model(
     Path(id): Path<String>,
 ) -> std::result::Result<Json<serde_json::Value>, ApiError> {
     set_model_enabled(&state, &id, false).await
+}
+
+/// `POST /v1/models/{id}/moe-offload` body.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MoeOffloadRequest {
+    pub mode: hypnos_core::config::MoeOffload,
+}
+
+/// `POST /v1/models/{id}/moe-offload`: sets the model's Mixture-of-Experts offload (`off`, `auto`,
+/// `on`) at runtime, not written back to the config. An idle resident model is unloaded so its
+/// next request loads it with the new placement (`applies: "now"`); a busy one changes at its next
+/// load (`"next_load"`). A dense model accepts the mode and ignores it.
+async fn set_moe_offload(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<MoeOffloadRequest>,
+) -> std::result::Result<Json<serde_json::Value>, ApiError> {
+    let (plan, applied) = state.scheduler.set_moe_offload(&id, req.mode).await?;
+    Ok(Json(json!({
+        "model": id,
+        "moe_offload": req.mode,
+        "applies": if applied { "now" } else { "next_load" },
+        "placement": plan,
+    })))
 }
 
 async fn set_model_enabled(

@@ -1,4 +1,4 @@
-use crate::config::{MemoryTier, ModelConfig};
+use crate::config::{MemoryTier, ModelConfig, MoeOffload};
 use serde::{Deserialize, Serialize};
 
 /// Describes how a model's layers and buffers are distributed across the 3 memory tiers.
@@ -20,6 +20,11 @@ pub struct LayerPlacementPlan {
     pub pinned_ram_bytes: u64,
     /// Active context window length funded by this placement
     pub allocated_context_len: u32,
+    /// Layers (counted from the last) whose Mixture-of-Experts expert tensors run on the CPU from
+    /// host memory while the rest of the layer stays on the GPU (`moe_offload`, MEM-5). Their
+    /// bytes are booked in `pinned_ram_bytes`, not in `vram_weight_bytes`.
+    #[serde(default)]
+    pub cpu_expert_layers: u32,
 }
 
 impl LayerPlacementPlan {
@@ -149,6 +154,7 @@ impl KvCacheEstimator {
                 vram_kv_and_workspace_bytes: 0,
                 pinned_ram_bytes: ram,
                 allocated_context_len: context_len,
+                cpu_expert_layers: 0,
             });
         }
         let min_gpu_layers =
@@ -164,6 +170,50 @@ impl KvCacheEstimator {
             .non_layer_overhead_bytes
             .min(model.total_weight_bytes);
         let per_layer_weight = Self::bytes_per_layer(model);
+
+        // Mixture-of-Experts offload (MEM-5): the whole model on the GPU except the expert tensors
+        // of the last `n` layers, which stay in host memory and run on the CPU. `on` offloads
+        // every layer's experts; `auto` takes the smallest `n` that fits (0 = no offload) before
+        // any layer split, on discrete GPUs only (unified memory shares one pool: nothing saved).
+        let expert_total = model.arch.expert_bytes.min(model.total_weight_bytes);
+        let expert_steps: Vec<u32> = match (model.moe_offload, expert_total > 0, is_unified_memory)
+        {
+            (MoeOffload::On, true, _) => vec![total_layers],
+            (MoeOffload::Auto, true, false) => (0..=total_layers).collect(),
+            _ => Vec::new(),
+        };
+        for n in expert_steps {
+            let cpu_experts = expert_total.saturating_mul(n as u64) / total_layers as u64;
+            let vram_weight_bytes = model.total_weight_bytes.saturating_sub(cpu_experts);
+            let vram_kv_and_workspace_bytes =
+                Self::vram_runtime_overhead(model, total_layers, context_len, batch_size);
+            if vram_weight_bytes.saturating_add(vram_kv_and_workspace_bytes) > available_vram_bytes
+            {
+                continue;
+            }
+            let warm = if is_unified_memory {
+                cpu_experts
+            } else if model.keep_warm_in_ram
+                && model.total_weight_bytes <= available_pinned_ram_bytes
+            {
+                model.total_weight_bytes
+            } else {
+                cpu_experts
+            };
+            if warm <= available_pinned_ram_bytes {
+                return Some(LayerPlacementPlan {
+                    primary_tier: MemoryTier::Tier1GpuVram,
+                    gpu_layers: total_layers,
+                    pinned_ram_layers: 0,
+                    ssd_layers: 0,
+                    vram_weight_bytes,
+                    vram_kv_and_workspace_bytes,
+                    pinned_ram_bytes: warm,
+                    allocated_context_len: context_len,
+                    cpu_expert_layers: n,
+                });
+            }
+        }
 
         for candidate_gpu_layers in (min_gpu_layers..=total_layers).rev() {
             let splittable_vram = if candidate_gpu_layers == total_layers {
@@ -204,6 +254,7 @@ impl KvCacheEstimator {
                         vram_kv_and_workspace_bytes,
                         pinned_ram_bytes: required_pinned_ram,
                         allocated_context_len: context_len,
+                        cpu_expert_layers: 0,
                     });
                 }
             }
@@ -224,6 +275,7 @@ mod tests {
             id: "gemma4:26b-q4".to_string(),
             enabled: true,
             use_mmap: None,
+            moe_offload: Default::default(),
             modality: Modality::TextGeneration,
             additional_modalities: vec![Modality::Vision],
             engine: EngineKind::GgmlLlama,
@@ -251,6 +303,7 @@ mod tests {
                 kv_dtype: KvDataType::Q8_0,
                 non_layer_overhead_bytes: 1200 * 1024 * 1024,
                 activation_workspace_bytes: 512 * 1024 * 1024,
+                expert_bytes: 0,
                 configured_keys: None,
             },
         }
@@ -324,5 +377,64 @@ mod tests {
         assert_eq!(plan.gpu_layers, 46);
         assert_eq!(plan.pinned_ram_layers, 0);
         assert_eq!(plan.pinned_ram_bytes, 0);
+    }
+
+    fn moe_26b(mode: MoeOffload) -> ModelConfig {
+        let mut m = sample_gemma4_26b_config();
+        m.arch.expert_bytes = 12 * 1024 * 1024 * 1024;
+        m.moe_offload = mode;
+        m
+    }
+
+    const GIB: u64 = 1024 * 1024 * 1024;
+
+    fn place(m: &ModelConfig, vram: u64, uma: bool) -> Option<LayerPlacementPlan> {
+        KvCacheEstimator::compute_optimal_placement(m, Some(8192), 1, vram, 64 * GIB, uma)
+    }
+
+    #[test]
+    fn moe_offload_on_keeps_only_the_dense_part_on_the_gpu() {
+        let full = place(&moe_26b(MoeOffload::Off), 64 * GIB, false).unwrap();
+        let on = place(&moe_26b(MoeOffload::On), 64 * GIB, false).unwrap();
+        let layers = on.gpu_layers;
+        assert_eq!(on.cpu_expert_layers, layers);
+        assert_eq!(on.pinned_ram_layers, 0);
+        assert_eq!(full.vram_weight_bytes - on.vram_weight_bytes, 12 * GIB);
+        assert!(
+            on.pinned_ram_bytes >= 12 * GIB,
+            "the experts are booked in host memory"
+        );
+        assert_eq!(full.cpu_expert_layers, 0);
+    }
+
+    #[test]
+    fn moe_offload_auto_moves_as_few_experts_as_needed_before_splitting_layers() {
+        let full = place(&moe_26b(MoeOffload::Auto), 64 * GIB, false).unwrap();
+        assert_eq!(full.cpu_expert_layers, 0, "it fits whole: nothing moves");
+        // 3 GiB short of the whole model: a few layers' experts (0.4 GiB each) go to the CPU.
+        let tight = full.total_vram_bytes() - 3 * GIB;
+        let auto = place(&moe_26b(MoeOffload::Auto), tight, false).unwrap();
+        let per_layer = 12 * GIB / auto.gpu_layers as u64;
+        assert_eq!(auto.gpu_layers, full.gpu_layers, "no layer split");
+        assert!(auto.cpu_expert_layers > 0);
+        assert!(auto.total_vram_bytes() <= tight);
+        assert!(
+            full.total_vram_bytes() - per_layer * (auto.cpu_expert_layers as u64 - 1) > tight,
+            "the smallest n"
+        );
+        // Without offload the same budget means a layer split.
+        let off = place(&moe_26b(MoeOffload::Off), tight, false).unwrap();
+        assert!(off.gpu_layers < full.gpu_layers);
+        assert_eq!(off.cpu_expert_layers, 0);
+    }
+
+    #[test]
+    fn moe_offload_auto_does_nothing_on_unified_memory_or_for_dense_models() {
+        let full = place(&moe_26b(MoeOffload::Off), 64 * GIB, true).unwrap();
+        let tight = full.total_vram_bytes() - 3 * GIB;
+        assert!(place(&moe_26b(MoeOffload::Auto), tight, true).is_none());
+        let mut dense = moe_26b(MoeOffload::On);
+        dense.arch.expert_bytes = 0;
+        assert_eq!(place(&dense, 64 * GIB, false).unwrap().cpu_expert_layers, 0);
     }
 }

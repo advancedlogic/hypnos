@@ -118,6 +118,22 @@ impl KvDataType {
     }
 }
 
+/// Mixture-of-Experts offload (MEM-5, `docs/moe.md`): keep a model's expert tensors in host
+/// memory and run them on the CPU while attention, the dense layers and the KV cache stay on the
+/// GPU. No effect on a dense model (`arch.expert_bytes` = 0).
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MoeOffload {
+    /// Experts follow their layer (the default).
+    #[default]
+    Off,
+    /// When the model does not fit the GPU whole, move the experts of as few layers as needed to
+    /// the CPU before splitting layers off (discrete GPUs; no effect on unified memory).
+    Auto,
+    /// Always run every layer's experts on the CPU.
+    On,
+}
+
 /// Eviction/retention priority tier for models.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -167,6 +183,9 @@ pub struct ModelArchitectureParams {
     /// Peak transient workspace / scratch activation buffer in bytes during forward pass.
     #[serde(default = "default_activation_workspace")]
     pub activation_workspace_bytes: u64,
+    /// Bytes of the Mixture-of-Experts expert tensors (filled from the GGUF; 0 = dense model).
+    #[serde(default)]
+    pub expert_bytes: u64,
     /// Keys written in the config's `[models.arch]` table, recorded by
     /// [`HypnosConfig::from_toml_str`]. `None` when the params were built in code; then every
     /// field counts as explicit and [`HypnosConfig::detect_arch_from_gguf`] leaves them alone.
@@ -212,6 +231,7 @@ impl Default for ModelArchitectureParams {
             kv_dtype: KvDataType::F16,
             non_layer_overhead_bytes: 512 * 1024 * 1024,
             activation_workspace_bytes: default_activation_workspace(),
+            expert_bytes: 0,
             configured_keys: None,
         }
     }
@@ -283,6 +303,10 @@ pub struct ModelConfig {
     /// device, `true` on Metal (unified memory, zero copy) and for CPU-only placements.
     #[serde(default)]
     pub use_mmap: Option<bool>,
+    /// Mixture-of-Experts offload: `off` (default), `auto`, `on` (see [`MoeOffload`]);
+    /// `POST /v1/models/{id}/moe-offload` changes it at runtime.
+    #[serde(default)]
+    pub moe_offload: MoeOffload,
     /// Architecture parameters for KV cache & layer-split math
     #[serde(default)]
     pub arch: ModelArchitectureParams,
@@ -895,6 +919,12 @@ impl HypnosConfig {
                     applied.push(format!(
                         "sliding_window_len={w}, global_attn_every_n_layers={n}"
                     ));
+                }
+            }
+            if !arch.is_configured("expert_bytes") {
+                if let Some(e) = meta.expert_bytes {
+                    arch.expert_bytes = e;
+                    applied.push(format!("expert_bytes={e}"));
                 }
             }
             // A detected training context below the configured default would fail validation;

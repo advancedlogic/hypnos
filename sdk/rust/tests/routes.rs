@@ -404,6 +404,30 @@ async fn memory_and_placement() {
 }
 
 #[tokio::test]
+async fn moe_offload() {
+    let server = MockServer::start();
+    let c = server.client();
+    let on = c.set_moe_offload(CHAT, MoeOffload::On).await.unwrap();
+    assert_eq!(on.model, CHAT);
+    assert_eq!(on.moe_offload, MoeOffload::On);
+    assert!(
+        on.applies == "now" || on.applies == "next_load",
+        "{}",
+        on.applies
+    );
+    assert_eq!(on.placement.cpu_expert_layers, 0);
+    let status = c.memory_status().await.unwrap();
+    let chat = status.models.iter().find(|m| m.id == CHAT).unwrap();
+    assert_eq!(chat.moe_offload, Some(MoeOffload::On));
+    match c.set_moe_offload("no-such-model", MoeOffload::On).await {
+        Err(Error::NotFound(_)) => {}
+        other => panic!("expected not found, got {other:?}"),
+    }
+    let off = c.set_moe_offload(CHAT, MoeOffload::Off).await.unwrap();
+    assert_eq!(off.moe_offload, MoeOffload::Off);
+}
+
+#[tokio::test]
 async fn enable_and_disable() {
     let server = MockServer::start();
     let c = server.client();

@@ -7,7 +7,7 @@ import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 
 import {
-  BadRequestError, NotFoundError, StreamError, assistantMessage, parseArguments, sliceByCodePoints, toolMessage,
+  APIError, BadRequestError, NotFoundError, StreamError, assistantMessage, parseArguments, sliceByCodePoints, toolMessage,
 } from "../dist/index.js";
 import {
   CHAT, DOCS, EMBED, IMAGE, MockServer, NER, STT, TTS, USER, b64decode, enc, startsWith,
@@ -286,6 +286,27 @@ test("enable and disable", async () => {
   });
   assert.equal((await client.enableModel(IMAGE)).enabled, true);
   assert.ok((await client.images(IMAGE, "x")).data.length);
+});
+
+test("moe offload", async () => {
+  try {
+    const on = await client.setMoeOffload(CHAT, "on");
+    assert.equal(on.model, CHAT);
+    assert.equal(on.moe_offload, "on");
+    assert.ok(["now", "next_load"].includes(on.applies));
+    assert.equal(on.placement.cpu_expert_layers ?? 0, 0);
+    const status = (await client.memoryStatus()).models.find((m) => m.id === CHAT);
+    assert.equal(status.moe_offload, "on");
+    assert.ok(status.expert_bytes >= 0);
+    await assert.rejects(client.setMoeOffload("no-such-model", "on"), NotFoundError);
+    await assert.rejects(client.setMoeOffload(CHAT, "sometimes"), (err) => {
+      assert.ok(err instanceof APIError);
+      assert.equal(err.status, 422);
+      return true;
+    });
+  } finally {
+    assert.equal((await client.setMoeOffload(CHAT, "off")).moe_offload, "off");
+  }
 });
 
 test("logs", async () => {

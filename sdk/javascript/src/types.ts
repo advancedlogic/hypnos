@@ -4,6 +4,8 @@
  */
 
 export type MemoryTier = "tier1_gpu_vram" | "tier2_pinned_ram" | "tier3_nvme_ssd";
+/** Mixture-of-Experts expert offload mode (`POST /v1/models/{id}/moe-offload`). */
+export type MoeOffload = "off" | "auto" | "on";
 export type Modality =
   | "text_generation"
   | "vision"
@@ -25,6 +27,8 @@ export interface Placement {
   vram_kv_and_workspace_bytes: number;
   pinned_ram_bytes: number;
   allocated_context_len: number;
+  /** Layers whose MoE expert tensors run on the CPU (`moe_offload`); absent on older servers. */
+  cpu_expert_layers?: number;
 }
 
 export interface EngineTiming {
@@ -300,6 +304,14 @@ export interface ModelSwitch {
   placement: Placement;
 }
 
+export interface MoeOffloadSwitch {
+  model: string;
+  moe_offload: MoeOffload;
+  /** `"next_load"` when the model was busy. */
+  applies: "now" | "next_load";
+  placement: Placement;
+}
+
 export interface TierMove {
   model: string;
   placement: Placement;
@@ -315,6 +327,8 @@ export interface ModelStatus {
   priority: string;
   current_tier: MemoryTier;
   placement: Placement;
+  moe_offload?: MoeOffload;
+  expert_bytes?: number;
   active_leases: number;
   idle_seconds: number;
   total_requests_served: number;

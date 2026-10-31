@@ -25,6 +25,9 @@ pub struct GgufArchMetadata {
     pub sliding_window: Option<u32>,
     /// From `<arch>.attention.sliding_window_pattern`: one global layer every N layers.
     pub global_attn_every_n_layers: Option<u32>,
+    /// Bytes of the Mixture-of-Experts expert tensors (`*_exps`), from the tensor table; `None`
+    /// for a dense model or when the table could not be read.
+    pub expert_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -165,10 +168,16 @@ fn invalid(msg: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, format!("GGUF: {msg}"))
 }
 
-/// Reads every metadata key except the tokenizer's, which can be megabytes of strings.
-fn read_metadata(path: &Path) -> io::Result<Option<HashMap<String, Value>>> {
+/// Reads every metadata key except the tokenizer's, which can be megabytes of strings, and then
+/// the tensor table for the size of the expert tensors (`*_exps`).
+/// The metadata keys and the expert tensor bytes (`None` for a dense model).
+type Metadata = (HashMap<String, Value>, Option<u64>);
+
+fn read_metadata(path: &Path) -> io::Result<Option<Metadata>> {
+    let file = File::open(path)?;
+    let file_len = file.metadata()?.len();
     let mut r = Reader {
-        r: BufReader::new(File::open(path)?),
+        r: BufReader::new(file),
     };
     if &r.bytes::<4>()? != b"GGUF" {
         return Ok(None);
@@ -177,7 +186,7 @@ fn read_metadata(path: &Path) -> io::Result<Option<HashMap<String, Value>>> {
     if version < 2 {
         return Err(invalid("GGUF v1 is not supported"));
     }
-    let _tensor_count = r.u64()?;
+    let tensor_count = r.u64()?;
     let kv_count = r.u64()?;
     let mut out = HashMap::new();
     for _ in 0..kv_count {
@@ -189,17 +198,67 @@ fn read_metadata(path: &Path) -> io::Result<Option<HashMap<String, Value>>> {
             out.insert(key, value);
         }
     }
-    Ok(Some(out))
+    let alignment = match out.get("general.alignment") {
+        Some(Value::Int(a)) if *a > 0 => *a,
+        _ => 32,
+    };
+    // The table is optional for the caller: a failure here only loses the expert size.
+    let experts = expert_bytes(&mut r, tensor_count, alignment, file_len).unwrap_or(None);
+    Ok(Some((out, experts)))
+}
+
+/// Sums the sizes of the tensors named `*_exps`. A tensor's size is the distance from its data
+/// offset to the next one (the last runs to the end of the file), so no table of quantization
+/// formats is needed; alignment padding adds at most `alignment - 1` bytes per tensor.
+fn expert_bytes<R: Read + Seek>(
+    r: &mut Reader<R>,
+    tensor_count: u64,
+    alignment: u64,
+    file_len: u64,
+) -> io::Result<Option<u64>> {
+    if tensor_count == 0 || tensor_count > 1_000_000 {
+        return Ok(None);
+    }
+    let mut tensors = Vec::with_capacity(tensor_count as usize);
+    for _ in 0..tensor_count {
+        let name = r.string()?;
+        let n_dims = r.u32()?;
+        if n_dims > 8 {
+            return Err(invalid("tensor with more than 8 dimensions"));
+        }
+        r.skip(u64::from(n_dims) * 8)?;
+        let _ty = r.u32()?;
+        let offset = r.u64()?;
+        tensors.push((offset, name.contains("_exps")));
+    }
+    if !tensors.iter().any(|(_, e)| *e) {
+        return Ok(None);
+    }
+    let table_end = r.r.stream_position()?;
+    let data_start = table_end.div_ceil(alignment) * alignment;
+    let data_len = file_len.saturating_sub(data_start);
+    tensors.sort_by_key(|(o, _)| *o);
+    let mut total = 0u64;
+    for (i, (offset, is_expert)) in tensors.iter().enumerate() {
+        let end = tensors.get(i + 1).map_or(data_len, |(next, _)| *next);
+        if *is_expert {
+            total += end.saturating_sub(*offset);
+        }
+    }
+    Ok((total > 0).then_some(total))
 }
 
 impl GgufArchMetadata {
     /// Reads the architecture values from a GGUF file. `Ok(None)` when the file is not GGUF or
     /// has no `general.architecture` (e.g. a diffusion checkpoint converted without metadata).
     pub fn read(path: &Path) -> io::Result<Option<Self>> {
-        let Some(kv) = read_metadata(path)? else {
+        let Some((kv, experts)) = read_metadata(path)? else {
             return Ok(None);
         };
-        Ok(Self::from_metadata(&kv))
+        Ok(Self::from_metadata(&kv).map(|m| Self {
+            expert_bytes: experts,
+            ..m
+        }))
     }
 
     fn from_metadata(kv: &HashMap<String, Value>) -> Option<Self> {
@@ -252,6 +311,7 @@ impl GgufArchMetadata {
             context_length: int("context_length").filter(|n| *n > 0),
             sliding_window,
             global_attn_every_n_layers,
+            expert_bytes: None,
         })
     }
 }
@@ -361,8 +421,43 @@ mod tests {
                 context_length: Some(262144),
                 sliding_window: Some(1024),
                 global_attn_every_n_layers: Some(6),
+                expert_bytes: None,
             }
         );
+    }
+
+    #[test]
+    fn expert_tensor_sizes_come_from_the_data_offsets() {
+        // One metadata key, three tensors: two experts (64 bytes each) and an attention matrix.
+        let mut b = Vec::new();
+        b.extend_from_slice(b"GGUF");
+        b.extend_from_slice(&3u32.to_le_bytes());
+        b.extend_from_slice(&3u64.to_le_bytes()); // tensors
+        b.extend_from_slice(&1u64.to_le_bytes()); // metadata keys
+        let key = "general.architecture";
+        b.extend_from_slice(&(key.len() as u64).to_le_bytes());
+        b.extend_from_slice(key.as_bytes());
+        b.extend_from_slice(&T_STRING.to_le_bytes());
+        b.extend_from_slice(&s("gemma4"));
+        for (name, offset) in [
+            ("blk.0.ffn_gate_up_exps.weight", 0u64),
+            ("blk.0.attn_q.weight", 64),
+            ("blk.0.ffn_down_exps.weight", 96),
+        ] {
+            b.extend_from_slice(&(name.len() as u64).to_le_bytes());
+            b.extend_from_slice(name.as_bytes());
+            b.extend_from_slice(&1u32.to_le_bytes()); // one dimension
+            b.extend_from_slice(&8u64.to_le_bytes());
+            b.extend_from_slice(&0u32.to_le_bytes()); // f32
+            b.extend_from_slice(&offset.to_le_bytes());
+        }
+        while b.len() % 32 != 0 {
+            b.push(0);
+        }
+        b.extend_from_slice(&[0u8; 160]); // data: 64 + 32 + 64
+        let f = tempfile_path::TempPath::with_bytes(&b);
+        let meta = GgufArchMetadata::read(&f.0).unwrap().unwrap();
+        assert_eq!(meta.expert_bytes, Some(128));
     }
 
     #[test]

@@ -33,6 +33,7 @@ with Client() as hypnos:        # http://127.0.0.1:9999, or $HYPNOS_BASE_URL / $
 | `document_pictures`, `document_picture`, `document_picture_bytes`, `delete_document` | `/v1/documents/{id}/pictures[/{n}]`, `DELETE /v1/documents/{id}` |
 | `entities` | `POST /v1/entities` |
 | `models`, `enable_model`, `disable_model` | `/v1/models`, `/v1/models/{id}/enable\|disable` |
+| `set_moe_offload` | `POST /v1/models/{id}/moe-offload` |
 | `memory_status`, `set_tier` | `/v1/memory/status`, `/v1/memory/tier` |
 | `kv_park`, `set_kv_park` | `GET`/`POST /v1/memory/kv-park` |
 | `logs`, `log`, `clear_logs`, `set_log_level` | `/v1/logs*` |

@@ -749,6 +749,14 @@ impl Client {
         self.json(None, || self.request(Method::POST, &path)).await
     }
 
+    /// `POST /v1/models/{id}/moe-offload`; `applies` is `"now"` or `"next_load"` (the model
+    /// was busy).
+    pub async fn set_moe_offload(&self, model: &str, mode: MoeOffload) -> Result<MoeOffloadSwitch> {
+        let path = format!("/v1/models/{model}/moe-offload");
+        let body = json!({ "mode": mode });
+        self.json(None, self.post_json(&path, &body)).await
+    }
+
     // --- chat ----------------------------------------------------------------------------
 
     fn chat_body(req: &ChatRequest, stream: bool) -> Result<Value> {

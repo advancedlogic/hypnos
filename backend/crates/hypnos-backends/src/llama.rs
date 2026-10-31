@@ -86,9 +86,30 @@ pub(crate) fn default_use_mmap(gpu_layers: u32) -> bool {
     !(cfg!(feature = "cuda") && gpu_layers > 0)
 }
 
+/// The `tensor_buft_overrides` pattern that keeps the Mixture-of-Experts expert tensors of the
+/// last `cpu_expert_layers` layers in a CPU buffer (MEM-5). It covers the fused `ffn_gate_up_exps`
+/// of Gemma 4, which the bindings' own `add_cpu_moe_override` pattern does not match.
+pub(crate) fn cpu_expert_pattern(cpu_expert_layers: u32, num_layers: u32) -> Option<String> {
+    if cpu_expert_layers == 0 {
+        return None;
+    }
+    let tensors = r"\.ffn_(up|down|gate|gate_up)_(ch|)exps";
+    if cpu_expert_layers >= num_layers {
+        return Some(tensors.to_string());
+    }
+    let layers: Vec<String> = (num_layers - cpu_expert_layers..num_layers)
+        .map(|l| l.to_string())
+        .collect();
+    Some(format!(
+        r"^blk\.({})\.ffn_(up|down|gate|gate_up)_(ch|)exps",
+        layers.join("|")
+    ))
+}
+
 pub(crate) fn load_model(
     cfg: &ModelConfig,
     gpu_layers: u32,
+    cpu_expert_layers: u32,
     n_ctx: u32,
     n_threads: i32,
 ) -> Result<LoadedLlama> {
@@ -109,15 +130,25 @@ pub(crate) fn load_model(
         gpu_layers
     };
     let use_mmap = cfg.use_mmap.unwrap_or_else(|| default_use_mmap(gpu_layers));
-    let params = LlamaModelParams::default()
-        .with_n_gpu_layers(n_gpu_layers)
-        .with_use_mmap(use_mmap);
+    let mut params = Box::pin(
+        LlamaModelParams::default()
+            .with_n_gpu_layers(n_gpu_layers)
+            .with_use_mmap(use_mmap),
+    );
+    // The pattern must outlive the load: llama.cpp keeps a pointer to it.
+    let expert_pattern = cpu_expert_pattern(cpu_expert_layers, cfg.arch.num_layers.max(1))
+        .map(|p| CString::new(p).expect("pattern has no NUL"));
+    if let Some(pattern) = &expert_pattern {
+        params.as_mut().add_cpu_buft_override(pattern);
+        info!(model = %cfg.id, cpu_expert_layers, pattern = %pattern.to_string_lossy(), "Mixture-of-Experts tensors stay in host memory");
+    }
     let model = LlamaModel::load_from_file(backend, &cfg.weights_path, &params).map_err(|e| {
         HypnosError::BackendError(format!(
             "llama.cpp could not load {}: {e:?}",
             cfg.weights_path.display()
         ))
     })?;
+    drop(expert_pattern);
     let weights_ms = started.elapsed().as_secs_f64() * 1000.0;
     let projector_started = Instant::now();
     let arch = model
@@ -353,6 +384,7 @@ fn usage(stats: &GenStats) -> TokenUsage {
 struct LlamaWorker {
     handle: WorkerHandle<LlamaJob>,
     gpu_layers: u32,
+    cpu_expert_layers: u32,
     /// Context window per slot.
     n_ctx: u32,
 }
@@ -633,7 +665,10 @@ impl ModelBackend for GgmlLlamaBackend {
                 cfg.arch.default_context_len
             };
             match guard.as_mut() {
-                Some(w) if w.gpu_layers == plan.gpu_layers => {
+                Some(w)
+                    if w.gpu_layers == plan.gpu_layers
+                        && w.cpu_expert_layers == plan.cpu_expert_layers =>
+                {
                     if w.n_ctx != n_ctx {
                         let (tx, rx) = oneshot::channel();
                         w.handle
@@ -655,6 +690,7 @@ impl ModelBackend for GgmlLlamaBackend {
                     let (handle, phases) = spawn_worker(WorkerSpec {
                         cfg: cfg.clone(),
                         gpu_layers: plan.gpu_layers,
+                        cpu_expert_layers: plan.cpu_expert_layers,
                         n_ctx,
                         n_threads,
                         opts,
@@ -663,6 +699,7 @@ impl ModelBackend for GgmlLlamaBackend {
                     *guard = Some(LlamaWorker {
                         handle,
                         gpu_layers: plan.gpu_layers,
+                        cpu_expert_layers: plan.cpu_expert_layers,
                         n_ctx,
                     });
                     Ok(Some(phases))
@@ -872,7 +909,20 @@ impl ModelBackend for GgmlLlamaBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::gemma4_prompt;
+    use super::{cpu_expert_pattern, gemma4_prompt};
+
+    #[test]
+    fn the_expert_pattern_covers_all_or_the_last_layers() {
+        assert_eq!(cpu_expert_pattern(0, 30), None);
+        assert_eq!(
+            cpu_expert_pattern(30, 30).as_deref(),
+            Some(r"\.ffn_(up|down|gate|gate_up)_(ch|)exps")
+        );
+        assert_eq!(
+            cpu_expert_pattern(3, 30).as_deref(),
+            Some(r"^blk\.(27|28|29)\.ffn_(up|down|gate|gate_up)_(ch|)exps")
+        );
+    }
     use hypnos_core::openai::{ChatMessage, ChatMessageContent, FunctionCall, ToolCall, ToolSpec};
     use serde_json::json;
 

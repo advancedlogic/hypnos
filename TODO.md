@@ -89,17 +89,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       Decide first: curated list vs. live HF search filtered by `gguf` tag + pipeline type, and
       how unknown architectures are validated (`gguf_inspector.rs`) before they are offered.
 
-- [ ] 🟫 **MEM-5** `P2` Expert offload for MoE models: experts on the CPU, the rest on the GPU
-      Design in docs/moe.md. Step 1, benchmark on the RTX 5090 laptop: the 26B full GPU, a layer
-      split, experts on the CPU for all 30 layers (`add_cpu_moe_override`) and for the last 15;
-      decode tok/s, 4-client aggregate, 8k prefill, TTFT, VRAM and host RAM. Stop if experts on
-      the CPU are not clearly better than the layer split at equal VRAM. Then a placement mode:
-      `cpu_expert_layers` in `LayerPlacementPlan`, expert bytes per layer from the GGUF
-      inspector, booked as host memory, per-layer `blk.N.ffn_*_exps` overrides in the llama
-      backend, preferred over a layer split or an eviction (config `moe_offload`), shown in
-      `/v1/memory/status` and telemetry. Gemma 4 26B: experts ~12.0 of ~13.6 GiB, ~0.8 GB read
-      per decoded token. Discrete GPUs only.
-
 - [ ] 🟦 **UI-2** `P2` Playground: switches for KV parking and MoE offload
       In the memory panel: a KV parking toggle and cap (`GET` / `POST /v1/memory/kv-park`), with
       what is parked per model (slots, tokens, bytes, age, from `kv_park` in
@@ -123,6 +112,30 @@ _No cards yet._
 
 ## Done
 
+- [x] 🟫 **MEM-5** `P2` Expert offload for MoE models: experts on the CPU, the rest on the GPU
+      Design in docs/moe.md. Step 1, benchmark on the RTX 5090 laptop: the 26B full GPU, a layer
+      split, experts on the CPU for all 30 layers (`add_cpu_moe_override`) and for the last 15;
+      decode tok/s, 4-client aggregate, 8k prefill, TTFT, VRAM and host RAM. Stop if experts on
+      the CPU are not clearly better than the layer split at equal VRAM. Then a placement mode:
+      `cpu_expert_layers` in `LayerPlacementPlan`, expert bytes per layer from the GGUF
+      inspector, booked as host memory, per-layer `blk.N.ffn_*_exps` overrides in the llama
+      backend, preferred over a layer split or an eviction (config `moe_offload`), shown in
+      `/v1/memory/status` and telemetry. Gemma 4 26B: experts ~12.0 of ~13.6 GiB, ~0.8 GB read
+      per decoded token. Discrete GPUs only.
+      Done (step 1's CUDA benchmark still open): optional, off by default: per model
+      `moe_offload = "off" | "auto" | "on"`, `POST /v1/models/{id}/moe-offload` at runtime (an idle
+      resident model is unloaded, `applies: "now"`, else `"next_load"`); `moe_offload`,
+      `expert_bytes` and `placement.cpu_expert_layers` in `/v1/memory/status`. `gguf.rs` sums the
+      `*_exps` tensors (sizes from the data offsets) into `arch.expert_bytes`; the planner tries
+      full-GPU placements with the last `n` layers' experts in host memory before a layer split
+      (`on` = all, `auto` = smallest `n`, discrete GPUs only); `load_model` adds a tensor override
+      that also matches Gemma 4's fused `ffn_gate_up_exps` (the bindings' pattern does not).
+      Measured on Apple Silicon (26B): 12.0 GiB of experts in `CPU_REPACK`, 2.8 GiB of weights on
+      the GPU, decode 47 vs 105 tok/s, prefill 300 vs 4,100 tok/s, identical answer; the runtime
+      switch reloads it full-GPU. Docs: api.md section 6, operating.md, example configs, moe.md;
+      SDKs `set_moe_offload` / `setMoeOffload`. Still to measure: the CUDA laptop, where
+      `op_offload` should cut the prefill penalty and `auto` is meant to act.
+
 - [x] 🟧 **PERF-8** `P2` A repeated prompt (Regenerate) is prefilled in full
       Sending a byte-identical prompt that a slot has just answered gets `cached_tokens: 0` and a
       full prefill (1.2 s for 4.7k tokens on the 26B, Metal), with or without a swap; the next
@@ -139,6 +152,7 @@ _No cards yet._
       Measured on Metal (26B, 4.7k-token prompt): repeat 1,155 ms prefill (0 cached) -> 11 ms
       (4,731 cached), TTFT 59 ms, identical answer at temperature 0; the next turn and MEM-4
       unchanged. Unit test `a_repeated_prompt_resumes_from_the_checkpoint_before_its_last_token`.
+      (commit 108d11d)
 
 - [x] 🟫 **MEM-4** `P2` Keep each slot's KV state across a demotion
       Design in docs/pagination.md. On demotion the worker saves every slot's full sequence

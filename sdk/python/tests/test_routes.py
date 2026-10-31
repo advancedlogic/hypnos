@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from hypnos_client import Client, NotFoundError, StreamError
+from hypnos_client import APIError, Client, NotFoundError, StreamError
 
 CHAT = "gemma4:26b-q4"
 STT = "gemma4:e4b-q4"
@@ -239,6 +239,25 @@ def test_enable_and_disable(client: Client) -> None:
     assert err.value.type == "model_disabled"
     assert client.enable_model(IMAGE)["enabled"] is True
     assert client.images(IMAGE, "x")["data"]
+
+
+def test_moe_offload(client: Client) -> None:
+    try:
+        switch = client.set_moe_offload(CHAT, "on")
+        assert switch["model"] == CHAT
+        assert switch["moe_offload"] == "on"
+        assert switch["applies"] in ("now", "next_load")
+        assert switch["placement"].get("cpu_expert_layers", 0) == 0
+        status = {m["id"]: m for m in client.memory_status()["models"]}
+        assert status[CHAT]["moe_offload"] == "on"
+        assert status[CHAT]["expert_bytes"] >= 0
+        with pytest.raises(NotFoundError):
+            client.set_moe_offload("no-such-model", "on")
+        with pytest.raises(APIError) as err:
+            client.set_moe_offload(CHAT, "sometimes")  # type: ignore[arg-type]
+        assert err.value.status == 422
+    finally:
+        assert client.set_moe_offload(CHAT, "off")["moe_offload"] == "off"
 
 
 def test_logs(client: Client) -> None:
