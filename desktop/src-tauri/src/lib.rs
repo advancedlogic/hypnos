@@ -1,3 +1,5 @@
+mod local_server;
+
 use std::collections::HashSet;
 use std::sync::Mutex;
 
@@ -80,15 +82,28 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
             app.manage(AllowedOrigins::default());
+            app.manage(local_server::LocalServer::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             allow_server,
             get_api_key,
-            set_api_key
+            set_api_key,
+            local_server::local_server_detect,
+            local_server::local_server_start,
+            local_server::local_server_stop,
+            local_server::local_server_status,
+            local_server::local_server_logs,
+            local_server::local_server_probe,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running the Hypnos desktop app");
+        .build(tauri::generate_context!())
+        .expect("error while building the Hypnos desktop app")
+        .run(|app, event| {
+            // A server the app started does not outlive it.
+            if let tauri::RunEvent::Exit = event {
+                app.state::<local_server::LocalServer>().shutdown_blocking();
+            }
+        });
 }
 
 #[cfg(test)]

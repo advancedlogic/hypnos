@@ -1,12 +1,14 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { createClient, probe, inTauri } from './hypnos.js';
   import { allowServer, normalizeUrl } from './connection.js';
 
   let { connection, onsave, onclose } = $props();
 
-  let url = $state(connection.url);
-  let apiKey = $state(connection.apiKey);
+  // The form starts from the current connection and is applied on Save.
+  const initial = untrack(() => ({ ...connection }));
+  let url = $state(initial.url);
+  let apiKey = $state(initial.apiKey);
   let showKey = $state(false);
   let testing = $state(false);
   let saving = $state(false);

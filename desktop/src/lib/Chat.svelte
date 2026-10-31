@@ -4,7 +4,7 @@
   import logo from '../assets/logo.png';
   import { telemetrySummary, tierName } from './format.js';
 
-  let { store, models, serverState, onsettings } = $props();
+  let { store, models, serverState, onsettings, onlocalserver } = $props();
 
   let input = $state('');
   let showSystem = $state(false);
@@ -129,6 +129,9 @@
           <p class="text-sm text-slate-500">
             {serverState === 'unauthorized' ? 'The server needs a valid API key.' : 'Cannot reach the Hypnos server. Retrying…'}
             <button class="text-indigo-300 hover:text-indigo-200" onclick={onsettings}>Connection settings</button>
+            {#if onlocalserver && serverState === 'unreachable'}
+              · <button class="text-indigo-300 hover:text-indigo-200" onclick={onlocalserver}>Start a local server</button>
+            {/if}
           </p>
         {:else if serverState !== 'ready'}
           <p class="text-sm text-slate-500">Connecting to Hypnos…</p>

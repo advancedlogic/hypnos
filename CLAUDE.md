@@ -237,7 +237,11 @@ API means a change to `docs/api.md`, the mock server and the three SDKs. In Pyth
 ### Desktop app (`desktop/`)
 
 Tauri 2 + Svelte 5 + Tailwind 3 (same versions as `frontend/`), its own `package.json` and a
-`src-tauri/` crate outside the backend workspace. A client only: it does not start the server.
+`src-tauri/` crate outside the backend workspace. It never bundles the server;
+`src-tauri/src/local_server.rs` can start an installed `hypnos` (detected or chosen), stream its
+output to the UI and stop it on quit, with health checks through `hypnos-client` (`sdk/rust`, a
+path dependency; DESK-6 moves every call there). Its real-server test is `#[ignore]`d and needs
+`HYPNOS_TEST_BINARY` / `HYPNOS_TEST_CONFIG`.
 Vite aliases `@hypnos/client` to `sdk/javascript/src`, so the SDK needs no build step (an SDK API
 change can break the app). Requests go through `tauri-plugin-http` because the webview origin
 (`tauri://localhost`) fails the server's loopback-only CORS default; the capability allows

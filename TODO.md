@@ -78,22 +78,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
 
-- [ ] 🩵 **DESK-5** `P3` Start and stop a local Hypnos server from the app
-      Optional: bundle or locate the `hypnos` binary and run it as a Tauri sidecar with a
-      chosen config, show its log (`/v1/logs`), stop it on quit. Decide first whether the
-      desktop app stays a pure client or ships the server (archive size, GPU builds per
-      platform). After DESK-4.
-      Decided 2026-10-30: it does not bundle the server (GPU builds per platform, 30+ MB of
-      engines, model downloads); it finds an installed `hypnos` (a path chosen in the
-      settings, this repo's `backend/target/release`, or PATH) and manages that process.
-
-- [ ] ⬛ **BUILD-9** `P3` Sign and notarize the desktop installers
-      The release's desktop installers are ad-hoc signed on macOS and unsigned on Windows
-      (BUILD-8), so users must confirm the first open. Add an Apple Developer ID certificate
-      + notarization (`APPLE_CERTIFICATE`, `APPLE_ID`, `APPLE_TEAM_ID`, app-specific password)
-      and a Windows code-signing certificate as repository secrets and wire them into the
-      `desktop` job of release.yml (Tauri reads them from the environment).
-
 - [ ] 🩵 **DESK-6** `P1` Route every server call through the Rust SDK in `src-tauri`
       Add `hypnos-client` (`sdk/rust`, path dependency) to the Tauri crate and expose Tauri
       commands for each call the app makes: health/ready, models, memory status, chat (stream
@@ -168,6 +152,30 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🩵 **DESK-5** `P3` Start and stop a local Hypnos server from the app
+      Optional: bundle or locate the `hypnos` binary and run it as a Tauri sidecar with a
+      chosen config, show its log (`/v1/logs`), stop it on quit. Decide first whether the
+      desktop app stays a pure client or ships the server (archive size, GPU builds per
+      platform). After DESK-4.
+      Decided 2026-10-30: it does not bundle the server (GPU builds per platform, 30+ MB of
+      engines, model downloads); it finds an installed `hypnos` (a path chosen in the
+      settings, this repo's `backend/target/release`, or PATH) and manages that process.
+
+- [ ] ⬛ **BUILD-9** `P3` Sign and notarize the desktop installers
+      The release's desktop installers are ad-hoc signed on macOS and unsigned on Windows
+      (BUILD-8), so users must confirm the first open. Add an Apple Developer ID certificate
+      + notarization (`APPLE_CERTIFICATE`, `APPLE_ID`, `APPLE_TEAM_ID`, app-specific password)
+      and a Windows code-signing certificate as repository secrets and wire them into the
+      `desktop` job of release.yml (Tauri reads them from the environment).
+      Done: `src-tauri/src/local_server.rs` (commands detect / start / stop / status / logs /
+      probe; output kept in a 2000-line ring without ANSI codes and pushed as events; the
+      config's folder is the working directory; loader paths as in run.sh; SIGTERM, then a
+      kill after 15 s; stopped on `RunEvent::Exit`; refuses a port where Hypnos already
+      answers, checked with `hypnos-client`). `LocalServer.svelte` from a header button (and
+      "Start a local server" when unreachable): binary, config, port, start with the app,
+      live log; starting it switches the connection to `http://127.0.0.1:<port>`. Ignored
+      test `starts_logs_and_stops_a_real_server` (Tauri mock app + real binary) passes.
 
 - [x] ⬜ **DOC-6** `P2` Document the desktop app
       `desktop/README.md` (prerequisites per OS, dev and build commands, connecting to a

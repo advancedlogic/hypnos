@@ -1,7 +1,9 @@
 <script>
   import { onMount } from 'svelte';
-  import { createClient, probe } from './lib/hypnos.js';
-  import { loadConnection, saveConnection } from './lib/connection.js';
+  import { createClient, probe, inTauri } from './lib/hypnos.js';
+  import { connectionFor, loadConnection, saveConnection } from './lib/connection.js';
+  import * as localServer from './lib/localServer.js';
+  import LocalServer from './lib/LocalServer.svelte';
   import { ChatStore } from './lib/chats.svelte.js';
   import Sidebar from './lib/Sidebar.svelte';
   import Chat from './lib/Chat.svelte';
@@ -23,6 +25,10 @@
   let models = $state([]);
   let panelOpen = $state(readPanelOpen());
   let settingsOpen = $state(false);
+  let localOpen = $state(false);
+  /** `{ binary, config, port, autoStart }` and the process status (DESK-5), Tauri only. */
+  let localSettings = $state(null);
+  let localStatus = $state(null);
 
   const STATES = {
     connecting: { label: 'Connecting', dot: 'bg-slate-500' },
@@ -51,7 +57,7 @@
   }
 
   function onKeydown(e) {
-    if (!(e.metaKey || e.ctrlKey) || settingsOpen) return;
+    if (!(e.metaKey || e.ctrlKey) || settingsOpen || localOpen) return;
     if (e.key === '.') {
       e.preventDefault();
       togglePanel();
@@ -61,6 +67,46 @@
     } else if (e.key === ',') {
       e.preventDefault();
       settingsOpen = true;
+    }
+  }
+
+  async function useServer(url) {
+    if (connection?.url === url) return;
+    const next = await connectionFor(url);
+    await saveConnection(next);
+    connection = next;
+  }
+
+  async function saveLocalSettings(next) {
+    localSettings = next;
+    await localServer.saveLocalSettings(next);
+  }
+
+  /** Starts the local server and points the app at it. */
+  async function startLocal(opts) {
+    localStatus = await localServer.start(opts);
+    await useServer(localServer.localUrl(opts.port));
+  }
+
+  async function stopLocal() {
+    localStatus = await localServer.stop();
+  }
+
+  async function initLocalServer() {
+    localSettings = await localServer.loadLocalSettings();
+    localStatus = await localServer.status();
+    await localServer.subscribe(
+      () => {},
+      (s) => (localStatus = s),
+    );
+    const { binary, port, autoStart } = localSettings;
+    if (!autoStart || !binary) return;
+    const [up] = await localServer.probe(Number(port));
+    if (up) return useServer(localServer.localUrl(port));
+    try {
+      await startLocal(localSettings);
+    } catch (e) {
+      console.warn('could not start the local server', e);
     }
   }
 
@@ -125,6 +171,7 @@
 
   onMount(async () => {
     connection = await loadConnection();
+    if (inTauri) initLocalServer();
     await store.init();
     if (!store.current) store.newChat();
   });
@@ -156,6 +203,25 @@
           <span class="text-slate-500 font-mono">{new URL(connection.url).host}</span>
         {/if}
       </button>
+      {#if inTauri && localSettings}
+        <button
+          class="relative p-1.5 rounded-md text-slate-400 hover:text-slate-100 hover:bg-slate-800"
+          onclick={() => (localOpen = true)}
+          title="Local server{localStatus?.running ? ' (running)' : ''}"
+          aria-label="Local server"
+        >
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="4" width="18" height="7" rx="1.5" />
+            <rect x="3" y="13" width="18" height="7" rx="1.5" />
+            <path d="M7 7.5h.01M7 16.5h.01" />
+          </svg>
+          {#if localStatus?.running}
+            <span class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+          {:else if localStatus?.exited}
+            <span class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+          {/if}
+        </button>
+      {/if}
       <button
         class="p-1.5 rounded-md text-slate-400 hover:text-slate-100 hover:bg-slate-800"
         onclick={togglePanel}
@@ -175,7 +241,8 @@
     <Sidebar {store} />
 
     <main class="flex-1 min-w-0">
-      <Chat {store} {models} {serverState} onsettings={() => (settingsOpen = true)} />
+      <Chat {store} {models} {serverState} onsettings={() => (settingsOpen = true)}
+        onlocalserver={inTauri && localSettings ? () => (localOpen = true) : null} />
     </main>
 
     {#if panelOpen && client}
@@ -185,6 +252,17 @@
     {/if}
   </div>
 </div>
+
+{#if localOpen && localSettings}
+  <LocalServer
+    settings={localSettings}
+    running={localStatus}
+    onstart={startLocal}
+    onstop={stopLocal}
+    onsettings={saveLocalSettings}
+    onclose={() => (localOpen = false)}
+  />
+{/if}
 
 {#if settingsOpen && connection}
   <Settings {connection} onsave={onSaveSettings} onclose={() => (settingsOpen = false)} />

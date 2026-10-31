@@ -4,8 +4,9 @@ A native chat app for a running Hypnos server, in the spirit of the Ollama app: 
 chat with streaming answers, and keep a panel open with what the server is doing (which model
 sits in which memory tier, how much of each tier is used, what the last answer cost).
 
-It is a client only: it does not start or contain the server. Start Hypnos first
-(`./run.sh start backend`, a release archive or the Docker image), then open the app.
+It does not contain the server. Point it at a running Hypnos (`./run.sh start backend`, a
+release archive, the Docker image, another machine), or let it start an installed `hypnos` on
+this machine from its Local server dialog.
 
 Built with Tauri 2, Svelte 5 (runes) and Tailwind 3, the same web stack as `frontend/`. It talks
 to the server through the JavaScript SDK in `sdk/javascript` (compiled from its sources, no
@@ -30,6 +31,15 @@ separate build step).
   Windows Credential Manager, Secret Service on Linux), one per server. The header shows
   Connecting, Unreachable, API key refused, Warming up (models still loading) or Ready, and the
   app reconnects by itself when the server comes back.
+
+- **Local server** (the server button in the header): runs an installed `hypnos` on this
+  machine and connects the app to it. The binary is detected (this checkout's
+  `backend/target/release`, a `hypnos` beside the app, then PATH) or entered by hand, with an
+  optional config (its folder becomes the working directory, so its relative model paths work;
+  without one the server reads `hypnos.toml` beside the binary) and a port. The dialog shows the
+  server's output live; "Start with the app" starts it at launch unless a server already answers
+  on that port, in which case the app just connects to it. The app stops the server it started
+  (gracefully, SIGTERM on Linux/macOS) when you quit, and never stops one it did not start.
 
 | Shortcut | Action |
 | :--- | :--- |
@@ -97,13 +107,20 @@ desktop/
 │       ├── Sidebar.svelte    # conversation list
 │       ├── StatsPanel.svelte # memory tiers, models, last-response telemetry, evictions
 │       ├── Settings.svelte   # connection dialog
+│       ├── LocalServer.svelte # start/stop an installed hypnos, live log
+│       ├── localServer.js    # its commands, events and saved settings
 │       └── Markdown.svelte   # marked + DOMPurify, copy buttons on code blocks
 └── src-tauri/
     ├── src/lib.rs            # plugins (http, store) + commands: allow_server, get/set_api_key
+    ├── src/local_server.rs   # find, start, stop and log a hypnos process (health via hypnos-client)
     ├── capabilities/         # what the window may call; HTTP limited to loopback
     ├── icons/                # generated from app-icon.png (assets/logo.png on a tile)
     └── tauri.conf.json
 ```
+
+Tests: `cd src-tauri && cargo test`. The local-server test runs a real server and is ignored by
+default: `HYPNOS_TEST_BINARY=../../backend/target/release/hypnos HYPNOS_TEST_CONFIG=<config with
+one small model> cargo test -- --ignored` (it uses port 9997).
 
 To regenerate the icons after changing `src-tauri/icons/app-icon.png`:
 `npx tauri icon src-tauri/icons/app-icon.png -o src-tauri/icons`, then remove the `android/`,

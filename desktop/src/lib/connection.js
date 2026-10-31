@@ -27,7 +27,11 @@ export async function allowServer(url) {
 
 /** The saved server URL and its API key from the OS keychain. */
 export async function loadConnection() {
-  const url = await load(URL_KEY, DEFAULT_SERVER_URL);
+  return connectionFor(await load(URL_KEY, DEFAULT_SERVER_URL));
+}
+
+/** `{ url, apiKey }` for a server, with the key saved for it (if any). */
+export async function connectionFor(url) {
   let apiKey;
   try {
     apiKey = inTauri ? await invoke('get_api_key', { serverUrl: url }) : browserKey;
