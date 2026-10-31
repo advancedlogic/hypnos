@@ -166,7 +166,10 @@ rm cert.p12
 ```
 
 With the first three, the app and the server are signed. With the notarization secrets too,
-they are also notarized, and the app's ticket is stapled. The release notes step reads the secrets and says
+they are also notarized, and the app's ticket is stapled. Tauri notarizes only the app inside
+the `.dmg`, so the step **Notarize the disk image (macOS)** then notarizes and staples the
+`.dmg` itself; without it a downloaded image assesses as "Unnotarized Developer ID". The release
+notes step reads the secrets and says
 "The macOS app and server are signed and notarized." Run the workflow by hand first (Actions >
 release > Run workflow). A manual run only produces artifacts, so you can check the `.dmg` and
 the server archive before you tag.
