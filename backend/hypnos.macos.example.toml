@@ -185,11 +185,11 @@ non_layer_overhead_bytes = 1610612736   # embeddings + conformer audio encoder +
 activation_workspace_bytes = 536870912
 
 # -----------------------------------------------------------------------------
-# 3. Kokoro 82M (fp16 ONNX) — Text-to-Speech (/v1/audio/speech)
+# 3. Kokoro 82M (fp32 ONNX) — Text-to-Speech (/v1/audio/speech)
 #    onnx-community/Kokoro-82M-v1.0-ONNX; runs on CPU via ONNX Runtime (82M params, real-time+).
-#    The id is kept as "kokoro-82m-q4" for API compatibility with the playground, but the fp16 graph is
-#    used: the quantized model_q8f16.onnx / model_q4.onnx variants crash the statically linked
-#    ONNX Runtime 1.31 CPU provider at session creation on Windows.
+#    The id is kept as "kokoro-82m-q4" for API compatibility with the playground, but the fp32 graph
+#    is used: the quantized model_q8f16.onnx / model_q4.onnx variants crash the statically linked
+#    ONNX Runtime 1.31 CPU provider at session creation on Windows, and the fp16 graph overflows.
 # -----------------------------------------------------------------------------
 [[models]]
 id = "kokoro-82m-q4"

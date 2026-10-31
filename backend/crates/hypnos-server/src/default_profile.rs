@@ -129,8 +129,9 @@ pub fn default_six_model_config() -> HypnosConfig {
                     configured_keys: None,
                 },
             },
-            // 3. Kokoro 82M (fp16 ONNX) — Text-to-Speech on CPU via ONNX Runtime.
-            // The quantized q8f16/q4 graphs crash the static ORT 1.31 CPU provider at session creation.
+            // 3. Kokoro 82M (fp32 ONNX) — Text-to-Speech on CPU via ONNX Runtime.
+            // The quantized q8f16/q4 graphs crash the static ORT 1.31 CPU provider at session creation
+            // on Windows and the fp16 graph returns all-NaN audio for some texts (BUG-6).
             ModelConfig {
                 id: "kokoro-82m-q4".to_string(),
                 enabled: true,
@@ -139,7 +140,7 @@ pub fn default_six_model_config() -> HypnosConfig {
                 modality: Modality::TextToSpeech,
                 additional_modalities: vec![],
                 engine: EngineKind::OnnxRuntime,
-                weights_path: PathBuf::from("kokoro/model_fp16.onnx"),
+                weights_path: PathBuf::from("kokoro/model.onnx"),
                 aux_weights_path: None,
                 text_encoder_path: None,
                 tokenizer_path: None,

@@ -216,9 +216,10 @@ keep that profile in sync with `hypnos.example.toml` when adding models or field
   **shared** library so its ggml does not clash with llama.cpp's; the vendored build script copies
   the DLL/.so next to the binary.
 - `kokoro.rs`: `onnx_runtime` TTS on CPU (`AutoDevicePolicy::PreferCPU`) with espeak-ng G2P. Use the
-  fp16 ONNX graph on Windows/Linux (the quantized exports crash ORT session creation on Windows) and
-  the fp32 `model.onnx` on Apple Silicon, where fp16 overflows to an all-NaN (silent) waveform for
-  some inputs; a non-finite waveform is returned as an error. The crate's `build.rs` copies
+  fp32 `model.onnx` graph on every platform (BUG-6): the quantized exports crash ORT session
+  creation on Windows and fp16 overflows to an all-NaN (silent) waveform for some inputs (seen on
+  Apple Silicon and Windows) at the same CPU speed as fp32; a non-finite waveform is returned as an
+  error. The crate's `build.rs` copies
   `espeak-ng-data` next to the binary.
 - `document.rs`: `docling` (docling.rs crates, every `docling-*` pinned to one version).
   `device = "cpu"`: the planner books its Tier 1 placement in host RAM only (`runs_on_cpu`), and

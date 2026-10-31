@@ -295,7 +295,7 @@ LM Studio or Python sidecar is involved.
 | :--- | :--- | :--- | :--- | :--- |
 | **`gemma4:26b-q4`** | **Text Generation + Vision** (`/v1/chat/completions`) | `ggml_llama` | `gemma-4-26B-A4B-it-Q4_0.gguf` (13.6 GiB) + `mmproj-gemma-4-26B-A4B-it-BF16.gguf` (1.1 GiB) | `High` (Tier 2 Pinned RAM ↔ Tier 1 VRAM, hybrid 5:1 SWA KV cache) |
 | **`gemma4:e4b-q4`** | **Audio / STT + Chat** (`/v1/audio/transcriptions`) | `ggml_llama` | `gemma-4-E4B-it-Q4_0.gguf` (4.3 GiB) + `mmproj-gemma-4-E4B-it-BF16.gguf` (0.9 GiB) | `High` (Tier 2 Pinned RAM ↔ Tier 1 VRAM) |
-| **`kokoro-82m-q4`** | **Text-to-Speech** (`/v1/audio/speech`) | `onnx_runtime` | `kokoro/model_fp16.onnx` (155 MiB) + `kokoro/voices/*.bin` | `RealtimePinned` (always resident; runs on CPU) |
+| **`kokoro-82m-q4`** | **Text-to-Speech** (`/v1/audio/speech`) | `onnx_runtime` | `kokoro/model.onnx` (310 MiB) + `kokoro/voices/*.bin` | `RealtimePinned` (always resident; runs on CPU) |
 | **`gemmaembedding2`** | **Vector Embeddings** (`/v1/embeddings`) | `ggml_llama` | `embeddinggemma-2-Q8_0.gguf` (295 MiB) | `RealtimePinned` (always hot in Tier 1 VRAM) |
 | **`moss-image`** | **Image Generation** (`/v1/images/generations`) | `ggml_diffusion` | `MOSS-Image-SFT-Q4_K.gguf` (3.3 GiB) + `Qwen3.5-9B-Q4_K_M.gguf` (5.7 GiB) + `flux2-vae.safetensors` + `moss_tokenizer.json` | `Low` (promoted to Tier 1 VRAM on demand, evicts idle models) |
 | **`docling`** | **Document Conversion** (`/v1/documents/convert`) | `docling` | `docling/` (310 MiB: layout, TableFormer, OCR) | `Normal`, `device = "cpu"` (loaded on demand into host RAM in ~0.3 s, ~1.8 GiB booked, no VRAM) |
@@ -315,7 +315,7 @@ Download sources (public Hugging Face repositories, and one GitHub release):
 | `gemma-4-26B-A4B-it-Q4_0.gguf`, `mmproj-gemma-4-26B-A4B-it-BF16.gguf` | `ggml-org/gemma-4-26B-A4B-it-GGUF` |
 | `gemma-4-E4B-it-Q4_0.gguf`, `mmproj-gemma-4-E4B-it-BF16.gguf` | `ggml-org/gemma-4-E4B-it-GGUF` |
 | `embeddinggemma-2-Q8_0.gguf` | `ggml-org/embeddinggemma-2-GGUF` |
-| `kokoro/model_fp16.onnx` (macOS: `kokoro/model.onnx`), `kokoro/voices/*.bin` | `onnx-community/Kokoro-82M-v1.0-ONNX` (`onnx/` and `voices/` folders) |
+| `kokoro/model.onnx`, `kokoro/voices/*.bin` | `onnx-community/Kokoro-82M-v1.0-ONNX` (`onnx/` and `voices/` folders) |
 | `MOSS-Image-SFT-Q4_K.gguf` | `leejet/MOSS-Image-SFT-GGUF` |
 | `Qwen3.5-9B-Q4_K_M.gguf` | `unsloth/Qwen3.5-9B-GGUF` |
 | `flux2-vae.safetensors` | `Comfy-Org/MOSS-Image` (`vae/`) |
@@ -324,10 +324,12 @@ Download sources (public Hugging Face repositories, and one GitHub release):
 | `gliner2.5-multi/` | `jugaadsrl/gliner2.5-multi-v1-onnx` (`fp32_25/` folder) |
 
 Notes:
-- Kokoro's quantized exports (`model_q8f16.onnx`, `model_q4.onnx`) crash the statically linked
-  ONNX Runtime CPU provider at session creation on Windows; use the fp16 graph.
-- On Apple Silicon use the fp32 graph (`onnx/model.onnx`): the fp16 one overflows to a silent
-  (all-NaN) waveform for some voice/text pairs there. Hypnos now rejects such output with an error.
+- Kokoro runs the fp32 graph (`onnx/model.onnx`) everywhere. The fp16 one overflows to a silent
+  (all-NaN) waveform for some voice/text pairs (seen on Apple Silicon and on Windows, where a
+  two-sentence reply in the voice round-trip benchmark triggered it) at no speed advantage on the
+  CPU; Hypnos rejects such output with an error. The quantized exports (`model_q8f16.onnx`,
+  `model_q4.onnx`) crash the statically linked ONNX Runtime CPU provider at session creation on
+  Windows.
 - `kv_dtype = "q8_0"` and the sliding-window KV cache keep the Gemma 4 context budgets small; all
   budgets live in `backend/hypnos.example.toml`.
 
