@@ -3,7 +3,7 @@
   import * as server from './localServer.js';
 
   /** `settings`: `{ binary, config, port, autoStart }`; `running`: the process status. */
-  let { settings, running, onstart, onstop, onsettings, onmodels, onclose } = $props();
+  let { settings, running, onstart, onstop, onsettings, onmodels, onsetup, onclose } = $props();
 
   // The form starts from the saved settings and is saved back on Start.
   const initial = untrack(() => ({ ...settings }));
@@ -138,6 +138,8 @@
             class="flex-1 min-w-0 rounded-lg bg-slate-950 border border-slate-700 px-3 py-1.5 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-60" />
           <button class="px-2 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-40" onclick={async () => { await onsettings(current()); onmodels?.(); }}
             disabled={!config.trim()} title="Download models and choose their folder">Models…</button>
+          <button class="px-2 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-40" onclick={async () => { await onsettings(current()); onsetup?.(); }}
+            disabled={!config.trim() || !binary.trim()} title="Guided setup: pick models for what you want to do and this computer">Set up…</button>
         </div>
         <label for="ls-port" class="text-xs text-slate-400">Port</label>
         <div class="flex items-center gap-4">

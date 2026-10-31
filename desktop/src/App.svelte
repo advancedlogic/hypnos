@@ -6,6 +6,7 @@
   import * as localServer from './lib/localServer.js';
   import LocalServer from './lib/LocalServer.svelte';
   import Models from './lib/Models.svelte';
+  import Setup from './lib/Setup.svelte';
   import * as modelFiles from './lib/models.js';
   import { ChatStore } from './lib/chats.svelte.js';
   import Sidebar from './lib/Sidebar.svelte';
@@ -53,6 +54,24 @@
   let modelsTab = $state('lineup');
   let modelsFirstRun = $state(false);
   const MODELS_PROMPTED_KEY = 'modelsPrompted';
+  /** The guided setup (DESK-18); `setupFirstRun` adds the welcome. */
+  let setupOpen = $state(false);
+  let setupFirstRun = $state(false);
+
+  function openSetup(firstRun = false) {
+    localOpen = false;
+    modelsOpen = false;
+    setupFirstRun = firstRun;
+    setupOpen = true;
+  }
+
+  function openModels(tab = 'lineup', firstRun = false) {
+    setupOpen = false;
+    localOpen = false;
+    modelsFirstRun = firstRun;
+    modelsTab = tab;
+    modelsOpen = true;
+  }
 
   const STATES = {
     connecting: { label: 'Connecting', dot: 'bg-slate-500' },
@@ -81,7 +100,7 @@
   }
 
   function onKeydown(e) {
-    if (!(e.metaKey || e.ctrlKey) || settingsOpen || localOpen) return;
+    if (!(e.metaKey || e.ctrlKey) || settingsOpen || localOpen || setupOpen || modelsOpen) return;
     if (e.key === '.') {
       e.preventDefault();
       togglePanel();
@@ -135,16 +154,18 @@
     }
   }
 
-  /** First launch with the bundled server and no models: offer the download, once. */
+  /**
+   * First launch with the bundled server and no models: the guided setup (DESK-18), once; the
+   * Models dialog when there is no server binary to ask for a recommendation.
+   */
   async function promptForModels() {
     if (!localSettings?.config || (await load(MODELS_PROMPTED_KEY, false))) return;
     try {
       const cat = await modelFiles.catalog(localSettings.config);
       if (!cat.managed || cat.models.some((m) => m.installed)) return;
       await save(MODELS_PROMPTED_KEY, true);
-      modelsFirstRun = true;
-      modelsTab = 'lineup';
-      modelsOpen = true;
+      if (localSettings.binary) openSetup(true);
+      else openModels('lineup', true);
     } catch (e) {
       console.warn('models catalog', e);
     }
@@ -436,12 +457,8 @@
     onstart={startLocal}
     onstop={stopLocal}
     onsettings={saveLocalSettings}
-    onmodels={() => {
-      localOpen = false;
-      modelsFirstRun = false;
-      modelsTab = 'lineup';
-      modelsOpen = true;
-    }}
+    onmodels={() => openModels('lineup')}
+    onsetup={() => openSetup()}
     onclose={() => (localOpen = false)}
   />
 {/if}
@@ -449,7 +466,23 @@
 {#if modelsOpen && localSettings?.config}
   <Models config={localSettings.config} binary={localSettings.binary} firstRun={modelsFirstRun} tab={modelsTab} onchanged={restartLocal}
     onpool={reloadModels}
+    onsetup={localSettings.binary ? () => openSetup() : null}
     onclose={() => (modelsOpen = false)} />
+{/if}
+
+{#if setupOpen && localSettings?.config}
+  <Setup config={localSettings.config} binary={localSettings.binary} firstRun={setupFirstRun}
+    serverExited={!!localStatus?.exited && !localStatus?.running}
+    onstop={async () => {
+      if (localStatus?.running) await stopLocal();
+    }}
+    onrestart={async () => {
+      if (localStatus?.running) await stopLocal();
+      await startLocal(localSettings);
+    }}
+    onpool={reloadModels}
+    onmodels={() => openModels('lineup', setupFirstRun)}
+    onclose={() => (setupOpen = false)} />
 {/if}
 
 {#if settingsOpen && connection}

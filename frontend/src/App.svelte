@@ -599,6 +599,102 @@
     changePool(`catalog:${m.id}`, 'PUT', `/v1/models/${encodeURIComponent(m.id)}`, { catalog: `${m.id}:${v.quant}` });
   const removeModel = (key, id) => changePool(key, 'DELETE', `/v1/models/${encodeURIComponent(id)}`);
 
+  // ---- Advisor (API-12): POST /v1/advisor ------------------------------------------------
+  // A lineup from the catalog for this server's machine or a described one; its models are
+  // matched against the catalog above for the add / replace / download actions.
+  const ADVISOR_NEEDS = ['chat', 'vision', 'voice', 'transcription', 'speech', 'embeddings', 'images', 'documents', 'entities'];
+  let advisorNeeds = $state(['chat', 'vision', 'voice']);
+  let advisorDescribe = $state(false); // false: this server's machine
+  let advisorRamGb = $state(64);
+  let advisorVramGb = $state(24);
+  let advisorUnified = $state(false);
+  let advisorLoading = $state(false);
+  let advisorError = $state('');
+  let advice = $state(null);
+  let advisorBulk = $state(false);
+
+  function gib(bytes) {
+    return `${((bytes || 0) / 1024 ** 3).toFixed(1)} GB`;
+  }
+
+  function toggleAdvisorNeed(need) {
+    advisorNeeds = advisorNeeds.includes(need)
+      ? advisorNeeds.filter((n) => n !== need)
+      : [...advisorNeeds, need];
+  }
+
+  async function runAdvisor() {
+    if (!advisorNeeds.length) {
+      advisorError = 'Pick at least one need.';
+      return;
+    }
+    advisorLoading = true;
+    advisorError = '';
+    advice = null;
+    const body = { needs: ADVISOR_NEEDS.filter((n) => advisorNeeds.includes(n)) };
+    if (advisorDescribe) {
+      body.ram_bytes = Math.round(Number(advisorRamGb) * 1024 ** 3);
+      body.unified_memory = advisorUnified;
+      if (!advisorUnified) body.vram_bytes = Math.round(Number(advisorVramGb) * 1024 ** 3);
+    }
+    try {
+      const res = await apiFetch('/v1/advisor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = data?.error?.message || `HTTP ${res.status}`;
+        if (res.status === 400) throw new Error(/lineup fits/i.test(msg) ? msg : `No lineup fits: ${msg}`);
+        if (res.status === 404) throw new Error(`This server has no model catalog, so it cannot advise. ${msg}`);
+        throw new Error(msg);
+      }
+      advice = data;
+    } catch (err) {
+      advisorError = err.message;
+    } finally {
+      advisorLoading = false;
+    }
+  }
+
+  /** Catalog entry and variant behind one advised model (null while the catalog is not loaded). */
+  function advisedCatalog(am) {
+    const entry = (catalog?.data || []).find((m) => m.id === am.id);
+    const variant = entry?.variants.find((v) => v.quant === am.quant);
+    return { entry, variant };
+  }
+
+  function advisedPlacement(am) {
+    if (am.initial_tier === 'tier1_gpu_vram') {
+      const where = am.runs_on_cpu ? 'kept in memory (CPU)' : 'kept in GPU memory';
+      const partial = !am.runs_on_cpu && am.num_layers && am.gpu_layers < am.num_layers
+        ? `, ${am.gpu_layers}/${am.num_layers} layers on the GPU`
+        : '';
+      const experts = am.cpu_expert_layers ? `, experts of ${am.cpu_expert_layers} layers on the CPU` : '';
+      return `${where}${partial}${experts}`;
+    }
+    return am.keep_warm_in_ram ? 'loaded on demand (kept warm in RAM)' : 'loaded on demand';
+  }
+
+  const advisedInstallable = $derived(
+    (advice?.models || []).filter((am) => {
+      const { entry, variant } = advisedCatalog(am);
+      return entry && variant?.installed && !entry.configured;
+    })
+  );
+
+  async function addAllAdvised() {
+    advisorBulk = true;
+    try {
+      for (const am of advisedInstallable) {
+        await changePool(`advisor:${am.id}`, 'POST', '/v1/models', { catalog: `${am.id}:${am.quant}` });
+      }
+    } finally {
+      advisorBulk = false;
+    }
+  }
+
   // KV parking (MEM-4): keep a model's conversations in host memory across a swap.
   // GET / POST /v1/memory/kv-park; the state also comes with /v1/memory/status as `kv_park`.
   let kvPark = $derived(memoryStatus?.kv_park ?? null);
@@ -2437,6 +2533,200 @@
               {/if}
             </div>
 
+            <!-- Advisor (API-12): POST /v1/advisor -->
+            <div class="rounded-lg border border-indigo-500/30 bg-slate-950 p-3 space-y-3">
+              <div class="flex items-baseline justify-between gap-2">
+                <span class="text-sm font-semibold text-white">Advisor</span>
+                <span class="text-slate-500">recommends a lineup from the catalog for a machine and your needs</span>
+              </div>
+
+              <div>
+                <div class="text-slate-400 mb-1">Needs</div>
+                <div class="flex flex-wrap gap-x-3 gap-y-1">
+                  {#each ADVISOR_NEEDS as need}
+                    <label class="flex items-center gap-1 text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={advisorNeeds.includes(need)}
+                        onchange={() => toggleAdvisorNeed(need)}
+                        class="accent-indigo-500"
+                      />
+                      {need}
+                    </label>
+                  {/each}
+                </div>
+              </div>
+
+              <div class="space-y-2">
+                <div class="text-slate-400">Machine</div>
+                <div class="flex flex-wrap gap-x-4 gap-y-1">
+                  <label class="flex items-center gap-1 text-slate-300">
+                    <input type="radio" name="advisor-machine" value={false} bind:group={advisorDescribe} class="accent-indigo-500" />
+                    This server's machine
+                  </label>
+                  <label class="flex items-center gap-1 text-slate-300">
+                    <input type="radio" name="advisor-machine" value={true} bind:group={advisorDescribe} class="accent-indigo-500" />
+                    Describe a machine
+                  </label>
+                </div>
+                {#if advisorDescribe}
+                  <div class="flex flex-wrap items-end gap-3">
+                    <div>
+                      <label class="block text-slate-400 mb-1" for="advisor-ram">RAM (GB)</label>
+                      <input
+                        id="advisor-ram"
+                        type="number"
+                        min="1"
+                        step="1"
+                        bind:value={advisorRamGb}
+                        class="w-24 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-white"
+                      />
+                    </div>
+                    <label class="flex items-center gap-1 text-slate-300 pb-1">
+                      <input type="checkbox" bind:checked={advisorUnified} class="accent-indigo-500" />
+                      Unified memory
+                    </label>
+                    {#if !advisorUnified}
+                      <div>
+                        <label class="block text-slate-400 mb-1" for="advisor-vram">VRAM (GB)</label>
+                        <input
+                          id="advisor-vram"
+                          type="number"
+                          min="0"
+                          step="1"
+                          bind:value={advisorVramGb}
+                          class="w-24 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-white"
+                        />
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+
+              <button
+                onclick={runAdvisor}
+                disabled={advisorLoading || !advisorNeeds.length}
+                class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold disabled:opacity-50"
+              >
+                {advisorLoading ? 'Recommending…' : 'Recommend'}
+              </button>
+
+              {#if advisorError}
+                <div class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-rose-200">{advisorError}</div>
+              {/if}
+
+              {#if advice}
+                <div class="space-y-3">
+                  <div class="text-slate-300">
+                    Machine: {advice.machine?.unified_memory
+                      ? `unified memory, ${gib(advice.machine?.ram_bytes)} RAM`
+                      : `${gib(advice.machine?.vram_bytes)} VRAM, ${gib(advice.machine?.ram_bytes)} RAM`}
+                    · budgets: Tier 1 {gib(advice.budgets?.tier1_bytes)}, Tier 2 {gib(advice.budgets?.tier2_bytes)}
+                  </div>
+
+                  <div class={advice.interactive_coresident ? 'text-emerald-300' : 'text-amber-300'}>
+                    {advice.interactive_coresident
+                      ? `The interactive models stay resident together (${gib(advice.interactive_bytes)}).`
+                      : `The interactive models do not all stay resident together (${gib(advice.interactive_bytes)}); some load on demand.`}
+                  </div>
+
+                  {#if advice.warnings?.length}
+                    <ul class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-200 list-disc list-inside space-y-0.5">
+                      {#each advice.warnings as w}
+                        <li>{w}</li>
+                      {/each}
+                    </ul>
+                  {/if}
+
+                  <div class="space-y-2">
+                    {#each advice.models as am (am.id)}
+                      {@const { entry, variant } = advisedCatalog(am)}
+                      {@const key = `advisor:${am.id}`}
+                      {@const spec = `${am.id}:${am.quant}`}
+                      <div class="rounded-lg border border-slate-800 bg-slate-900/60 p-2.5 space-y-1.5">
+                        <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                          <span class="font-semibold text-white">{am.name}</span>
+                          <span class="font-mono text-slate-400">{spec}</span>
+                          <span class="text-slate-500">serves</span>
+                          <span class="text-indigo-300">{am.serves.join(', ')}</span>
+                          <span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{am.priority}</span>
+                        </div>
+                        <div class="text-slate-400">
+                          {gib(am.weights_bytes)} weights, {gib(am.resident_bytes)} resident · {advisedPlacement(am)}
+                          · {am.context_len} ctx × {am.slots} slot{am.slots === 1 ? '' : 's'}
+                          {#if am.moe_offload && am.moe_offload !== 'off'}· MoE offload {am.moe_offload}{/if}
+                          · load ~{am.load_secs_cold.toFixed(1)} s cold, ~{am.load_secs_warm.toFixed(1)} s from RAM
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                          {#if !catalog}
+                            <span class="text-slate-500">Catalog not loaded: actions unavailable.</span>
+                          {:else if !entry || !variant}
+                            <span class="text-slate-500">Not in this server's catalog.</span>
+                          {:else if !variant.installed}
+                            <span class="text-slate-400">Not downloaded:</span>
+                            <code class="bg-slate-950 rounded px-1.5 py-0.5 font-mono text-slate-200">{downloadCommand(entry, variant)}</code>
+                            <button
+                              onclick={() => copyText(`${key}:cmd`, downloadCommand(entry, variant))}
+                              class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200"
+                            >
+                              {catalogCopied === `${key}:cmd` ? 'Copied' : 'Copy'}
+                            </button>
+                          {:else if !entry.configured}
+                            <button
+                              onclick={() => changePool(key, 'POST', '/v1/models', { catalog: spec })}
+                              disabled={!!poolBusy}
+                              class="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-semibold disabled:opacity-50"
+                            >
+                              {poolBusy === key && poolAction === 'POST' ? 'Adding…' : 'Add to server'}
+                            </button>
+                          {:else if entry.configured_quant === am.quant}
+                            <span class="text-emerald-300">Running on the server ({am.quant}).</span>
+                          {:else}
+                            <span class="text-slate-400">Configured on the server{entry.configured_quant ? ` (${entry.configured_quant})` : ''}.</span>
+                            <button
+                              onclick={() => changePool(key, 'PUT', `/v1/models/${encodeURIComponent(am.id)}`, { catalog: spec })}
+                              disabled={!!poolBusy}
+                              title="Swap the configured model for {spec} under the same id (use it when another variant is configured); running requests finish first"
+                              class="px-2.5 py-1 rounded bg-indigo-600/80 hover:bg-indigo-500 text-white font-semibold disabled:opacity-50"
+                            >
+                              {poolBusy === key && poolAction === 'PUT' ? 'Replacing…' : `Replace with ${am.quant}`}
+                            </button>
+                          {/if}
+                        </div>
+                        {#if poolResult[key]}
+                          {@const r = poolResult[key]}
+                          <div class="rounded px-2 py-1 {r.ok ? 'bg-emerald-500/10 text-emerald-300' : 'bg-rose-500/10 text-rose-200'}">{r.text}</div>
+                        {/if}
+                      </div>
+                    {/each}
+                  </div>
+
+                  {#if advisedInstallable.length}
+                    <button
+                      onclick={addAllAdvised}
+                      disabled={!!poolBusy || advisorBulk}
+                      class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold disabled:opacity-50"
+                    >
+                      {advisorBulk ? 'Adding…' : `Add all installed (${advisedInstallable.length})`}
+                    </button>
+                  {/if}
+
+                  <div>
+                    <div class="flex items-center justify-between mb-1">
+                      <span class="text-slate-400">Generated config</span>
+                      <button
+                        onclick={() => copyText('advisor:config', advice.config)}
+                        class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200"
+                      >
+                        {catalogCopied === 'advisor:config' ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                    <pre class="bg-slate-900 rounded-lg p-2 font-mono text-[11px] text-slate-300 max-h-80 overflow-auto whitespace-pre">{advice.config}</pre>
+                  </div>
+                </div>
+              {/if}
+            </div>
+
             {#if catalogMissing}
               <div class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-3 text-slate-300">
                 This server has no model catalog (<span class="font-mono">models.catalog.toml</span> next to
@@ -2559,6 +2849,8 @@
                                 >
                                   {poolBusy === key && poolAction === 'POST' ? 'Adding…' : `Add ${v.quant} to server`}
                                 </button>
+                              {:else if m.configured_quant === v.quant}
+                                <span class="text-emerald-300">This variant is running on the server.</span>
                               {:else}
                                 <button
                                   onclick={() => replaceCatalogModel(m, v)}

@@ -51,21 +51,19 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 3  | 13  | 5   | 8   | 11   | 7   | 10    | 7   | 5    | 19   |
+| 3  | 13  | 5   | 8   | 11   | 7   | 10    | 7   | 5    | 20   |
 
 ---
 
 ## Backlog
 
-- [ ] 🩵 **DESK-18** `P1` Guided setup: detect, recommend, install, demonstrate
-      First run of the desktop app (and the playground) should need no knowledge of pinned
-      memory, quantization or KV caches: detect the hardware, recommend a lineup (API-12),
-      download it (the Models dialog's downloader), add it live (API-11), then run a short
-      multimodal demo (ask about an image, speak the answer, transcribe it back) to prove it
-      works. Finish distribution: the Developer ID / notarization wiring of BUILD-9 still needs
-      the secrets and a release made with them. Test on real 16 GB and 32 GB Macs (startup,
-      the recommended lineup, swaps under memory pressure), not only with
-      `simulate_physical_memory_bytes`, and record the results in `docs/apple-silicon.md`.
+- [ ] 🩵 **DESK-19** `P1` Test on real 16 GB and 32 GB Macs and ship a signed, notarized release
+      Split from DESK-18 (it needs hardware and secrets): run the guided setup end to end on a
+      16 GB and a 32 GB Mac (the advised lineup, the downloads, the demo, swaps under memory
+      pressure, `hypnos measure-memory` there), not only with `simulate_physical_memory_bytes`,
+      and record the results in `docs/apple-silicon.md`; add the `APPLE_*` and
+      `WINDOWS_CERTIFICATE` repository secrets (docs/signing.md) and make a release with them so
+      the installers are Developer ID signed and notarized.
 
 - [ ] 🟨 **TEST-3** `P1` Measure booked vs real memory per engine and fix the estimates
       Memory budgets are planner estimates, not OS-enforced limits, and some are off: LFM3's KV
@@ -161,6 +159,25 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🩵 **DESK-18** `P1` Guided setup: detect, recommend, install, demonstrate
+      First run of the desktop app (and the playground) should need no knowledge of pinned
+      memory, quantization or KV caches: detect the hardware, recommend a lineup (API-12),
+      download it (the Models dialog's downloader), add it live (API-11), then run a short
+      multimodal demo (ask about an image, speak the answer, transcribe it back) to prove it
+      works. Finish distribution: the Developer ID / notarization wiring of BUILD-9 still needs
+      the secrets and a release made with them. Test on real 16 GB and 32 GB Macs (startup,
+      the recommended lineup, swaps under memory pressure), not only with
+      `simulate_physical_memory_bytes`, and record the results in `docs/apple-silicon.md`.
+      Done 2026-11-01: a three-step setup wizard in the desktop app (choose what to do, see the
+      recommended lineup in plain words with the download size and free space, install: download,
+      then rewrite the app's config with a backup or add the models live to a running server,
+      then a demo: a chat answer, the logo described, a spoken answer transcribed back), opened on
+      first run and from the Models dialog and the local server panel; an Advisor panel in the
+      playground's catalog tab; the catalog route names the configured variant
+      (`configured_quant`); the advisor sizes CPU models against free RAM (a 16 GB Mac asking
+      for chat, vision, voice and documents was refused). Not run end to end with a real
+      download yet. Real-Mac tests and signed releases moved to DESK-19.
 
 - [x] 🟪 **API-12** `P1` Hardware and model advisor
       "I have 24 GB of VRAM and 64 GB of RAM and need chat, voice and documents": recommend a

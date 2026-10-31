@@ -227,7 +227,15 @@ with `KvCacheEstimator::compute_optimal_placement`; catalog `[models.estimate]` 
 GGUF values (`CatalogEntry::model_config`). Exhaustive over entries x variants; scores model size
 per need, interactive co-residency (tries 1 slot / 8k context, MoE offload on discrete GPUs), minus
 partial GPU fits and extra models; every model must be the lineup's largest for some need.
-`hypnos advise ...` (CLI) and `POST /v1/advisor` (`hypnos-server/src/catalog.rs`).
+`hypnos advise ...` (CLI) and `POST /v1/advisor` (`hypnos-server/src/catalog.rs`). CPU models
+are sized against RAM after the OS reserve (`Budgets::host_bytes`), not the warm-memory budget.
+Guided setup (DESK-18): the desktop's `src-tauri/src/setup.rs` + `Setup.svelte` (first run, or
+"Set up…" / "Guided setup…") run the server binary's `hypnos advise --json`, download the specs
+with the Models dialog's downloader, then rewrite the app's own config's `[[models]]` (backup
+`hypnos.toml.bak`, the pool overlay moved aside) or add the models live to a server that uses
+the same folder, and run a demo (chat, the logo described, a voice round trip). The playground's
+Model Catalog tab has an Advisor panel. The catalog route's `configured_quant` names the variant
+a configured model runs.
 
 ### Engines (`hypnos-backends`)
 

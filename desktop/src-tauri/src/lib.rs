@@ -5,6 +5,7 @@ mod images;
 mod local_server;
 mod mic;
 mod models;
+mod setup;
 mod tray;
 mod tts;
 mod web;
@@ -115,6 +116,11 @@ pub fn run() {
             catalog::models_catalog_add,
             catalog::models_pool_put,
             catalog::models_pool_remove,
+            setup::setup_advise,
+            setup::setup_install,
+            setup::setup_apply_config,
+            setup::setup_apply_live,
+            setup::setup_voice_check,
         ])
         // Closing the window hides it into the tray unless the settings say to quit.
         .on_window_event(|window, event| {

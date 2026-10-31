@@ -10,9 +10,9 @@
    * model's config block); `onchanged` restarts the server after files arrived, a model was
    * added to the config or the folder moved; `onpool` after the running server's pool changed
    * (no restart: it serves the change right away); `firstRun` shows the welcome line; `tab` opens
-   * on `lineup` or `catalog`.
+   * on `lineup` or `catalog`; `onsetup` opens the guided setup (DESK-18) instead.
    */
-  let { config, binary = null, firstRun = false, tab = 'lineup', onchanged, onpool, onclose } = $props();
+  let { config, binary = null, firstRun = false, tab = 'lineup', onchanged, onpool, onsetup = null, onclose } = $props();
   let view = $state(untrack(() => tab)); // 'lineup' | 'catalog'
 
   let cat = $state(null);
@@ -380,6 +380,12 @@
     <div class="p-5 space-y-3 shrink-0">
       <div class="flex items-center gap-3">
         <h2 id="models-title" class="text-sm font-semibold">Models</h2>
+        {#if onsetup}
+          <button class="text-xs px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+            onclick={onsetup} disabled={!!busy} title="Pick models for what you want to do and this computer, install and try them">
+            Guided setup…
+          </button>
+        {/if}
         <button class="ml-auto text-slate-500 hover:text-slate-200 disabled:opacity-30" onclick={onclose} disabled={!!busy} aria-label="Close">
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>

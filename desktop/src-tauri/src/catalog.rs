@@ -41,28 +41,28 @@ use crate::models::{
 const FILE_NAME: &str = "models.catalog.toml";
 /// The layout version this app reads; a newer catalog is refused.
 const CATALOG_VERSION: u32 = 1;
-const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long the catalog request that tells whether the server is there may take.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long a replacement or removal waits for running requests before the server refuses it
 /// (429 `model_busy`, nothing changed); the dialog waits that long at most.
-const DRAIN_SECS: u64 = 30;
+pub(crate) const DRAIN_SECS: u64 = 30;
 
 #[derive(Debug, Deserialize)]
-struct Catalog {
+pub(crate) struct Catalog {
     catalog_version: u32,
     #[serde(default)]
-    models: Vec<Entry>,
+    pub(crate) models: Vec<Entry>,
 }
 
 /// One `[[models]]` of the catalog; `config` and `architecture` are the server's business.
 #[derive(Debug, Deserialize)]
-struct Entry {
-    id: String,
-    name: String,
+pub(crate) struct Entry {
+    pub(crate) id: String,
+    pub(crate) name: String,
     publisher: String,
     license: String,
-    modality: String,
+    pub(crate) modality: String,
     #[serde(default)]
     additional_modalities: Vec<String>,
     engine: String,
@@ -75,17 +75,17 @@ struct Entry {
 }
 
 #[derive(Debug, Deserialize)]
-struct Variant {
-    quant: String,
+pub(crate) struct Variant {
+    pub(crate) quant: String,
     #[serde(default)]
-    default: bool,
+    pub(crate) default: bool,
     #[serde(default)]
     note: Option<String>,
     files: Vec<CatalogFile>,
 }
 
 #[derive(Debug, Deserialize)]
-struct CatalogFile {
+pub(crate) struct CatalogFile {
     /// `weights`, `aux`, ... (the config key the file fills).
     #[serde(default)]
     role: String,
@@ -94,7 +94,7 @@ struct CatalogFile {
     remote: String,
     local: String,
     /// Bytes (a folder: all of its files).
-    size: u64,
+    pub(crate) size: u64,
     /// `all`, `macos-arm64` or `other`, as in `models.manifest`.
     #[serde(default = "all")]
     platform: String,
@@ -104,7 +104,7 @@ fn all() -> String {
     "all".into()
 }
 
-fn parse_catalog(text: &str) -> Result<Catalog, String> {
+pub(crate) fn parse_catalog(text: &str) -> Result<Catalog, String> {
     let catalog: Catalog = toml::from_str(text).map_err(|e| format!("{FILE_NAME}: {e}"))?;
     if catalog.catalog_version > CATALOG_VERSION {
         return Err(format!(
@@ -124,17 +124,17 @@ fn for_platform(platform: &str, apple_silicon: bool) -> bool {
     }
 }
 
-const APPLE_SILICON: bool = cfg!(all(target_os = "macos", target_arch = "aarch64"));
+pub(crate) const APPLE_SILICON: bool = cfg!(all(target_os = "macos", target_arch = "aarch64"));
 
 impl Variant {
-    fn files_for(&self, apple_silicon: bool) -> impl Iterator<Item = &CatalogFile> {
+    pub(crate) fn files_for(&self, apple_silicon: bool) -> impl Iterator<Item = &CatalogFile> {
         self.files
             .iter()
             .filter(move |f| for_platform(&f.platform, apple_silicon))
     }
 
     /// The files as manifest lines for the downloader.
-    fn lines(&self, id: &str, apple_silicon: bool) -> Vec<ManifestLine> {
+    pub(crate) fn lines(&self, id: &str, apple_silicon: bool) -> Vec<ManifestLine> {
         self.files_for(apple_silicon)
             .map(|f| ManifestLine {
                 model: id.to_string(),
@@ -146,7 +146,7 @@ impl Variant {
     }
 
     /// Bytes on disk under `root` (complete files and `.part`s) and whether every file is whole.
-    fn state(&self, root: &Path, apple_silicon: bool) -> (u64, bool) {
+    pub(crate) fn state(&self, root: &Path, apple_silicon: bool) -> (u64, bool) {
         let mut have = 0;
         let mut whole = true;
         for f in self.files_for(apple_silicon) {
@@ -204,7 +204,7 @@ impl Entry {
 }
 
 /// `models.catalog.toml`: the bundled copy, else this checkout's (as `models::manifest_path`).
-fn catalog_path() -> Option<PathBuf> {
+pub(crate) fn catalog_path() -> Option<PathBuf> {
     let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
     let bundled = exe_dir.parent()?.join("Resources/server").join(FILE_NAME);
     if bundled.is_file() {
@@ -216,7 +216,7 @@ fn catalog_path() -> Option<PathBuf> {
     repo.is_file().then_some(repo)
 }
 
-fn load_catalog() -> Result<(PathBuf, Catalog), String> {
+pub(crate) fn load_catalog() -> Result<(PathBuf, Catalog), String> {
     let path = catalog_path().ok_or(format!("no {FILE_NAME} in the app or this checkout"))?;
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("could not read {}: {e}", path.display()))?;
@@ -224,7 +224,7 @@ fn load_catalog() -> Result<(PathBuf, Catalog), String> {
 }
 
 /// The ids of the config's `[[models]]` blocks.
-fn config_ids(doc: &toml_edit::DocumentMut) -> BTreeSet<String> {
+pub(crate) fn config_ids(doc: &toml_edit::DocumentMut) -> BTreeSet<String> {
     doc.get("models")
         .and_then(|m| m.as_array_of_tables())
         .map(|models| {
@@ -253,7 +253,7 @@ fn pool_model(enabled: Option<bool>, weights: Option<&str>) -> PoolModel {
 
 /// The server's overlay for a config: `<folder>/<config stem>.models.toml` (as the server's
 /// `pool::overlay_path_for`).
-fn overlay_path(config: &Path) -> PathBuf {
+pub(crate) fn overlay_path(config: &Path) -> PathBuf {
     let stem = config
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
@@ -342,7 +342,10 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 
 /// The connected server and its catalog when it serves the models under `root` (files the app
 /// downloads there are the ones it checks), else why the dialog works from the files instead.
-async fn live_server(hypnos: &Hypnos, root: &Path) -> Result<(Arc<Client>, ModelCatalog), String> {
+pub(crate) async fn live_server(
+    hypnos: &Hypnos,
+    root: &Path,
+) -> Result<(Arc<Client>, ModelCatalog), String> {
     let client = hypnos.client().await.map_err(|e| e.message)?;
     let catalog = tokio::time::timeout(PROBE_TIMEOUT, client.models_catalog(None))
         .await
@@ -362,7 +365,7 @@ async fn live_server(hypnos: &Hypnos, root: &Path) -> Result<(Arc<Client>, Model
 }
 
 /// An error of a pool change as the dialog shows it.
-fn pool_error(e: Error) -> ErrorPayload {
+pub(crate) fn pool_error(e: Error) -> ErrorPayload {
     let (kind, message) = match &e {
         Error::PermissionDenied(_) => (
             "permission",
@@ -444,19 +447,11 @@ fn append_block(text: &str, block: &str, id: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// The variant's `[[models]]` block from `hypnos --catalog-block <id>:<quant>`, run against the
-/// catalog the app read.
-async fn render_block(binary: &Path, catalog: &Path, spec: &str) -> Result<String, String> {
-    if !binary.is_file() {
-        return Err(format!(
-            "no server binary at {}: the config block comes from `hypnos --catalog-block`",
-            binary.display()
-        ));
-    }
+/// A command running the server binary against the catalog the app read (`HYPNOS_CATALOG`),
+/// with the loader paths `run.sh` sets, in the catalog's folder, killed when dropped.
+pub(crate) fn server_command(binary: &Path, catalog: &Path) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(binary);
-    cmd.arg("--catalog-block")
-        .arg(spec)
-        .env("HYPNOS_CATALOG", catalog)
+    cmd.env("HYPNOS_CATALOG", catalog)
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true);
     if let Some(dir) = catalog.parent() {
@@ -482,6 +477,20 @@ async fn render_block(binary: &Path, catalog: &Path, spec: &str) -> Result<Strin
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
+    cmd
+}
+
+/// The variant's `[[models]]` block from `hypnos --catalog-block <id>:<quant>`, run against the
+/// catalog the app read.
+async fn render_block(binary: &Path, catalog: &Path, spec: &str) -> Result<String, String> {
+    if !binary.is_file() {
+        return Err(format!(
+            "no server binary at {}: the config block comes from `hypnos --catalog-block`",
+            binary.display()
+        ));
+    }
+    let mut cmd = server_command(binary, catalog);
+    cmd.arg("--catalog-block").arg(spec);
     let out = tokio::time::timeout(RENDER_TIMEOUT, cmd.output())
         .await
         .map_err(|_| format!("{} --catalog-block timed out", binary.display()))?
@@ -619,7 +628,7 @@ fn entries_view(
         .collect()
 }
 
-fn resolve<'a>(
+pub(crate) fn resolve<'a>(
     catalog: &'a Catalog,
     id: &str,
     quant: &str,

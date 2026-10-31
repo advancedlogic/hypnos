@@ -98,10 +98,33 @@ app's commands.
   Support/Hypnos/models/` unless you choose another (see Models). Before each start the app disables the models whose files are missing, since the server
   refuses a config with missing weights, and enables them again once the files are there; the
   log view lists both. A model you disable yourself in that config stays disabled. Edit the config
-  freely, it is never overwritten; delete it to get the template back.
+  freely: only the guided setup rewrites its models (keeping a `.bak`); delete it to get the
+  template back.
 
-- **Models** (Local server dialog > Models…; opens by itself on the first launch of the bundled
-  server while it has no models): the lineup from `models.manifest` (the one `./run.sh models`
+- **Guided setup** (opens by itself on the first launch of the bundled server while it has no
+  models; later from Models > Guided setup… or Local server > Set up…): tick what Hypnos is for
+  (chat, vision, voice, documents, image generation, search, entities; chat, vision and voice to
+  start with) and the wizard shows this computer's memory, the models the server's advisor
+  recommends for it (`hypnos advise --needs ... --json`, run like `--catalog-block`, so no server
+  needs to run) with what each one does, whether it is kept in GPU memory, a smaller, faster
+  version, the download size against the free space, whether the models you talk to stay loaded
+  together, and the advisor's warnings in plain words. Its button downloads every missing file
+  with the Models dialog's downloader, then puts the lineup to work. The app's own config gets
+  the advised `[[models]]` blocks in place of its own and the advised `[hardware]
+  pinned_ram_budget_bytes`, everything else kept as written; the previous file stays beside it
+  as `hypnos.toml.bak`, the model-pool overlay (`hypnos.models.toml`, models added or removed
+  while the server ran) is moved to `hypnos.models.toml.bak` so it does not change the new
+  lineup, and the local server restarts. Another config is never rewritten: a running server
+  that uses its models folder gets the models it lacks live (`POST /v1/models`), else the wizard
+  shows the advised config with a Copy button. Once the server is ready it runs a short check
+  with the new models, each step timed and allowed to fail on its own: a streamed chat answer,
+  the app's logo described by the vision model (through the image attachment path), and the
+  chat answer spoken by the text-to-speech model and transcribed back by the speech-to-text
+  model (playable, with the share of words heard back). "Choose models myself" opens the Models
+  dialog instead.
+
+- **Models** (Local server dialog > Models…; on the first launch of the bundled server without
+  a server binary to ask for advice, it opens instead of the guided setup): the lineup from `models.manifest` (the one `./run.sh models`
   reads) with each model's modality, size and state. Tick the ones to download: files go to
   `<file>.part` first and resume where they stopped (Stop keeps them; `fetch-models.sh` uses the
   same names), each is checked against the SHA-256 the host publishes (Hugging Face LFS, GitHub
