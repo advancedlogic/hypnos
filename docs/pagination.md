@@ -90,7 +90,13 @@ platform) instead of prefilling 8k tokens (about 2.6 s at the 3,190 tok/s measur
 `docs/bench/after-B-2026-10-29.md`). The new turn's own tokens are still prefilled, so TTFT drops
 to the swap time plus a short prefill, not to the decode floor.
 
-A bench scenario in `backend/scripts/bench.sh`: build a conversation of N tokens on the 26B
+Measured baseline (`docs/bench/mem4-baseline-2026-10-30.md`, Metal): the turn after a swap took
+1.4 s, 2.6 s and 4.7 s for 1.7k, 6.3k and 12.6k-token conversations, of which about 0.95 s was the
+tier switch and the rest the re-prefill (0.4 s, 1.6 s, 3.7 s). With the state restored that turn
+should land near 1.1 s at every size.
+
+To measure the feature itself, extend `backend/scripts/mem4_bench.py` (or add the scenario to
+`backend/scripts/bench.sh`): build a conversation of N tokens on the 26B
 (N = 2k, 8k, 16k), force a swap with an image request, send the next turn, and record its TTFT,
 `tier_switch_latency_ms` and `prefill_ms`, with and without parking. Report the parked bytes and
 the restore time as new engine timings (`restore_ms`, `restored_tokens`).

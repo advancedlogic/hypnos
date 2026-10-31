@@ -89,6 +89,9 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       ~360 MiB for an 8k conversation on the 26B (20 KiB/token + <=200 MiB SWA). Bench: N-token
       conversation, swap, next turn TTFT with and without (N = 2k, 8k, 16k). Not paged attention,
       no Tier 3 spill at first.
+      Baseline measured (docs/bench/mem4-baseline-2026-10-30.md, Metal, `mem4_bench.py`): turn
+      after a swap 1.4 / 2.6 / 4.7 s for 1.7k / 6.3k / 12.6k tokens, ~0.95 s of it the tier switch,
+      the rest re-prefill; expected ~1.1 s with the restore (2.4x at 6k, 4.3x at 12k).
 
 - [ ] 🟫 **MEM-5** `P2` Expert offload for MoE models: experts on the CPU, the rest on the GPU
       Design in docs/moe.md. Step 1, benchmark on the RTX 5090 laptop: the 26B full GPU, a layer
