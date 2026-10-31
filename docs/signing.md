@@ -4,7 +4,7 @@ This guide covers signing and notarizing the two things Hypnos ships for macOS:
 
 | Artifact | What it is | Status today |
 | :--- | :--- | :--- |
-| `hypnos-desktop-<version>-macos-arm64.dmg` | the Tauri desktop app (`desktop/`), with the server inside (DESK-15) | signing + notarization wired into `release.yml`, on once the secrets exist |
+| `hypnos-desktop-<version>-macos-arm64.dmg` | the Tauri desktop app (`desktop/`), with the server inside (DESK-16) | signing + notarization wired into `release.yml`, on once the secrets exist |
 | `hypnos-<version>-macos-arm64-metal.tar.gz` | the server (`hypnos` + `libstable-diffusion.dylib` + data) | `backend/scripts/sign-macos.sh`, run by `release.yml` with the same secrets |
 
 If a file is downloaded with a browser and has no Developer ID signature plus notarization,

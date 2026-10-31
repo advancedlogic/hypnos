@@ -7,7 +7,7 @@ export const DEFAULT_PORT = 9999;
 
 /**
  * `{ binary, config, port, autoStart }`, filled from detection the first time. The server
- * bundled in the macOS app (DESK-15) starts with the app by default, as Ollama's does.
+ * bundled in the macOS app (DESK-16) starts with the app by default, as Ollama's does.
  */
 export async function loadLocalSettings() {
   const saved = await load(SETTINGS_KEY, null);

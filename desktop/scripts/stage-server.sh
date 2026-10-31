@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stages the Metal server for the macOS app bundle (DESK-15) in desktop/src-tauri/server/
+# Stages the Metal server for the macOS app bundle (DESK-16) in desktop/src-tauri/server/
 # (git-ignored), where tauri.server-macos.conf.json picks it up:
 #
 #   ./desktop/scripts/stage-server.sh                          # from this checkout's release build

@@ -8,7 +8,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     match std::env::var("CARGO_CFG_TARGET_OS").as_deref() {
         // Beside the binary (release archive, target dir), or in Contents/Frameworks when the
-        // desktop app bundles the server in Contents/MacOS (DESK-15).
+        // desktop app bundles the server in Contents/MacOS (DESK-16).
         Ok("macos") => {
             println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
             println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");

@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 3  | 11  | 5   | 6   | 9    | 6   | 10    | 7   | 3    | 17   |
+| 3  | 11  | 5   | 6   | 9    | 6   | 10    | 7   | 3    | 18   |
 
 ---
 
@@ -89,8 +89,8 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       Decide first: curated list vs. live HF search filtered by `gguf` tag + pipeline type, and
       how unknown architectures are validated (`gguf_inspector.rs`) before they are offered.
 
-- [ ] 🩵 **DESK-16** `P2` First-run model download in the desktop app
-      A bundled server without weights still leaves users stuck (DESK-15). On first run, or from
+- [ ] 🩵 **DESK-17** `P2` First-run model download in the desktop app
+      A bundled server without weights still leaves users stuck (DESK-16). On first run, or from
       settings, show the lineup from `models.manifest` (31 GB for all of it) with size and
       modality per model and let people pick. Download into
       `~/Library/Application Support/Hypnos/models/` (macOS) with progress, resume and checksum
@@ -108,7 +108,11 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## In Progress
 
-- [ ] 🩵 **DESK-15** `P2` Bundle the server inside the macOS app, as Ollama does
+_No cards yet._
+
+## Done
+
+- [x] 🩵 **DESK-16** `P2` Bundle the server inside the macOS app, as Ollama does
       The `.dmg` ships `hypnos` (Metal build, about 136 MB with the dylib and espeak data), and
       `local_server.rs` starts it when no other server is configured, so app and server always
       match versions. Windows and Linux keep the standalone archives (CUDA vs CPU, runtime size).
@@ -134,11 +138,12 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
         before the first release that bundles it.
       - release.yml: the desktop macOS job needs the Metal server build (artifact from the
         `macos-arm64-metal` leg) before `tauri build`. Update `desktop/README.md`, `docs/signing.md`.
-      Status 2026-10-31: implemented and tested locally (Developer ID and ad-hoc bundles, first
-      run on a clean HOME, model sync, smoke test from inside the bundle). Open: a notarized
-      `.dmg` with the server inside, from CI, once the Apple credentials stop returning 401.
-
-## Done
+      Done 2026-10-31. CI run 41207858535: the `.dmg` and the app inside are notarized and stapled
+      ("Notarized Developer ID" with a download quarantine flag), the bundled server and its dylib
+      notarized, the CI app starts its server on a clean HOME. Follow-ups on the way: ad-hoc
+      builds without the hardened runtime, `build-server.yml` so the `.dmg` skips the CUDA
+      builds, notarization with an App Store Connect API key, the `.dmg` notarized itself. (commits 3a3036b, 5ecb943, 0c53027, fbe02ed; the first says DESK-15, the ID the
+      regenerate card already had)
 
 - [x] 🩵 **DESK-15** `P2` Regenerate from any request or answer
       A refresh icon (on hover) under every user request and assistant answer: it asks that

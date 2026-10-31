@@ -5,7 +5,7 @@ use std::path::PathBuf;
 /// Where a data folder that ships with the binary (`espeak-ng-data`, `frontend`) may sit, in
 /// order: beside the executable (release archives, Docker, the cargo target dir), then
 /// `../Resources` when the executable is in an app bundle's `Contents/MacOS` (the server bundled
-/// in the macOS desktop app, DESK-15).
+/// in the macOS desktop app, DESK-16).
 pub fn beside_executable(exe_dir: &std::path::Path, name: &str) -> Vec<PathBuf> {
     let mut dirs = vec![exe_dir.join(name)];
     if exe_dir.file_name().is_some_and(|n| n == "MacOS") {

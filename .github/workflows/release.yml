@@ -37,7 +37,7 @@ jobs:
           path: frontend/dist
 
   # The server archives (build-server.yml). CUDA and macOS are separate calls so the desktop job,
-  # whose macOS app bundles the Metal server (DESK-15), only waits for the macOS one.
+  # whose macOS app bundles the Metal server (DESK-16), only waits for the macOS one.
   # ubuntu-24.04 sets the glibc floor of the Linux binary (2.39); ort's prebuilt static ONNX
   # Runtime needs glibc 2.38+ and GCC 14's libstdc++, so 22.04 cannot link. -j 2 caps nvcc at about
   # four processes (cargo -j is also each engine's CMake --parallel); more runs out of the
@@ -69,7 +69,7 @@ jobs:
   #   Windows: WINDOWS_CERTIFICATE (base64 .pfx) and WINDOWS_CERTIFICATE_PASSWORD.
   # Without them macOS gets an ad-hoc signature (Gatekeeper offers "Open Anyway" instead of
   # calling the app damaged) and Windows none (SmartScreen: "More info > Run anyway").
-  # The macOS app carries the Metal server from the macos-arm64-metal archive (DESK-15), hence
+  # The macOS app carries the Metal server from the macos-arm64-metal archive (DESK-16), hence
   # `needs: build-macos`; `!cancelled()` keeps a failed macOS server build from skipping the
   # Linux and Windows installers (the macOS one then fails at its download step).
   desktop:

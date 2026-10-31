@@ -266,7 +266,7 @@ Tauri 2 + Svelte 5 + Tailwind 3 (same versions as `frontend/`), its own `package
 `src-tauri/` crate outside the backend workspace. `src-tauri/src/local_server.rs` can start a
 `hypnos` (detected or chosen), stream its output to the UI and stop it on quit, with health
 checks through `hypnos-client` (`sdk/rust`, a path dependency). The macOS app bundles the
-Metal server (DESK-15): `desktop/scripts/stage-server.sh` stages it in the git-ignored
+Metal server (DESK-16): `desktop/scripts/stage-server.sh` stages it in the git-ignored
 `src-tauri/server/` and `tauri.server-macos.conf.json` (merged with `--config` only by
 `run.sh build desktop`, release.yml and by hand, so dev builds and clippy need no server) puts
 it in `Contents/MacOS` (sidecar), `Contents/Frameworks` (dylib, found through the server's

@@ -2,7 +2,7 @@ name: build-server
 
 # The server archives, one per platform in `platforms` (a JSON list of {platform, os, cargo}).
 # release.yml calls it twice, CUDA and macOS, so the macOS app (which bundles the Metal server,
-# DESK-15) does not wait for the CUDA builds. Expects the `frontend-dist` artifact of the same
+# DESK-16) does not wait for the CUDA builds. Expects the `frontend-dist` artifact of the same
 # run; uploads `hypnos-<platform>`. The macOS leg signs and notarizes with the APPLE_* secrets
 # (secrets: inherit).
 on:

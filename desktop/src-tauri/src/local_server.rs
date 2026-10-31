@@ -2,7 +2,7 @@
 //! port, keeps its output for the log view, and stops it when asked or when the app quits.
 //! Health and readiness go through the Rust SDK (`hypnos-client`).
 //!
-//! The macOS app can carry the server (DESK-15): `hypnos` in `Contents/MacOS`, its dylib in
+//! The macOS app can carry the server (DESK-16): `hypnos` in `Contents/MacOS`, its dylib in
 //! `Contents/Frameworks`, the data and a config template in `Contents/Resources`. The bundle is
 //! read-only (its signature covers it), so the bundled server runs with a config the app owns
 //! in `~/Library/Application Support/Hypnos/` (`hypnos.toml`, `models/`). Before each start the
@@ -180,7 +180,7 @@ fn beside_app() -> Option<PathBuf> {
     existing(std::env::current_exe().ok()?.parent()?.join(BINARY_NAME))
 }
 
-/// The server inside this app's bundle (DESK-15): `Contents/MacOS/hypnos` with the config
+/// The server inside this app's bundle (DESK-16): `Contents/MacOS/hypnos` with the config
 /// template the bundling build puts in `Contents/Resources/server/`.
 fn bundled() -> Option<PathBuf> {
     let binary = beside_app()?;

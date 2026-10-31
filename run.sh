@@ -300,7 +300,7 @@ build_frontend() {
 
 # build_desktop: npm install + `tauri build --no-bundle` (the app binary; `--bundles app` on macOS; the installers are
 # made by release.yml). Tauri compiles the Rust side with the cargo first on PATH (rustup's).
-# On Apple Silicon with a release server build, the app bundles that server (DESK-15): staged by
+# On Apple Silicon with a release server build, the app bundles that server (DESK-16): staged by
 # desktop/scripts/stage-server.sh and merged in with tauri.server-macos.conf.json.
 build_desktop() {
     echo "[Hypnos] Building the desktop app ($HYPNOS_PROFILE profile) -> $DESKTOP_BIN"

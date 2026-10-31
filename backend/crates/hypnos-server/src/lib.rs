@@ -279,7 +279,7 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
 
 /// Where the built playground lives: `server.frontend_dir` when set, else a `frontend/` directory
 /// that holds an `index.html` beside the executable (release archives, the Docker image) or in
-/// `../Resources` (the server bundled in the macOS desktop app, DESK-15).
+/// `../Resources` (the server bundled in the macOS desktop app, DESK-16).
 pub fn playground_dir(configured: Option<&std::path::Path>) -> Option<PathBuf> {
     if let Some(dir) = configured {
         return Some(dir.to_path_buf());
