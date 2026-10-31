@@ -78,7 +78,13 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
 
-- [ ] 🩵 **DESK-12** `P2` Menu bar / system tray icon
+## In Progress
+
+_No cards yet._
+
+## Done
+
+- [x] 🩵 **DESK-12** `P2` Menu bar / system tray icon
       The Hypnos logo in the macOS menu bar, the Windows notification area and the Linux
       AppIndicator area (Tauri `tray-icon`), coloured by server state: green ready, amber while
       models load, red when unreachable or the API key is refused. Menu: Open Hypnos, the
@@ -89,12 +95,19 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       icon (`accessory` activation policy). Optional: a system notification when a long answer
       or an image finishes while the window is hidden. Linux needs libayatana-appindicator
       (already in the CI and release deps).
-
-## In Progress
-
-_No cards yet._
-
-## Done
+      Done: `src-tauri/src/tray.rs` (Tauri `tray-icon`; the logo at 64 px with a status dot
+      drawn per state; menu: status line, Open Hypnos, Stop the server / Start the server,
+      Connection settings, Quit; left click toggles the window; `on_window_event` hides on
+      close when `close_to_tray`; `set_dock_visibility` on macOS; `RunEvent::Reopen` shows the
+      window). The server item follows the connection: "Stop the server" whenever a local
+      server answers, including one the app did not start (`local_server_stop_port`: the
+      process named `hypnos` listening on that port, SIGTERM / taskkill, wait until it is
+      gone), "Start the server" on the connection's port, disabled for a remote server.
+      Settings: keep running in the tray, hide the Dock icon (macOS), notifications
+      (`tauri-plugin-notification`, only when the window is hidden or unfocused). Not done:
+      the optional panel under the icon (`tauri-plugin-positioner`). Checked: the icon with a
+      green dot in the macOS menu bar; ignored test stops a `hypnos` the app did not start and
+      leaves another process alone. The menu itself not clicked through yet.
 
 - [x] 🟪 **API-9** `P3` Tool calling on `/v1/chat/completions`
       Accept OpenAI `tools` / `tool_choice` and return `tool_calls` (and `finish_reason:

@@ -75,6 +75,17 @@ app's commands.
   on that port, in which case the app just connects to it. The app stops the server it started
   (gracefully, SIGTERM on Linux/macOS) when you quit, and never stops one it did not start.
 
+- **Menu bar / tray icon**: the logo with a dot for the server's state (green ready, amber
+  loading, red unreachable or key refused, grey connecting). A left click shows or hides the
+  window; the menu (right click) has the status and version, Open Hypnos, Stop the server /
+  Start the server, Connection settings and Quit. "Stop the server" stops the server the app is
+  connected to whenever it runs on this machine, also one started by `run.sh` or by hand (only a
+  process named `hypnos` listening on that port, gracefully); "Start the server" starts the
+  local server (Local server dialog) on the connection's port; a remote server cannot be
+  stopped from here. Closing the window keeps the app in the tray (the connection dialog can
+  make it quit instead, and on macOS hide the Dock icon); a notification tells you when an
+  answer or image finishes while the window is hidden or in the background.
+
 | Shortcut | Action |
 | :--- | :--- |
 | Cmd/Ctrl+N | new chat |
@@ -162,6 +173,7 @@ desktop/
 │       ├── Settings.svelte   # connection dialog
 │       ├── LocalServer.svelte # start/stop an installed hypnos, live log
 │       ├── localServer.js    # its commands, events and saved settings
+│       ├── appPrefs.js       # tray / Dock / notification preferences, notifications
 │       ├── Attachments.svelte # attachment chips (composer and messages)
 │       ├── video.js          # samples video frames in the webview
 │       └── Markdown.svelte   # marked + DOMPurify, copy buttons on code blocks
@@ -173,6 +185,7 @@ desktop/
     ├── src/mic.rs            # record with cpal on its own thread, then transcribe
     ├── src/tts.rs            # markdown to speech text, sentence queue, rodio playback
     ├── src/images.rs         # the image tool: instruction, ToolGate, generation, save
+    ├── src/tray.rs           # tray icon with a status dot, its menu, close-to-tray, Dock icon
     ├── Info.plist            # macOS: NSMicrophoneUsageDescription
     ├── src/local_server.rs   # find, start, stop and log a hypnos process (health via hypnos-client)
     ├── capabilities/         # what the window may call: core + store, no HTTP

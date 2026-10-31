@@ -1,6 +1,7 @@
 <script>
   import { onMount, untrack } from 'svelte';
   import * as api from './hypnos.js';
+  import { appPrefs, applyAppPrefs, isMac } from './appPrefs.js';
   import { normalizeUrl } from './connection.js';
 
   /** `routes`: modality -> model id; `models`: the enabled models with their `modalities`. */
@@ -15,6 +16,10 @@
   let voice = $state(prefs.voice);
   let speed = $state(prefs.speed);
   let imageTool = $state(api.imageToolOn());
+  const windowPrefs = appPrefs();
+  let closeToTray = $state(windowPrefs.closeToTray);
+  let hideDock = $state(windowPrefs.hideDock);
+  let notify = $state(windowPrefs.notify);
   // Kokoro voices (any id the server knows works; OpenAI names are mapped).
   const VOICES = ['af_heart', 'af_bella', 'af_nova', 'af_sarah', 'am_adam', 'am_michael', 'bf_emma', 'bm_george'];
 
@@ -77,6 +82,7 @@
       const picked = Object.fromEntries(Object.entries(chosen).filter(([, id]) => id));
       api.setVoicePrefs({ voice: voice.trim(), speed: Number(speed) });
       api.setImageTool(imageTool);
+      await applyAppPrefs({ closeToTray, hideDock, notify });
       await onsave({ url: normalized, apiKey: apiKey.trim() }, picked);
     } catch (err) {
       result = { text: `Could not save: ${err?.message ?? err}`, tone: 'text-rose-300' };
@@ -156,6 +162,24 @@
       <input type="checkbox" bind:checked={imageTool} class="accent-indigo-500" />
       Let the chat model create images (when the server has an image model)
     </label>
+
+    <div class="space-y-1.5 pt-1">
+      <h3 class="text-xs text-slate-400">App</h3>
+      <label class="flex items-center gap-2 text-xs text-slate-400">
+        <input type="checkbox" bind:checked={closeToTray} class="accent-indigo-500" />
+        Keep running in the {isMac ? 'menu bar' : 'tray'} when the window is closed
+      </label>
+      {#if isMac}
+        <label class="flex items-center gap-2 text-xs text-slate-400">
+          <input type="checkbox" bind:checked={hideDock} class="accent-indigo-500" />
+          Hide the Dock icon (open Hypnos from the menu bar)
+        </label>
+      {/if}
+      <label class="flex items-center gap-2 text-xs text-slate-400">
+        <input type="checkbox" bind:checked={notify} class="accent-indigo-500" />
+        Notify me when an answer or image finishes while I am away
+      </label>
+    </div>
 
     <div class="space-y-2 pt-1">
       <h3 class="text-xs text-slate-400">Reading aloud</h3>

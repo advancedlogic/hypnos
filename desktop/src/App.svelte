@@ -11,6 +11,9 @@
   import StatsPanel from './lib/StatsPanel.svelte';
   import Settings from './lib/Settings.svelte';
   import logo from './assets/logo.png';
+  import { listen } from '@tauri-apps/api/event';
+  import { invoke } from '@tauri-apps/api/core';
+  import { applyAppPrefs, updateTray } from './lib/appPrefs.js';
 
   const POLL_MS = 3000;
   const MODELS_MS = 10000;
@@ -175,7 +178,65 @@
 
   let models = $derived(allModels.filter((m) => m.modalities.includes('text_generation')));
 
+  /** The port of the server the app uses when it runs on this machine, else null. */
+  let localPort = $derived.by(() => {
+    try {
+      const u = new URL(connection?.url ?? '');
+      if (!['localhost', '127.0.0.1', '[::1]'].includes(u.hostname)) return null;
+      return Number(u.port || (u.protocol === 'https:' ? 443 : 80));
+    } catch {
+      return null;
+    }
+  });
+
+  // The tray's server item follows the server the app is connected to, whoever started it.
+  let serverItem = $derived.by(() => {
+    if (localPort === null) return { text: 'Server runs on another machine', enabled: false };
+    if (serverBusy) return { text: serverBusy, enabled: false };
+    if (localStatus?.running || ['ready', 'starting', 'unauthorized'].includes(serverState)) {
+      return { text: 'Stop the server', enabled: true, action: 'stop' };
+    }
+    if (serverState === 'connecting') return { text: 'Checking the server…', enabled: false };
+    return { text: 'Start the server', enabled: !!localSettings?.binary, action: 'start' };
+  });
+  let serverBusy = $state(null);
+  let serverError = $state(null);
+
+  // The tray icon follows the server state (DESK-12).
+  $effect(() => {
+    const version = status.health ? ` · v${status.health.version}` : '';
+    updateTray({
+      state: serverState,
+      label: `Hypnos: ${shown.label}${version}`,
+      serverItem: serverItem.text,
+      serverItemEnabled: serverItem.enabled,
+    });
+  });
+
+  async function serverFromTray() {
+    const { action } = serverItem;
+    if (!action) return;
+    serverError = null;
+    serverBusy = action === 'stop' ? 'Stopping the server…' : 'Starting the server…';
+    try {
+      if (action === 'stop') {
+        if (localStatus?.running && localStatus.options?.port === localPort) await stopLocal();
+        else await invoke('local_server_stop_port', { port: localPort });
+      } else {
+        await startLocal({ ...localSettings, port: localPort });
+      }
+    } catch (e) {
+      serverError = `Could not ${action} the server: ${e?.message ?? e}`;
+      if (action === 'start') localOpen = true; // its log shows why
+    } finally {
+      serverBusy = null;
+    }
+  }
+
   onMount(async () => {
+    listen('tray-open-settings', () => (settingsOpen = true));
+    listen('tray-server', serverFromTray);
+    applyAppPrefs().catch((e) => console.warn(e));
     connection = await loadConnection();
     routes = await load(ROUTES_KEY, {});
     await api.setRoutes(routes);
@@ -246,6 +307,13 @@
       </button>
     </div>
   </header>
+
+  {#if serverError}
+    <div class="shrink-0 px-4 py-1.5 flex items-center gap-3 text-xs text-rose-300 bg-rose-500/10 border-b border-rose-500/30">
+      <span class="flex-1">{serverError}</span>
+      <button class="text-slate-400 hover:text-slate-200" onclick={() => (serverError = null)} aria-label="Dismiss">×</button>
+    </div>
+  {/if}
 
   <div class="flex-1 min-h-0 flex">
     <Sidebar {store} />

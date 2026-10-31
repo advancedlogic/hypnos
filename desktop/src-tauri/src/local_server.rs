@@ -375,6 +375,107 @@ pub async fn local_server_logs(server: State<'_, LocalServer>) -> Result<Vec<Str
     Ok(server.0.lock().await.log.iter().cloned().collect())
 }
 
+/// The process listening on `port` on this machine, if its name says it is a Hypnos server (not
+/// this app): `(pid, name)`.
+fn listening_hypnos(port: u16) -> Option<(u32, String)> {
+    let is_server = |name: &str| {
+        let base = std::path::Path::new(name.trim())
+            .file_name()
+            .map(|n| n.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        base == "hypnos" || base == "hypnos.exe"
+    };
+    #[cfg(unix)]
+    {
+        let out = std::process::Command::new("lsof")
+            .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-t"])
+            .output()
+            .ok()?;
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| l.trim().parse::<u32>().ok())
+            .find_map(|pid| {
+                let ps = std::process::Command::new("ps")
+                    .args(["-p", &pid.to_string(), "-o", "comm="])
+                    .output()
+                    .ok()?;
+                let name = String::from_utf8_lossy(&ps.stdout).trim().to_string();
+                is_server(&name).then_some((pid, name))
+            })
+    }
+    #[cfg(windows)]
+    {
+        let out = std::process::Command::new("netstat")
+            .args(["-ano", "-p", "TCP"])
+            .output()
+            .ok()?;
+        let needle = format!(":{port}");
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| l.contains("LISTENING"))
+            .filter_map(|l| {
+                let cols: Vec<&str> = l.split_whitespace().collect();
+                (cols.len() >= 5 && cols[1].ends_with(&needle))
+                    .then(|| cols[4].parse::<u32>().ok())?
+            })
+            .find_map(|pid| {
+                let out = std::process::Command::new("tasklist")
+                    .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+                    .output()
+                    .ok()?;
+                let line = String::from_utf8_lossy(&out.stdout);
+                let name = line.split(',').next()?.trim_matches('"').to_string();
+                is_server(&name).then_some((pid, name))
+            })
+    }
+}
+
+/// Stops the Hypnos server listening on `port` even when this app did not start it (the tray's
+/// "Stop the server"): SIGTERM on Linux/macOS, which the server handles as a graceful shutdown,
+/// `taskkill` on Windows. Only a process named `hypnos` is touched. Waits up to 20 s for it to go.
+#[tauri::command]
+pub async fn local_server_stop_port(
+    server: State<'_, LocalServer>,
+    port: u16,
+) -> Result<(), String> {
+    let ours = server
+        .0
+        .lock()
+        .await
+        .status
+        .options
+        .as_ref()
+        .map(|o| o.port)
+        == Some(port)
+        && server.0.lock().await.child.is_some();
+    if ours {
+        return server.stop().await;
+    }
+    let (pid, name) = tauri::async_runtime::spawn_blocking(move || listening_hypnos(port))
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no Hypnos server process found listening on port {port}"))?;
+    #[cfg(unix)]
+    // SAFETY: kill(2) with SIGTERM on a pid that was just checked to be a `hypnos` process.
+    let sent = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) } == 0;
+    #[cfg(windows)]
+    let sent = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !sent {
+        return Err(format!("could not stop {name} (pid {pid})"));
+    }
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if sdk_client(port)?.health().await.is_err() {
+            return Ok(());
+        }
+    }
+    Err(format!("{name} (pid {pid}) is still running after 20 s"))
+}
+
 /// Through the SDK: whether the server on this port is up and whether its models are staged.
 #[tauri::command]
 pub async fn local_server_probe(port: u16) -> Result<(bool, bool), String> {
@@ -443,5 +544,49 @@ mod tests {
         let status = local_server_stop(app.state()).await.unwrap();
         assert!(!status.running);
         assert_eq!(local_server_probe(port).await.unwrap(), (false, false));
+    }
+
+    /// Stops a server this app did not start (same env as the test above), and leaves a
+    /// non-Hypnos process alone: `cargo test stops_a_server -- --ignored`.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn stops_a_server_it_did_not_start() {
+        let binary = std::env::var("HYPNOS_TEST_BINARY").expect("HYPNOS_TEST_BINARY");
+        let config = std::env::var("HYPNOS_TEST_CONFIG").expect("HYPNOS_TEST_CONFIG");
+        let port = 9997;
+        let dir = std::path::Path::new(&binary)
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let mut child = std::process::Command::new(&binary)
+            .args([config.as_str(), "--port", &port.to_string()])
+            .env("DYLD_LIBRARY_PATH", join_paths(&dir, "DYLD_LIBRARY_PATH"))
+            .env("LD_LIBRARY_PATH", join_paths(&dir, "LD_LIBRARY_PATH"))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        for _ in 0..120 {
+            if local_server_probe(port).await.unwrap().0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        let app = tauri::test::mock_builder()
+            .manage(LocalServer::default())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        local_server_stop_port(app.state(), port).await.unwrap();
+        assert_eq!(local_server_probe(port).await.unwrap(), (false, false));
+        let exit = child.wait().unwrap();
+        assert!(exit.code() == Some(0) || exit.code().is_none(), "{exit:?}");
+
+        // Something else listening on a port is not touched.
+        let other = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let other_port = other.local_addr().unwrap().port();
+        let err = local_server_stop_port(app.state(), other_port)
+            .await
+            .unwrap_err();
+        assert!(err.contains("no Hypnos server"), "{err}");
     }
 }

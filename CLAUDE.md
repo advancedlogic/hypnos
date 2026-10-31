@@ -262,7 +262,10 @@ vision model when the new message has images. `web.rs` fetches URLs on the Rust 
 on a thread of its own (CoreAudio streams are not `Send`), emits `mic-level`, and transcribes on
 stop. `tts.rs` turns an answer into speakable sentences (`speech_text`, `sentences`), synthesizes
 them in order and plays them on a rodio player thread; `speak` takes the text so far per call.
-`images.rs` is the app-side tool loop (the server ignores `tools`, API-9): `TOOL_INSTRUCTION` in
+`tray.rs` is the tray icon (status dot drawn on the logo, menu events `tray-server` /
+`tray-open-settings` handled by the webview, close-to-tray in `on_window_event`, macOS Dock
+visibility); `local_server_stop_port` stops any local process named `hypnos` on the connection's
+port, so the tray can stop a server `run.sh` started. `images.rs` is the app-side tool loop (the server ignores `tools`, API-9): `TOOL_INSTRUCTION` in
 the system prompt, a `ToolGate` that holds back an answer's start until it knows whether it is a
 ```generate_image block, then the image, an `image` event and a short comment round. The real-server tests are `#[ignore]`d (`HYPNOS_TEST_URL`;
 `HYPNOS_TEST_BINARY` / `HYPNOS_TEST_CONFIG`). `get_api_key` / `set_api_key` keep the API key in

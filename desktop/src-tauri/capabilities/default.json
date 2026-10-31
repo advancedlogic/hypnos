@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core APIs, the store and file dialogs; server calls go through the app's own commands (Rust SDK)",
+  "description": "Main window: core APIs, the store, file dialogs and notifications; server calls go through the app's own commands (Rust SDK)",
   "windows": [
     "main"
   ],
@@ -9,6 +9,7 @@
     "core:default",
     "store:default",
     "dialog:allow-open",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    "notification:default"
   ]
 }

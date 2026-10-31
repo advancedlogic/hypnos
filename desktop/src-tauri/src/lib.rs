@@ -3,6 +3,7 @@ mod hypnos;
 mod images;
 mod local_server;
 mod mic;
+mod tray;
 mod tts;
 mod web;
 
@@ -52,11 +53,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             app.manage(hypnos::Hypnos::default());
             app.manage(local_server::LocalServer::default());
             app.manage(mic::Mic::default());
             app.manage(tts::Speaker::default());
+            app.manage(tray::TraySettings::default());
+            tray::create(app.handle())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -81,6 +85,8 @@ pub fn run() {
             mic::mic_cancel,
             tts::speak,
             tts::speak_stop,
+            tray::tray_update,
+            tray::tray_settings,
             images::hypnos_generate_image,
             images::save_data_url,
             local_server::local_server_detect,
@@ -89,14 +95,30 @@ pub fn run() {
             local_server::local_server_status,
             local_server::local_server_logs,
             local_server::local_server_probe,
+            local_server::local_server_stop_port,
         ])
+        // Closing the window hides it into the tray unless the settings say to quit.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let keep = window
+                    .state::<tray::TraySettings>()
+                    .close_to_tray
+                    .load(std::sync::atomic::Ordering::SeqCst);
+                if keep {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building the Hypnos desktop app")
-        .run(|app, event| {
+        .run(|app, event| match event {
             // A server the app started does not outlive it.
-            if let tauri::RunEvent::Exit = event {
-                app.state::<local_server::LocalServer>().shutdown_blocking();
-            }
+            tauri::RunEvent::Exit => app.state::<local_server::LocalServer>().shutdown_blocking(),
+            // macOS: a click on the Dock icon brings the hidden window back.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => tray::show_window(app),
+            _ => {}
         });
 }
 

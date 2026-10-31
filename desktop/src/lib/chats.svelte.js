@@ -1,5 +1,6 @@
 import { load, save } from './storage.js';
 import * as api from './hypnos.js';
+import { notifyIfAway } from './appPrefs.js';
 
 const CHATS_KEY = 'chats';
 const LAST_MODEL_KEY = 'lastModel';
@@ -155,6 +156,7 @@ export class ChatStore {
         },
       });
       if (cancelled) answer.stopped = true;
+      else notifyIfAway(answer.image ? 'Image ready' : `Answer from ${answer.model ?? chat.model}`, answer.content || answer.image?.prompt || chat.title);
     } catch (e) {
       answer.error = api.errorMessage(e);
     } finally {
@@ -190,6 +192,7 @@ export class ChatStore {
     try {
       answer.image = await api.generateImage(prompt, size);
       answer.model = answer.image.model;
+      notifyIfAway('Image ready', prompt);
       if (answer.image.telemetry) this.lastTelemetry = { model: answer.image.model, telemetry: answer.image.telemetry };
     } catch (e) {
       answer.error = api.errorMessage(e);
