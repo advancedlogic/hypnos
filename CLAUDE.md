@@ -67,6 +67,10 @@ cd backend && cargo clippy -p hypnos-core -p hypnos-memory -p hypnos-scheduler -
 Build notes:
 - Rust 1.92+ via rustup. Both run scripts and `.cargo/config.toml` pin the rustup toolchain because
   a standalone Rust install may shadow it on PATH.
+- Both `backend/Cargo.toml` and `desktop/src-tauri/Cargo.toml` set
+  `[profile.release.build-override] strip = false` (BUG-5): Xcode 27.2's `strip` can leave a
+  proc-macro dylib with a misaligned LINKEDIT string pool (it depends on the embedded paths'
+  length), dyld refuses it and rustc reports E0463 "can't find crate". Keep it until that is fixed.
 - The first backend build compiles every native engine (10-20 min). CMake generator is forced to
   Ninja; the Visual Studio generator ignores `CUDAHOSTCXX`.
 - `.github/workflows/ci.yml` runs fmt + clippy, the CPU (Linux, Windows) and Metal (macOS) builds
@@ -256,8 +260,7 @@ stop. `tts.rs` turns an answer into speakable sentences (`speech_text`, `sentenc
 them in order and plays them on a rodio player thread; `speak` takes the text so far per call.
 `images.rs` is the app-side tool loop (the server ignores `tools`, API-9): `TOOL_INSTRUCTION` in
 the system prompt, a `ToolGate` that holds back an answer's start until it knows whether it is a
-```generate_image block, then the image, an `image` event and a short comment round. `[profile.release.build-override] strip = false` in its Cargo.toml works around stripped
-proc-macro dylibs that rustc cannot load on macOS 27 / Xcode 27.2 (BUG-5). The real-server tests are `#[ignore]`d (`HYPNOS_TEST_URL`;
+```generate_image block, then the image, an `image` event and a short comment round. The real-server tests are `#[ignore]`d (`HYPNOS_TEST_URL`;
 `HYPNOS_TEST_BINARY` / `HYPNOS_TEST_CONFIG`). `get_api_key` / `set_api_key` keep the API key in
 the OS keychain (`keyring`), keyed by origin; chats and the server URL live in `tauri-plugin-store`. `ChatStore`
 (`src/lib/chats.svelte.js`) owns chats and streaming; `StatsPanel.svelte` polls

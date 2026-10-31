@@ -84,7 +84,13 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       stream the calls as deltas. Lets DESK-11 (and any OpenAI client) use real tool calls
       instead of a prompt convention. docs/api.md, the mock server and the three SDKs follow.
 
-- [ ] 🟥 **BUG-5** `P2` Release builds on macOS 27 / Xcode 27.2 cannot load stripped proc macros
+## In Progress
+
+_No cards yet._
+
+## Done
+
+- [x] 🟥 **BUG-5** `P2` Release builds on macOS 27 / Xcode 27.2 cannot load stripped proc macros
       With Homebrew's rustc 1.98 and Xcode 27.2, `cargo build --release` fails with E0463
       "can't find crate for `rustversion`" (and `futures_macro`, `zerocopy_derive`): the
       release profile's default `strip = "debuginfo"` runs Xcode's `strip` on proc-macro
@@ -92,12 +98,15 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       `[profile.release.build-override] strip = false` (DESK-9). Check whether the backend
       release build hits it too (it is pinned to the rustup toolchain; this machine has only
       Homebrew's), apply the same override there if so, and report it upstream.
-
-## In Progress
-
-_No cards yet._
-
-## Done
+      Done: the cause is dyld, not rustc: `dlopen` of the failing dylib says "mis-aligned
+      LINKEDIT string pool". Xcode 27.2's `strip -S` leaves the string table misaligned for
+      some lengths of the paths embedded in it, so the same crate fails in one target
+      directory and loads in another (reproduced: desktop/src-tauri/target fails, a scratch
+      target with the same sources and flags works; serde_derive happened to be fine). Both
+      workspaces now set `[profile.release.build-override] strip = false` (build-time code
+      only; shipped binaries stay stripped). Verified: desktop bundle builds; backend's
+      engine-free crates build in release (the full engine build was not rerun). Still to do
+      by hand: report it to Apple (Feedback Assistant) / rust-lang with the dlopen message.
 
 - [x] 🩵 **DESK-11** `P2` Image-generation tool in the chat
       The server ignores `tools`, so the app runs the tool loop: the system prompt describes
@@ -119,7 +128,7 @@ _No cards yet._
       prompt, Save / Copy (PNG to the clipboard) / Regenerate; progress with elapsed time and
       the image model's tier; Image button and `/image`; a settings switch. Live test: the
       chat model wrote an apple prompt, MOSS-Image made it in 134 s, comment followed, no
-      block leaked.
+      block leaked. (commit 2891d73)
 
 - [x] 🩵 **DESK-10** `P2` Speaker button: read answers aloud
       (Text-to-speech; DESK-9 covers speech-to-text.) A speaker toggle in the chat header

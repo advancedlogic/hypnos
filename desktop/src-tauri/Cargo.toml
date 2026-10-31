@@ -40,8 +40,9 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-# Proc macros and build scripts are not stripped: on macOS 27 with Xcode 27.2, the release
-# profile's default `strip = "debuginfo"` leaves proc-macro dylibs rustc cannot load (E0463
-# "can't find crate"). The app binary itself is still stripped.
+# Proc macros and build scripts are not stripped (BUG-5): with Xcode 27.2 on macOS 27, `strip`
+# can leave a dylib whose LINKEDIT string pool is misaligned, depending on the length of the paths
+# it embeds; dyld then refuses to load the proc macro and rustc reports E0463 "can't find crate".
+# Shipped binaries are still stripped.
 [profile.release.build-override]
 strip = false

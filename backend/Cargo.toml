@@ -93,3 +93,10 @@ opt-level = 1
 [profile.release]
 lto = "thin"
 codegen-units = 4
+
+# Proc macros and build scripts are not stripped (BUG-5): with Xcode 27.2 on macOS 27, `strip`
+# can leave a dylib whose LINKEDIT string pool is misaligned, depending on the length of the paths
+# it embeds; dyld then refuses to load the proc macro and rustc reports E0463 "can't find crate".
+# Shipped binaries are still stripped.
+[profile.release.build-override]
+strip = false
