@@ -31,3 +31,6 @@ backend/hypnos.toml
 
 # Python bytecode from the scripts (bench.py, soak.py)
 __pycache__/
+
+# macOS Finder metadata
+.DS_Store
