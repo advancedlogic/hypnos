@@ -1912,6 +1912,7 @@ dependencies = [
  "keyring",
  "libc",
  "reqwest 0.12.28",
+ "rodio",
  "serde",
  "serde_json",
  "symphonia",
@@ -3620,6 +3621,19 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rodio"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36e3ee0a5ca418bac59a15d5506e498ab138359edbb67257a6b8a3b93d411f39"
+dependencies = [
+ "cpal",
+ "dasp_sample",
+ "num-rational",
+ "symphonia",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

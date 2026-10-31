@@ -78,15 +78,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
 
-- [ ] 🩵 **DESK-10** `P2` Speaker button: read answers aloud
-      (Text-to-speech; DESK-9 covers speech-to-text.) A speaker toggle in the chat header
-      reads every new answer aloud as it streams: split into sentences, synthesize each with
-      `POST /v1/audio/speech` on the `text_to_speech` model (Kokoro), play them in order in
-      Rust (`rodio`) so playback starts after the first sentence. A play/stop button on each
-      answer reads it on demand; voice and speed in the settings; markdown and code blocks
-      are stripped or announced, not read symbol by symbol. Stop and new messages cancel
-      playback. After DESK-6.
-
 - [ ] 🩵 **DESK-11** `P2` Image-generation tool in the chat
       The server ignores `tools`, so the app runs the tool loop: the system prompt describes
       `generate_image(prompt, size)` and the reply format for calling it; when the chat
@@ -119,6 +110,24 @@ _No cards yet._
 
 ## Done
 
+- [x] 🩵 **DESK-10** `P2` Speaker button: read answers aloud
+      (Text-to-speech; DESK-9 covers speech-to-text.) A speaker toggle in the chat header
+      reads every new answer aloud as it streams: split into sentences, synthesize each with
+      `POST /v1/audio/speech` on the `text_to_speech` model (Kokoro), play them in order in
+      Rust (`rodio`) so playback starts after the first sentence. A play/stop button on each
+      answer reads it on demand; voice and speed in the settings; markdown and code blocks
+      are stripped or announced, not read symbol by symbol. Stop and new messages cancel
+      playback. After DESK-6.
+      Done: `src-tauri/src/tts.rs`: `speak(id, text, done, voice, speed)` cleans the
+      markdown (code blocks announced, links as text, URLs as "a link", bullets, emphasis
+      and table pipes dropped; an open fence silences the rest), sends each newly complete
+      sentence to a worker that synthesizes it on the routed `text_to_speech` model and
+      queues it on a rodio player thread; `speak_stop`; `speech-state` events. Chat: speaker
+      toggle in the header (only answers streamed in this window are read), Read aloud / Stop
+      reading per answer, stop on send and chat switch; voice (Kokoro ids) and speed in the
+      connection dialog. Live test synthesizes and decodes each sentence (speakers not used);
+      playback itself not yet heard.
+
 - [x] 🩵 **DESK-9** `P1` Microphone button: speak a message
       Mic button in the composer: press to record, press again (or release, hold mode) to
       stop. Record in Rust with `cpal` (16 kHz mono WAV; more reliable than getUserMedia across
@@ -134,6 +143,7 @@ _No cards yet._
       talk), strip with timer, level meter, Cancel/Done, Esc, and "send when done"
       (localStorage). `Info.plist` carries `NSMicrophoneUsageDescription` (checked in the
       built bundle). Ignored test records 1.5 s from the real microphone. Found BUG-5 on the way.
+      (commit ebc5173)
 
 - [x] 🩵 **DESK-8** `P2` Extract a URL's content into the chat, and download it
       URLs in the composer (or a "Read URL" action) are fetched by the Rust side (reqwest,

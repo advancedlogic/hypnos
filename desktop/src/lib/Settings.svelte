@@ -11,6 +11,11 @@
   let url = $state(initial.url);
   let apiKey = $state(initial.apiKey);
   let chosen = $state(initial.routes);
+  const prefs = api.voicePrefs();
+  let voice = $state(prefs.voice);
+  let speed = $state(prefs.speed);
+  // Kokoro voices (any id the server knows works; OpenAI names are mapped).
+  const VOICES = ['af_heart', 'af_bella', 'af_nova', 'af_sarah', 'am_adam', 'am_michael', 'bf_emma', 'bm_george'];
 
   // The jobs the app hands to a model besides the chat itself (DESK-7..11 use them).
   const JOBS = [
@@ -69,6 +74,7 @@
     saving = true;
     try {
       const picked = Object.fromEntries(Object.entries(chosen).filter(([, id]) => id));
+      api.setVoicePrefs({ voice: voice.trim(), speed: Number(speed) });
       await onsave({ url: normalized, apiKey: apiKey.trim() }, picked);
     } catch (err) {
       result = { text: `Could not save: ${err?.message ?? err}`, tone: 'text-rose-300' };
@@ -143,6 +149,21 @@
         </div>
       </div>
     {/if}
+
+    <div class="space-y-2 pt-1">
+      <h3 class="text-xs text-slate-400">Reading aloud</h3>
+      <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 items-center">
+        <label for="voice" class="text-xs text-slate-400">Voice</label>
+        <input id="voice" list="voices" bind:value={voice} placeholder="server default"
+          class="rounded-md bg-slate-950 border border-slate-700 px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+        <datalist id="voices">{#each VOICES as v (v)}<option value={v}></option>{/each}</datalist>
+        <label for="speed" class="text-xs text-slate-400">Speed</label>
+        <div class="flex items-center gap-2">
+          <input id="speed" type="range" min="0.7" max="1.5" step="0.05" bind:value={speed} class="flex-1 accent-indigo-500" />
+          <span class="w-10 text-right font-mono text-xs text-slate-400">{Number(speed).toFixed(2)}×</span>
+        </div>
+      </div>
+    </div>
 
     {#if result}
       <p class="text-xs {result.tone}">{result.text}</p>

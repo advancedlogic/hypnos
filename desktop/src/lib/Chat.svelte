@@ -27,6 +27,12 @@
   let micError = $state(null);
   let micAutoSend = $state(readFlag('hypnos.desktop.micAutoSend'));
   let micPressedAt = 0;
+  /** Speaker (DESK-10): read new answers aloud; which answer is playing now. */
+  let autoRead = $state(readFlag('hypnos.desktop.autoRead'));
+  let speakingId = $state(null);
+  let speechError = $state(null);
+  let speakTimer;
+  const streaming = new Set();
 
   let chat = $derived(store.current);
   let running = $derived(chat ? store.isRunning(chat.id) : false);
@@ -120,6 +126,54 @@
     }
   }
 
+  function answerId(i) {
+    return `${chat.id}:${i}`;
+  }
+
+  function toggleAutoRead() {
+    autoRead = !autoRead;
+    try {
+      localStorage.setItem('hypnos.desktop.autoRead', String(autoRead));
+    } catch {}
+    if (!autoRead) api.speakStop();
+  }
+
+  function readAloud(i) {
+    const id = answerId(i);
+    speechError = null;
+    if (speakingId === id) return api.speakStop();
+    api.speak(id, chat.messages[i].content, true, api.voicePrefs()).catch((e) => (speechError = api.errorMessage(e)));
+  }
+
+  // With the speaker on, the newest answer is read while it streams (a few calls a second) and
+  // once more when it is complete.
+  $effect(() => {
+    if (!autoRead || !chat) return;
+    const i = chat.messages.length - 1;
+    const last = chat.messages[i];
+    if (!last || last.role !== 'assistant' || !last.content) return;
+    const text = last.content;
+    const done = !last.pending;
+    const id = answerId(i);
+    // Only answers seen streaming in this window are read, never older ones of a chat reopened.
+    if (!done) streaming.add(id);
+    else if (!streaming.has(id)) return;
+    clearTimeout(speakTimer);
+    speakTimer = setTimeout(
+      () => {
+        api.speak(id, text, done, api.voicePrefs()).catch((e) => (speechError = api.errorMessage(e)));
+        if (done) streaming.delete(id);
+      },
+      done ? 0 : 250,
+    );
+  });
+
+  // A different chat stops the reading.
+  $effect(() => {
+    chat?.id;
+    return () => api.speakStop();
+  });
+
   function setAutoSend(on) {
     micAutoSend = on;
     try {
@@ -198,6 +252,12 @@
       micSeconds = e.payload.seconds;
     });
     const offLimit = listen('mic-limit', () => micFinish());
+    const offSpeech = listen('speech-state', (e) => {
+      const { id, playing, error } = e.payload;
+      if (playing) speakingId = id;
+      else if (speakingId === id) speakingId = null;
+      if (error) speechError = error;
+    });
     const onEscape = (e) => e.key === 'Escape' && mic === 'recording' && micDiscard();
     window.addEventListener('keydown', onEscape);
     let unlisten;
@@ -216,6 +276,7 @@
       unlisten?.();
       offLevel.then((u) => u());
       offLimit.then((u) => u());
+      offSpeech.then((u) => u());
       window.removeEventListener('keydown', onEscape);
       if (mic === 'recording') api.micCancel();
     };
@@ -250,6 +311,7 @@
     if (!canSend) return;
     const text = input;
     const attachments = ready.map((a) => $state.snapshot(a));
+    if (speakingId) api.speakStop();
     input = '';
     pending = [];
     stickToBottom = true;
@@ -309,7 +371,19 @@
         <span class="text-[11px] text-slate-500">{tierName(modelTier(chat.model))}</span>
       {/if}
       <button
-        class="ml-auto text-xs px-2 py-1 rounded-md hover:bg-slate-800 {chat.system ? 'text-indigo-300' : 'text-slate-400'}"
+        class="ml-auto p-1.5 rounded-md hover:bg-slate-800 {autoRead ? 'text-indigo-300' : 'text-slate-400'}"
+        onclick={toggleAutoRead}
+        title={autoRead ? 'Stop reading answers aloud' : 'Read answers aloud'}
+        aria-label="Read answers aloud"
+        aria-pressed={autoRead}
+      >
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 5L6 9H3v6h3l5 4V5z" />
+          {#if autoRead}<path d="M15.5 8.5a5 5 0 010 7M18.5 5.5a9 9 0 010 13" />{:else}<path d="M17 9l4 6M21 9l-4 6" />{/if}
+        </svg>
+      </button>
+      <button
+        class="text-xs px-2 py-1 rounded-md hover:bg-slate-800 {chat.system ? 'text-indigo-300' : 'text-slate-400'}"
         onclick={() => (showSystem = !showSystem)}
         aria-expanded={showSystem}
       >
@@ -385,10 +459,14 @@
                 <div class="mt-1.5 flex items-center gap-3 text-[11px] text-slate-500">
                   {#if message.stopped}<span>Stopped</span>{/if}
                   {#if message.note}<span class="text-amber-300/80">{message.note}</span>{/if}
+                  {#if speakingId === answerId(i)}<span class="text-indigo-300">Reading aloud…</span>{/if}
                   {#if message.telemetry}<span>{telemetrySummary(message.telemetry, message.usage)}</span>{/if}
                   <span class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                     {#if message.content}
                       <button class="hover:text-slate-200" onclick={() => copy(message.content)}>Copy</button>
+                      <button class="hover:text-slate-200" onclick={() => readAloud(i)}>
+                        {speakingId === answerId(i) ? 'Stop reading' : 'Read aloud'}
+                      </button>
                     {/if}
                     {#if i === chat.messages.length - 1}
                       <button class="hover:text-slate-200 disabled:opacity-40" onclick={() => store.regenerate(chat)} disabled={serverState !== 'ready'}>
@@ -408,6 +486,12 @@
   <div class="shrink-0 px-4 pb-4">
     {#if pending.length}
       <div class="max-w-3xl mx-auto mb-2"><Attachments items={pending} onremove={removePending} /></div>
+    {/if}
+    {#if speechError}
+      <div class="max-w-3xl mx-auto mb-2 flex items-center gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+        <span class="flex-1">{speechError}</span>
+        <button class="text-slate-400 hover:text-slate-200" onclick={() => (speechError = null)} aria-label="Dismiss">×</button>
+      </div>
     {/if}
     {#if mic !== 'idle' || micError}
       <div class="max-w-3xl mx-auto mb-2 flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs">

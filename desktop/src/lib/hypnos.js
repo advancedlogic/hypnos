@@ -78,3 +78,29 @@ export const micStop = (chatModel) => invoke('mic_stop', { chatModel: chatModel 
 
 /** Stops and discards the recording. */
 export const micCancel = () => invoke('mic_cancel');
+
+/**
+ * Reads an answer aloud (src-tauri/src/tts.rs): call with the text so far while it streams and
+ * with `done` at the end; another `id` replaces the current answer. `speech-state` events carry
+ * `{ id, playing, error }`.
+ */
+export const speak = (id, text, done, { voice, speed } = {}) =>
+  invoke('speak', { id, text, done, voice: voice || null, speed: speed ?? null });
+
+export const speakStop = () => invoke('speak_stop');
+
+/** Voice and speed for reading aloud, kept on this machine. */
+export function voicePrefs() {
+  try {
+    return { voice: localStorage.getItem('hypnos.desktop.voice') || '', speed: Number(localStorage.getItem('hypnos.desktop.speed')) || 1 };
+  } catch {
+    return { voice: '', speed: 1 };
+  }
+}
+
+export function setVoicePrefs({ voice, speed }) {
+  try {
+    localStorage.setItem('hypnos.desktop.voice', voice ?? '');
+    localStorage.setItem('hypnos.desktop.speed', String(speed ?? 1));
+  } catch {}
+}

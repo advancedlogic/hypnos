@@ -2,6 +2,7 @@ mod attachments;
 mod hypnos;
 mod local_server;
 mod mic;
+mod tts;
 mod web;
 
 use tauri::Manager;
@@ -54,6 +55,7 @@ pub fn run() {
             app.manage(hypnos::Hypnos::default());
             app.manage(local_server::LocalServer::default());
             app.manage(mic::Mic::default());
+            app.manage(tts::Speaker::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -76,6 +78,8 @@ pub fn run() {
             mic::mic_start,
             mic::mic_stop,
             mic::mic_cancel,
+            tts::speak,
+            tts::speak_stop,
             local_server::local_server_detect,
             local_server::local_server_start,
             local_server::local_server_stop,

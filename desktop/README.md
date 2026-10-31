@@ -37,6 +37,11 @@ app's commands.
   the composer for review, or is sent right away with "send when done" (remembered). Recording
   stops by itself after 5 minutes. macOS asks for microphone access the first time; if it was
   refused, allow Hypnos in System Settings > Privacy & Security > Microphone.
+- **Speaker** (the chat header): with it on, each new answer is read aloud as it streams,
+  sentence by sentence, on the text-to-speech model (Kokoro); playback starts after the first
+  sentence. "Read aloud" under any answer reads it on demand; sending a message, switching
+  chats or "Stop reading" stops it. Code blocks are announced ("Code block.") rather than
+  read, links are read as their text. Voice and speed are in the connection dialog.
 - **Under each answer:** decode speed, time to first token, tokens, and the tier the model was
   loaded from when it was not on the GPU already.
 - **Stats panel** (the right side, toggled with the header button or Cmd/Ctrl+.): server version
@@ -144,6 +149,7 @@ desktop/
     ├── src/attachments.rs    # image resize, docling, audio decode (symphonia) + transcription
     ├── src/web.rs            # fetch a URL, convert it, save markdown or the original
     ├── src/mic.rs            # record with cpal on its own thread, then transcribe
+    ├── src/tts.rs            # markdown to speech text, sentence queue, rodio playback
     ├── Info.plist            # macOS: NSMicrophoneUsageDescription
     ├── src/local_server.rs   # find, start, stop and log a hypnos process (health via hypnos-client)
     ├── capabilities/         # what the window may call: core + store, no HTTP
@@ -157,7 +163,8 @@ the errors through the commands; `HYPNOS_TEST_URL=... HYPNOS_TEST_FILES=<dir wit
 one-page sample.pdf containing "pelican"> cargo test attachments -- --ignored` prepares real
 attachments and asks a vision model about them; `cargo test web -- --ignored` (same URL, needs
 the network) reads example.com and a PDF and saves both; `cargo test mic -- --ignored` records
-1.5 s from the default microphone; the local-server test starts one itself: `HYPNOS_TEST_BINARY=../../backend/target/release/hypnos HYPNOS_TEST_CONFIG=<config with
+1.5 s from the default microphone; `cargo test tts -- --ignored` synthesizes and decodes speech
+(without playing it); the local-server test starts one itself: `HYPNOS_TEST_BINARY=../../backend/target/release/hypnos HYPNOS_TEST_CONFIG=<config with
 one small model> cargo test -- --ignored` (it uses port 9997).
 
 To regenerate the icons after changing `src-tauri/icons/app-icon.png`:
