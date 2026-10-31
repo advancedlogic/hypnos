@@ -597,3 +597,33 @@ async fn models_catalog() {
     }
     assert!(!vision.iter().any(|i| i == "lfm3:1.7b"));
 }
+
+#[tokio::test]
+async fn advise() {
+    const GIB: u64 = 1 << 30;
+    let server = MockServer::start();
+    let c = server.client();
+    let advice = c
+        .advise(
+            &AdvisorRequest::new(&["chat", "voice"])
+                .vram_bytes(24 * GIB)
+                .ram_bytes(64 * GIB),
+        )
+        .await
+        .unwrap();
+    assert_eq!(advice.machine.vram_bytes, 24 * GIB);
+    assert_eq!(advice.machine.ram_bytes, 64 * GIB);
+    assert!(!advice.machine.unified_memory);
+    assert!(advice.interactive_coresident);
+    assert!(!advice.specs.is_empty());
+    assert!(advice.config.contains("[[models]]"));
+    assert!(advice.models.iter().any(|m| m.id == TTS));
+
+    let small = AdvisorRequest::new(&["images"])
+        .vram_bytes(2 * GIB)
+        .ram_bytes(8 * GIB);
+    let err = c.advise(&small).await.unwrap_err();
+    assert!(matches!(err, Error::BadRequest(_)), "{err:?}");
+    let err = c.advise(&AdvisorRequest::new(&[])).await.unwrap_err();
+    assert!(matches!(err, Error::BadRequest(_)), "{err:?}");
+}

@@ -23,9 +23,9 @@ mod streams;
 pub mod types;
 
 pub use client::{
-    ChatRequest, Client, ClientBuilder, DocumentRequest, DocumentSource, EntitiesRequest,
-    ImageRequest, Input, LogQuery, SpeechRequest, TranscriptionRequest, DEFAULT_BASE_URL,
-    DEFAULT_TIMEOUT,
+    AdvisorRequest, ChatRequest, Client, ClientBuilder, DocumentRequest, DocumentSource,
+    EntitiesRequest, ImageRequest, Input, LogQuery, SpeechRequest, TranscriptionRequest,
+    DEFAULT_BASE_URL, DEFAULT_TIMEOUT,
 };
 pub use error::{ApiError, Error, Result};
 pub use retry::RetryPolicy;

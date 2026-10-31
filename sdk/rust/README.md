@@ -45,6 +45,7 @@ Clones share the connection pool and the bound.
 | `entities` | `POST /v1/entities` |
 | `models`, `enable_model`, `disable_model` | `/v1/models`, `/v1/models/{id}/enable\|disable` |
 | `models_catalog` | `/v1/models/catalog` (optional `modality`) |
+| `advise` | `POST /v1/advisor` (`AdvisorRequest::new(&[needs])`, optional `.vram_bytes()`, `.ram_bytes()`, `.unified_memory()`) |
 | `add_model`, `replace_model`, `remove_model` | `POST /v1/models`, `PUT` / `DELETE /v1/models/{id}` (`ModelSource::Catalog` or `ModelSource::Config`, optional `drain_secs`; admin key) |
 | `set_moe_offload` | `POST /v1/models/{id}/moe-offload` |
 | `memory_status`, `set_tier` | `/v1/memory/status`, `/v1/memory/tier` |

@@ -34,6 +34,7 @@ console.log(reply.hypnos_telemetry?.tier_switch_latency_ms);
 | `entities` | `POST /v1/entities` |
 | `models`, `enableModel`, `disableModel` | `/v1/models`, `/v1/models/{id}/enable\|disable` |
 | `modelsCatalog` | `/v1/models/catalog` (optional `modality`) |
+| `advise` | `POST /v1/advisor` (`{ needs }`, optional `vramBytes`, `ramBytes`, `unifiedMemory`) |
 | `addModel`, `replaceModel`, `removeModel` | `POST /v1/models`, `PUT` / `DELETE /v1/models/{id}` (`{ catalog }` or `{ config }`, optional `drainSecs`; admin key) |
 | `setMoeOffload` | `POST /v1/models/{id}/moe-offload` |
 | `memoryStatus`, `setTier` | `/v1/memory/status`, `/v1/memory/tier` |

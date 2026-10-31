@@ -43,6 +43,18 @@ test("models catalog", async () => {
   assert.ok(!vision.has("lfm3:1.7b"));
 });
 
+test("advise", async () => {
+  const GIB = 2 ** 30;
+  const advice = await client.advise({ needs: ["chat", "voice"], vramBytes: 24 * GIB, ramBytes: 64 * GIB });
+  assert.deepEqual(advice.machine, { vram_bytes: 24 * GIB, ram_bytes: 64 * GIB, unified_memory: false });
+  assert.equal(advice.interactive_coresident, true);
+  assert.ok(advice.specs.length > 0);
+  assert.ok(advice.config.includes("[[models]]"));
+  assert.ok(advice.models.some((m) => m.id === TTS));
+  await assert.rejects(client.advise({ needs: ["images"], vramBytes: 2 * GIB, ramBytes: 8 * GIB }), BadRequestError);
+  await assert.rejects(client.advise({ needs: [] }), BadRequestError);
+});
+
 test("health, ready, models, metrics", async () => {
   assert.equal((await client.health()).status, "ok");
   assert.ok(await client.isReady());

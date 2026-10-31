@@ -47,6 +47,26 @@ def test_models_catalog(client: Client) -> None:
     assert "lfm3:1.7b" not in vision
 
 
+GIB = 1 << 30
+
+
+def test_advise(client: Client) -> None:
+    advice = client.advise(["chat", "voice"], vram_bytes=24 * GIB, ram_bytes=64 * GIB)
+    assert advice["machine"] == {
+        "vram_bytes": 24 * GIB,
+        "ram_bytes": 64 * GIB,
+        "unified_memory": False,
+    }
+    assert advice["interactive_coresident"] is True
+    assert advice["specs"]
+    assert "[[models]]" in advice["config"]
+    assert TTS in {m["id"] for m in advice["models"]}
+    with pytest.raises(BadRequestError):
+        client.advise(["images"], vram_bytes=2 * GIB, ram_bytes=8 * GIB)
+    with pytest.raises(BadRequestError):
+        client.advise([])
+
+
 def test_chat(client: Client) -> None:
     reply = client.chat(CHAT, USER, max_tokens=20, temperature=0.2, seed=1, num_ctx=4096)
     assert reply["choices"][0]["message"]["content"] == "echo: hello there"

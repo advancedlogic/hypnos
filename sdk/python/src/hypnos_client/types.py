@@ -504,6 +504,77 @@ class ModelCatalog(TypedDict):
     data: List[CatalogEntry]
 
 
+AdvisorNeed = Literal[
+    "chat",
+    "vision",
+    "voice",
+    "transcription",
+    "speech",
+    "embeddings",
+    "images",
+    "documents",
+    "entities",
+]
+ModelPriority = Literal["realtime_pinned", "high", "low"]
+
+
+class AdvisorMachine(TypedDict):
+    """The machine the advice is for (``POST /v1/advisor``)."""
+
+    vram_bytes: int
+    ram_bytes: int
+    unified_memory: bool
+
+
+class AdvisorBudgets(TypedDict):
+    """The tier budgets the server would derive on that machine."""
+
+    tier1_bytes: int
+    tier2_bytes: int
+    unified_memory: bool
+
+
+class AdvisedModel(TypedDict):
+    """One model of the recommended lineup."""
+
+    id: str
+    name: str
+    quant: str
+    #: The needs this model is the lineup's choice for.
+    serves: List[AdvisorNeed]
+    weights_bytes: int
+    resident_bytes: int
+    runs_on_cpu: bool
+    gpu_layers: int
+    num_layers: int
+    cpu_expert_layers: int
+    context_len: int
+    slots: int
+    initial_tier: MemoryTier
+    priority: ModelPriority
+    keep_warm_in_ram: bool
+    moe_offload: MoeOffload
+    #: Rough load times (3 GB/s).
+    load_secs_cold: float
+    load_secs_warm: float
+
+
+class Advice(TypedDict):
+    """``POST /v1/advisor``; see docs/api.md section 6."""
+
+    machine: AdvisorMachine
+    budgets: AdvisorBudgets
+    models: List[AdvisedModel]
+    #: The interactive models (chat, vision, speech, embeddings) fit in Tier 1 together.
+    interactive_coresident: bool
+    interactive_bytes: int
+    warnings: List[str]
+    #: ``"<id>:<quant>"`` for ``./run.sh models`` and ``add_model(catalog=...)``.
+    specs: List[str]
+    #: A complete config file for the lineup.
+    config: str
+
+
 class TierMove(TypedDict):
     model: str
     placement: Placement

@@ -29,6 +29,8 @@ from .errors import APIConnectionError, APITimeoutError, HypnosError
 from .retry import RetryPolicy
 from .streams import ChatStream, DocumentStream, SpeechStream
 from .types import (
+    Advice,
+    AdvisorNeed,
     ChatCompletion,
     ChatMessage,
     Document,
@@ -221,6 +223,36 @@ class Client:
         (primary or additional). :class:`NotFoundError` when the server has no catalog file."""
         params = {"modality": modality}
         return cast(ModelCatalog, self._json("GET", "/v1/models/catalog", params=params))
+
+    def advise(
+        self,
+        needs: Sequence[AdvisorNeed],
+        *,
+        vram_bytes: Optional[int] = None,
+        ram_bytes: Optional[int] = None,
+        unified_memory: Optional[bool] = None,
+    ) -> Advice:
+        """``POST /v1/advisor``: recommends a lineup from the catalog for a machine and a set of
+        needs (``"chat"``, ``"vision"``, ``"voice"``, ``"transcription"``, ``"speech"``,
+        ``"embeddings"``, ``"images"``, ``"documents"``, ``"entities"``): models and variants,
+        context, slots, tier and priority, warnings, ``specs`` and a complete ``config`` file.
+
+        ``vram_bytes``, ``ram_bytes`` and ``unified_memory`` describe the machine; each one left
+        out is the server's own. :class:`BadRequestError` when no lineup fits or ``needs`` is
+        empty, :class:`NotFoundError` without a catalog. A read-only query, retried like any
+        other request.
+        """
+        body = {
+            "needs": list(needs),
+            **drop_none(
+                {
+                    "vram_bytes": vram_bytes,
+                    "ram_bytes": ram_bytes,
+                    "unified_memory": unified_memory,
+                }
+            ),
+        }
+        return cast(Advice, self._json("POST", "/v1/advisor", json=body))
 
     @staticmethod
     def _model_source(catalog: Optional[str], config: Optional[str]) -> Dict[str, Any]:

@@ -10,6 +10,8 @@ import {
 import { RetryPolicy } from "./retry.js";
 import { ChatStream, DocumentStream, SpeechStream, speechTelemetry } from "./streams.js";
 import type {
+  Advice,
+  AdvisorNeed,
   ChatCompletion,
   ChatMessage,
   Document,
@@ -135,6 +137,17 @@ export interface DocumentOptions extends CallOptions {
 export interface CatalogQuery extends CallOptions {
   /** Only the entries serving this modality (primary or additional). */
   modality?: Modality;
+}
+
+export interface AdviseOptions extends CallOptions {
+  /** One or more of `chat`, `vision`, `voice`, `transcription`, `speech`, `embeddings`, `images`, `documents`, `entities`. */
+  needs: AdvisorNeed[];
+  /** The machine's VRAM; left out, the server's own (ignored on unified memory). */
+  vramBytes?: number;
+  /** The machine's RAM; left out, the server's own. */
+  ramBytes?: number;
+  /** Unified memory; left out, the server's own unless `vramBytes` is given. */
+  unifiedMemory?: boolean;
 }
 
 /**
@@ -488,6 +501,24 @@ export class Client {
   modelsCatalog(query: CatalogQuery = {}): Promise<ModelCatalog> {
     const { signal, ...q } = query;
     return this.json("GET", "/v1/models/catalog", { query: q, signal });
+  }
+
+  /**
+   * `POST /v1/advisor`: recommends a lineup from the catalog for a machine and a set of needs:
+   * models and variants, context, slots, tier and priority, warnings, `specs` and a complete
+   * `config` file. `BadRequestError` when no lineup fits or `needs` is empty, `NotFoundError`
+   * without a catalog. A read-only query, retried like any other request.
+   */
+  advise(options: AdviseOptions): Promise<Advice> {
+    const json = {
+      needs: options.needs,
+      ...dropUndefined({
+        vram_bytes: options.vramBytes,
+        ram_bytes: options.ramBytes,
+        unified_memory: options.unifiedMemory,
+      }),
+    };
+    return this.json("POST", "/v1/advisor", { json, signal: options.signal });
   }
 
   private static modelSource(source: ModelSource): { catalog: string } | { config: string } {

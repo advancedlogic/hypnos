@@ -390,6 +390,71 @@ export interface ModelCatalog {
   data: CatalogEntry[];
 }
 
+export type AdvisorNeed =
+  | "chat"
+  | "vision"
+  | "voice"
+  | "transcription"
+  | "speech"
+  | "embeddings"
+  | "images"
+  | "documents"
+  | "entities";
+export type ModelPriority = "realtime_pinned" | "high" | "low";
+
+/** The machine the advice is for (`POST /v1/advisor`). */
+export interface AdvisorMachine {
+  vram_bytes: number;
+  ram_bytes: number;
+  unified_memory: boolean;
+}
+
+/** The tier budgets the server would derive on that machine. */
+export interface AdvisorBudgets {
+  tier1_bytes: number;
+  tier2_bytes: number;
+  unified_memory: boolean;
+}
+
+/** One model of the recommended lineup. */
+export interface AdvisedModel {
+  id: string;
+  name: string;
+  quant: string;
+  /** The needs this model is the lineup's choice for. */
+  serves: AdvisorNeed[];
+  weights_bytes: number;
+  resident_bytes: number;
+  runs_on_cpu: boolean;
+  gpu_layers: number;
+  num_layers: number;
+  cpu_expert_layers: number;
+  context_len: number;
+  slots: number;
+  initial_tier: MemoryTier;
+  priority: ModelPriority;
+  keep_warm_in_ram: boolean;
+  moe_offload: MoeOffload;
+  /** Rough load times (3 GB/s). */
+  load_secs_cold: number;
+  load_secs_warm: number;
+}
+
+/** `POST /v1/advisor`; see docs/api.md section 6. */
+export interface Advice {
+  machine: AdvisorMachine;
+  budgets: AdvisorBudgets;
+  models: AdvisedModel[];
+  /** The interactive models (chat, vision, speech, embeddings) fit in Tier 1 together. */
+  interactive_coresident: boolean;
+  interactive_bytes: number;
+  warnings: string[];
+  /** `"<id>:<quant>"` for `./run.sh models` and `addModel({ catalog })`. */
+  specs: string[];
+  /** A complete config file for the lineup. */
+  config: string;
+}
+
 export interface TierMove {
   model: string;
   placement: Placement;

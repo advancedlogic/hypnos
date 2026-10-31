@@ -272,6 +272,44 @@ impl ImageRequest {
     }
 }
 
+/// `POST /v1/advisor`: the needs and the machine to recommend a lineup for.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct AdvisorRequest {
+    /// One or more of `chat`, `vision`, `voice`, `transcription`, `speech`, `embeddings`,
+    /// `images`, `documents`, `entities`.
+    pub needs: Vec<String>,
+    /// The machine's VRAM; `None` is the server's own (ignored on unified memory).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vram_bytes: Option<u64>,
+    /// The machine's RAM; `None` is the server's own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ram_bytes: Option<u64>,
+    /// `None` is the server's own unless `vram_bytes` is given.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unified_memory: Option<bool>,
+}
+
+impl AdvisorRequest {
+    pub fn new(needs: &[&str]) -> Self {
+        Self {
+            needs: needs.iter().map(|s| s.to_string()).collect(),
+            ..Self::default()
+        }
+    }
+    pub fn vram_bytes(mut self, bytes: u64) -> Self {
+        self.vram_bytes = Some(bytes);
+        self
+    }
+    pub fn ram_bytes(mut self, bytes: u64) -> Self {
+        self.ram_bytes = Some(bytes);
+        self
+    }
+    pub fn unified_memory(mut self, unified: bool) -> Self {
+        self.unified_memory = Some(unified);
+        self
+    }
+}
+
 /// `POST /v1/entities`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EntitiesRequest {
@@ -767,6 +805,15 @@ impl Client {
             }
         })
         .await
+    }
+
+    /// `POST /v1/advisor`: recommends a lineup from the catalog for a machine and a set of
+    /// needs: models and variants, context, slots, tier and priority, warnings, `specs` and a
+    /// complete `config` file. [`Error::BadRequest`] when no lineup fits or `needs` is empty,
+    /// [`Error::NotFound`] without a catalog. A read-only query, retried like any other request.
+    pub async fn advise(&self, req: &AdvisorRequest) -> Result<Advice> {
+        let body = serde_json::to_value(req).map_err(|e| Error::InvalidArgument(e.to_string()))?;
+        self.json(None, self.post_json("/v1/advisor", &body)).await
     }
 
     /// `POST /v1/models`: adds a model to the running pool. Its files must already be on disk.

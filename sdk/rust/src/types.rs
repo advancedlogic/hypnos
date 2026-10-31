@@ -1026,6 +1026,89 @@ pub struct ModelCatalog {
     pub extra: Extra,
 }
 
+/// The machine an [`Advice`] is for.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AdvisorMachine {
+    pub vram_bytes: u64,
+    pub ram_bytes: u64,
+    pub unified_memory: bool,
+}
+
+/// The tier budgets the server would derive on that machine.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AdvisorBudgets {
+    pub tier1_bytes: u64,
+    pub tier2_bytes: u64,
+    pub unified_memory: bool,
+}
+
+/// One model of the recommended lineup.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdvisedModel {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub quant: String,
+    /// The needs this model is the lineup's choice for.
+    #[serde(default)]
+    pub serves: Vec<String>,
+    #[serde(default)]
+    pub weights_bytes: u64,
+    #[serde(default)]
+    pub resident_bytes: u64,
+    #[serde(default)]
+    pub runs_on_cpu: bool,
+    #[serde(default)]
+    pub gpu_layers: u32,
+    #[serde(default)]
+    pub num_layers: u32,
+    #[serde(default)]
+    pub cpu_expert_layers: u32,
+    #[serde(default)]
+    pub context_len: u32,
+    #[serde(default)]
+    pub slots: u32,
+    pub initial_tier: MemoryTier,
+    /// `realtime_pinned`, `high` or `low`.
+    #[serde(default)]
+    pub priority: String,
+    #[serde(default)]
+    pub keep_warm_in_ram: bool,
+    pub moe_offload: MoeOffload,
+    /// Rough load times (3 GB/s).
+    #[serde(default)]
+    pub load_secs_cold: f64,
+    #[serde(default)]
+    pub load_secs_warm: f64,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+/// `POST /v1/advisor`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Advice {
+    pub machine: AdvisorMachine,
+    pub budgets: AdvisorBudgets,
+    #[serde(default)]
+    pub models: Vec<AdvisedModel>,
+    /// The interactive models (chat, vision, speech, embeddings) fit in Tier 1 together.
+    #[serde(default)]
+    pub interactive_coresident: bool,
+    #[serde(default)]
+    pub interactive_bytes: u64,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    /// `<id>:<quant>` for `./run.sh models` and [`ModelSource::Catalog`].
+    #[serde(default)]
+    pub specs: Vec<String>,
+    /// A complete config file for the lineup.
+    #[serde(default)]
+    pub config: String,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
 /// `POST /v1/models/{id}/enable|disable`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelSwitch {
