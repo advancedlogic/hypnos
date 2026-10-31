@@ -628,6 +628,8 @@ struct Active {
     channel_header_pending: bool,
     /// Tools are declared: tool-call markers are output, `<|tool_response>` ends the answer.
     tool_markers: bool,
+    /// The SWA checkpoint was taken one position before the prompt end (see `step`).
+    checkpointed: bool,
     ttft_ms: Option<f64>,
     /// Text the client has not accepted yet (its channel was full).
     unsent: String,
@@ -1164,6 +1166,7 @@ impl<'m> Engine<'m> {
             in_channel: false,
             channel_header_pending: false,
             tool_markers,
+            checkpointed: false,
             ttft_ms: None,
             unsent: String::new(),
             finish: None,
@@ -1400,6 +1403,27 @@ impl<'m> Engine<'m> {
                 }
             }
         }
+        // With sliding-window attention the checkpoint is taken one position before the prompt
+        // end: a repeated prompt (Regenerate) must re-evaluate its last token for the logits, so
+        // that is where a later request can resume. The prompt stops short of its last token
+        // here, the checkpoint is taken, and the last token goes into the next step.
+        let checkpoint_before_last =
+            self.cfg.prefix_cache && self.cfg.arch.sliding_window_len.is_some();
+        if checkpoint_before_last {
+            for i in 0..self.active.len() {
+                let a = &self.active[i];
+                if a.finish.is_none()
+                    && a.decoding.is_none()
+                    && !a.checkpointed
+                    && !a.pending.is_empty()
+                    && a.sent + 1 == a.pending.len()
+                {
+                    let slot = a.slot;
+                    self.checkpoint_slot(slot, 1);
+                    self.active[i].checkpointed = true;
+                }
+            }
+        }
         for a in &mut self.active {
             if a.finish.is_some() || a.decoding.is_some() || budget == 0 {
                 continue;
@@ -1408,7 +1432,10 @@ impl<'m> Engine<'m> {
             if remaining == 0 {
                 continue;
             }
-            let take = remaining.min(budget);
+            let mut take = remaining.min(budget);
+            if checkpoint_before_last && !a.checkpointed && remaining > 1 {
+                take = take.min(remaining - 1);
+            }
             let slot = &self.slots.slots[a.slot];
             for i in 0..take {
                 let last = a.sent + i + 1 == a.pending.len();
@@ -1474,32 +1501,40 @@ impl<'m> Engine<'m> {
         self.drain_queues(mtmd);
     }
 
-    /// The prompt is fully in the KV cache: snapshot the sliding-window state and start timing
-    /// the decode phase.
+    /// The prompt is fully in the KV cache: start timing the decode phase. A text prompt was
+    /// checkpointed one position before its end (`step`); a multimodal one, evaluated by libmtmd
+    /// in one go, is checkpointed here at its end.
     fn finish_prefill(&mut self, a: &mut Active) {
-        let slot = &mut self.slots.slots[a.slot];
-        // Sliding-window layers forget old positions as generation proceeds; snapshot them at the
-        // prompt end so the next turn can resume from here even if it diverges inside the reply.
-        if self.cfg.prefix_cache && self.cfg.arch.sliding_window_len.is_some() {
-            match self
-                .ctx
-                .state_seq_get(slot.seq_id, LlamaStateSeqFlags::PARTIAL_ONLY)
-            {
-                Ok(state) => {
-                    slot.checkpoint = Some(CheckpointAt {
-                        keys: slot.keys.len(),
-                        positions: slot.n_past,
-                    });
-                    slot.checkpoint_state = Some(state);
-                }
-                Err(e) => {
-                    warn!(model = %self.cfg.id, slot = a.slot, error = ?e, "could not checkpoint slot state");
-                    slot.checkpoint = None;
-                    slot.checkpoint_state = None;
-                }
-            }
+        if !a.checkpointed && self.cfg.prefix_cache && self.cfg.arch.sliding_window_len.is_some() {
+            self.checkpoint_slot(a.slot, 0);
+            a.checkpointed = true;
         }
         a.prefill_done = Some(Instant::now());
+    }
+
+    /// Snapshots the sliding-window state of slot `i`, whose KV cache holds its keys but the last
+    /// `keys_ahead` (not evaluated yet). Sliding-window layers forget old positions as generation
+    /// proceeds; the snapshot lets a later request resume from here even if it diverges inside
+    /// the reply.
+    fn checkpoint_slot(&mut self, i: usize, keys_ahead: usize) {
+        let slot = &mut self.slots.slots[i];
+        match self
+            .ctx
+            .state_seq_get(slot.seq_id, LlamaStateSeqFlags::PARTIAL_ONLY)
+        {
+            Ok(state) => {
+                slot.checkpoint = Some(CheckpointAt {
+                    keys: slot.keys.len().saturating_sub(keys_ahead),
+                    positions: slot.n_past,
+                });
+                slot.checkpoint_state = Some(state);
+            }
+            Err(e) => {
+                warn!(model = %self.cfg.id, slot = i, error = ?e, "could not checkpoint slot state");
+                slot.checkpoint = None;
+                slot.checkpoint_state = None;
+            }
+        }
     }
 
     /// Handles one sampled token: stop conditions, the Gemma thinking channel, text decoding.
@@ -1746,6 +1781,7 @@ impl Active {
             in_channel: false,
             channel_header_pending: false,
             tool_markers: false,
+            checkpointed: false,
             ttft_ms: None,
             unsent: String::new(),
             finish: Some("stop"),
@@ -1883,6 +1919,43 @@ mod tests {
         assert_eq!(
             plan_cache(&slot, &extension, true, Some(1024)),
             CachePlan::Keep(reuse(6, 6))
+        );
+    }
+
+    #[test]
+    fn a_repeated_prompt_resumes_from_the_checkpoint_before_its_last_token() {
+        // Prompt 1..=4 was checkpointed after 3 positions (before its last token), then the model
+        // generated 5, 6. Regenerate sends 1..=4 again: only its last token is evaluated.
+        let mut slot = slot_with(tok(&[1, 2, 3, 4, 5, 6]));
+        slot.checkpoint = Some(CheckpointAt {
+            keys: 3,
+            positions: 3,
+        });
+        assert_eq!(
+            plan_cache(&slot, &tok(&[1, 2, 3, 4]), true, Some(1024)),
+            CachePlan::Keep(Reuse {
+                keys: 3,
+                positions: 3,
+                restore_checkpoint: true
+            })
+        );
+        // The next turn (the reply re-tokenised differently) resumes there too.
+        assert_eq!(
+            plan_cache(&slot, &tok(&[1, 2, 3, 4, 9, 7]), true, Some(1024)),
+            CachePlan::Keep(Reuse {
+                keys: 3,
+                positions: 3,
+                restore_checkpoint: true
+            })
+        );
+        // A checkpoint at the prompt end (the old placement) could not serve the repeat.
+        slot.checkpoint = Some(CheckpointAt {
+            keys: 4,
+            positions: 4,
+        });
+        assert_eq!(
+            plan_cache(&slot, &tok(&[1, 2, 3, 4]), true, Some(1024)),
+            CachePlan::Clear
         );
     }
 

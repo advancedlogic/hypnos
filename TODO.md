@@ -89,7 +89,13 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       `/v1/memory/status` and telemetry. Gemma 4 26B: experts ~12.0 of ~13.6 GiB, ~0.8 GB read
       per decoded token. Discrete GPUs only.
 
-- [ ] 🟧 **PERF-8** `P2` A repeated prompt (Regenerate) is prefilled in full
+## In Progress
+
+_No cards yet._
+
+## Done
+
+- [x] 🟧 **PERF-8** `P2` A repeated prompt (Regenerate) is prefilled in full
       Sending a byte-identical prompt that a slot has just answered gets `cached_tokens: 0` and a
       full prefill (1.2 s for 4.7k tokens on the 26B, Metal), with or without a swap; the next
       turn of the same conversation reuses fine. The engine must re-evaluate the last prompt token
@@ -98,12 +104,13 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       earlier (or keep the last prompt token's logits), so Regenerate in the playground and the
       desktop costs one token of prefill. Found while measuring MEM-4
       (docs/bench/mem4-baseline-2026-10-30.md).
-
-## In Progress
-
-_No cards yet._
-
-## Done
+      Done: with sliding-window attention the text prefill now stops one token before the prompt
+      end, takes the SWA checkpoint there (`checkpoint_slot`), and evaluates the last token in the
+      next step; a multimodal prompt (libmtmd, one piece) is still checkpointed at its end.
+      `plan_cache` is unchanged: a repeat reuses up to `len - 1` and restores the checkpoint.
+      Measured on Metal (26B, 4.7k-token prompt): repeat 1,155 ms prefill (0 cached) -> 11 ms
+      (4,731 cached), TTFT 59 ms, identical answer at temperature 0; the next turn and MEM-4
+      unchanged. Unit test `a_repeated_prompt_resumes_from_the_checkpoint_before_its_last_token`.
 
 - [x] 🟫 **MEM-4** `P2` Keep each slot's KV state across a demotion
       Design in docs/pagination.md. On demotion the worker saves every slot's full sequence
@@ -132,6 +139,7 @@ _No cards yet._
       4.71 s -> 1.01 / 1.01 / 1.06 s at 1.7k / 6.3k / 12.6k tokens, restore 2-5 ms; identical
       answer at temperature 0; off and a too-small cap fall back to the full prefill. Docs: api.md
       section 14, operating.md, example configs; SDKs `kv_park` / `set_kv_park`.
+      (commit f5b891a)
 
 - [x] 🩵 **DESK-13** `P2` Request log viewer, as in the playground
       A "Logs" view (a tab beside the stats panel, or its own window) over the server's request

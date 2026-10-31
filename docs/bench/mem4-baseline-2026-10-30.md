@@ -40,4 +40,5 @@ identical to the warm answer.
 
 Found on the way (not MEM-4): a byte-identical repeat of a prompt the slot has just answered
 (Regenerate) is prefilled in full even without a swap (cached 0, 1.2 s for 4.7k tokens), in
-memory as after a restore. Tracked as PERF-8.
+memory as after a restore. Fixed by PERF-8 (the SWA checkpoint moved one position before the
+prompt end): the same repeat now reuses 4,731 of 4,732 tokens and prefills in 11 ms.
