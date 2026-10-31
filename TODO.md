@@ -89,7 +89,13 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       Decide first: curated list vs. live HF search filtered by `gguf` tag + pipeline type, and
       how unknown architectures are validated (`gguf_inspector.rs`) before they are offered.
 
-- [ ] 🩵 **DESK-17** `P2` First-run model download in the desktop app
+## In Progress
+
+_No cards yet._
+
+## Done
+
+- [x] 🩵 **DESK-17** `P2` First-run model download in the desktop app
       A bundled server without weights still leaves users stuck (DESK-16). On first run, or from
       settings, show the lineup from `models.manifest` (31 GB for all of it) with size and
       modality per model and let people pick. Download into
@@ -105,12 +111,10 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
         default profile). Changing it offers to move the existing files, shows the free space
         and restarts the local server; a missing folder (unplugged drive) is reported as such,
         not as missing weights.
-
-## In Progress
-
-_No cards yet._
-
-## Done
+      Done 2026-10-31: `[server] models_dir` / `HYPNOS_MODELS_DIR` (one error for a missing
+      folder), the Models dialog (lineup, sizes and SHA-256 from the hosts, `.part` resume, Stop,
+      free-space check, restart of the local server), Change… with moving the files. Tested
+      through the UI on a clean HOME (commit 7ae3f94).
 
 - [x] 🩵 **DESK-16** `P2` Bundle the server inside the macOS app, as Ollama does
       The `.dmg` ships `hypnos` (Metal build, about 136 MB with the dylib and espeak data), and
