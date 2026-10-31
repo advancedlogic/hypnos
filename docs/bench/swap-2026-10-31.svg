@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 378" width="720" height="378" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-label="Time to first token by start tier">
+<style>
+.bg{fill:#fcfcfb}.ink{fill:#0b0b0b}.ink2{fill:#52514e}.muted{fill:#898781}.grid{stroke:#e1e0d9}.s1{fill:#2a78d6}.s2{fill:#eb6834}.gap{stroke:#fcfcfb}
+@media (prefers-color-scheme: dark){.bg{fill:#1a1a19}.ink{fill:#f0efec}.ink2{fill:#c3c2b7}.grid{stroke:#2c2c2a}.s1{fill:#3987e5}.s2{fill:#d95926}.gap{stroke:#1a1a19}}
+</style>
+<rect class="bg" width="720" height="378" rx="8"/>
+<text class="ink" x="20" y="30" font-size="16" font-weight="600">Time to first token by start tier</text>
+<text class="ink2" x="20" y="50" font-size="12">gemma4:26b-q4, median of 3 runs, first streamed token</text>
+<rect class="s2" x="260" y="58" width="10" height="10" rx="2"/>
+<text class="ink2" x="275" y="67" font-size="11">tier switch (load)</text>
+<rect class="s1" x="450" y="58" width="10" height="10" rx="2"/>
+<text class="ink2" x="465" y="67" font-size="11">rest of time to first token</text>
+<line class="grid" x1="260.0" y1="74" x2="260.0" y2="338" stroke-width="1"/>
+<text class="muted" x="260.0" y="354" font-size="11" text-anchor="middle">0 s</text>
+<line class="grid" x1="334.0" y1="74" x2="334.0" y2="338" stroke-width="1"/>
+<text class="muted" x="334.0" y="354" font-size="11" text-anchor="middle">1 s</text>
+<line class="grid" x1="408.0" y1="74" x2="408.0" y2="338" stroke-width="1"/>
+<text class="muted" x="408.0" y="354" font-size="11" text-anchor="middle">2 s</text>
+<line class="grid" x1="482.0" y1="74" x2="482.0" y2="338" stroke-width="1"/>
+<text class="muted" x="482.0" y="354" font-size="11" text-anchor="middle">3 s</text>
+<line class="grid" x1="556.0" y1="74" x2="556.0" y2="338" stroke-width="1"/>
+<text class="muted" x="556.0" y="354" font-size="11" text-anchor="middle">4 s</text>
+<line class="grid" x1="630.0" y1="74" x2="630.0" y2="338" stroke-width="1"/>
+<text class="muted" x="630.0" y="354" font-size="11" text-anchor="middle">5 s</text>
+<text class="ink" x="20" y="92" font-size="13" font-weight="600">Tier 3 (NVMe mmap, cold)</text>
+<text class="ink" x="20" y="182" font-size="13" font-weight="600">Tier 2 (pinned RAM, warm)</text>
+<text class="ink" x="20" y="272" font-size="13" font-weight="600">Tier 1 (resident, hot)</text>
+<text class="ink2" x="248" y="117.0" font-size="12" text-anchor="end">RTX 5090 laptop 24 GB (CUDA, Windows)</text>
+<rect class="s2" x="260" y="102" width="308.9" height="22" rx="4"/>
+<rect class="s1 gap" x="568.9" y="102" width="8.1" height="22" rx="4" stroke-width="2"/>
+<text class="ink" x="584.9" y="117.0" font-size="12" font-weight="600">4.28 s</text>
+<text class="ink2" x="248" y="145.0" font-size="12" text-anchor="end">M5 Max 128 GB (Metal, macOS)</text>
+<rect class="s2" x="260" y="130" width="167.2" height="22" rx="4"/>
+<rect class="s1 gap" x="427.2" y="130" width="4.1" height="22" rx="4" stroke-width="2"/>
+<text class="ink" x="439.3" y="145.0" font-size="12" font-weight="600">2.31 s</text>
+<text class="ink2" x="248" y="207.0" font-size="12" text-anchor="end">RTX 5090 laptop 24 GB (CUDA, Windows)</text>
+<rect class="s2" x="260" y="192" width="268.0" height="22" rx="4"/>
+<rect class="s1 gap" x="528.0" y="192" width="5.1" height="22" rx="4" stroke-width="2"/>
+<text class="ink" x="541.1" y="207.0" font-size="12" font-weight="600">3.69 s</text>
+<text class="ink2" x="248" y="235.0" font-size="12" text-anchor="end">M5 Max 128 GB (Metal, macOS)</text>
+<rect class="s2" x="260" y="220" width="68.8" height="22" rx="4"/>
+<rect class="s1 gap" x="328.8" y="220" width="4.2" height="22" rx="4" stroke-width="2"/>
+<text class="ink" x="341.0" y="235.0" font-size="12" font-weight="600">987 ms</text>
+<text class="ink2" x="248" y="297.0" font-size="12" text-anchor="end">RTX 5090 laptop 24 GB (CUDA, Windows)</text>
+<rect class="s1 gap" x="260.0" y="282" width="9.7" height="22" rx="4" stroke-width="0"/>
+<text class="ink" x="277.7" y="297.0" font-size="12" font-weight="600">131 ms</text>
+<text class="ink2" x="248" y="325.0" font-size="12" text-anchor="end">M5 Max 128 GB (Metal, macOS)</text>
+<rect class="s1 gap" x="260.0" y="310" width="4.0" height="22" rx="4" stroke-width="0"/>
+<text class="ink" x="272.0" y="325.0" font-size="12" font-weight="600">54 ms</text>
+</svg>

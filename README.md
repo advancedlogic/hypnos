@@ -52,24 +52,27 @@ pinned. 95 s of real time with the waits shortened (<code>tools/demo-gif/</code>
 
 Full reports in [docs/bench/](docs/bench/). All chat numbers are Gemma 4 26B-A4B Q4.
 
-#### CUDA (24 GB GPUs)
+#### CUDA (RTX 5090 laptop GPU, 24 GB, Windows 11)
+
+Release build, `hypnos.example.toml` ([report](docs/bench/cuda-2026-10-31.md); slot shapes in
+[docs/bench/decode-slots-cuda-2026-10-30.md](docs/bench/decode-slots-cuda-2026-10-30.md)):
 
 | Scenario | Result |
 | :--- | :--- |
-| Chat decode | ~100 tokens/s per stream on a 24 GB desktop GPU; **150** on an RTX 5090 laptop with 3 slots at 16k and an f16 KV cache (4 slots at 16k with q8_0 made llama.cpp re-capture its CUDA graph every step: 8 tokens/s, see [docs/bench/decode-slots-cuda-2026-10-30.md](docs/bench/decode-slots-cuda-2026-10-30.md)) |
-| Five-turn chat, time to first token per turn | 300 ms → **145 ms** with KV prefix reuse |
-| Follow-up question about the same image | 300 ms → **105 ms** (image not re-encoded) |
-| Four concurrent chat clients | **2.18x** the aggregate decode throughput of one (continuous batching) |
-| Text-to-speech, time to first audio | 5.4 s → **385 ms** with streaming synthesis |
-| Document conversion (docling), text page / page with two tables | **49 ms** / 1.07 s on the GPU, 133 ms / 0.9 s on the CPU (RTX 5090 laptop; [report](docs/bench/docling-cuda-2026-10-30.md)) |
-| Model swap, Tier 2 → first token | **3.7-4.2 s** (RTX 5090 laptop, Windows; [report](docs/bench/swap-cuda-2026-10-30.md)) |
+| Chat decode | **141-168 tokens/s** per stream with 3 slots at 16k and an f16 KV cache; prefill 1,330 tokens/s on a 512-token prompt, 3,650 on a cached conversation turn. ~100 on a 24 GB desktop GPU. 4 slots at 16k with q8_0 made llama.cpp re-capture its CUDA graph every step: 8 tokens/s |
+| Five-turn chat, time to first token per turn | 195 ms → **132-148 ms** with KV prefix reuse |
+| Follow-up question about the same image | 297 ms → **95-99 ms** (image not re-encoded) |
+| Four concurrent chat clients | **1.39x** the aggregate decode throughput of one with `slots = 3` (223 vs 160 tokens/s, slowest first token 1.5 s); a run minutes earlier batched the three streams at 34 tokens/s each (0.69x), and the old `slots = 4` q8_0 default gave 2.18x at 68 per stream (PERF-9) |
+| Text-to-speech, time to first audio | 5.3 s → **380 ms** with streaming synthesis (Kokoro fp32 on the CPU, RTF 0.14) |
+| Voice round trip (11 s of speech → transcript → reply → speech) | **8.5 s** to the first audio: the E4B transcriber and the 26B do not fit a 24 GB card together, so each stage swaps a model in (3.1 s transcription with the E4B's promotion, 4.0 s reply with the 26B's, 1.4 s speech); the engines alone take 0.4 + 0.2 + 1.4 s |
+| Document conversion (docling), text page / page with two tables | **49 ms** / 1.07 s on the GPU, 133 ms / 0.9 s on the CPU ([report](docs/bench/docling-cuda-2026-10-30.md)) |
+| Model swap, Tier 2 → first token | **3.7 s** median (3.6-5.9 s); Tier 3 4.3 s, resident 131 ms (chart below) |
 
 The Tier 2 promotion was 7.5 s warm and 23-59 s when another model had just been loaded before
 the PERF-6 changes: the weights are now read through pinned staging buffers instead of a file
 mapping (2.4x faster upload), and Tier 2 pins a model's projector and text-encoder files with its
-weights. KV parking and MoE expert offload are not measured on CUDA yet.
-
-<!-- PERF-5: add the CUDA run (bench.sh --scenarios 7) as a chart like the Metal one. -->
+weights ([docs/bench/swap-cuda-2026-10-30.md](docs/bench/swap-cuda-2026-10-30.md)). KV parking
+and MoE expert offload are not measured on CUDA yet.
 
 #### Apple Silicon (M5 Max, 128 GB, Metal)
 
@@ -88,11 +91,17 @@ MoE offload and slots in [docs/bench/metal-features-2026-10-31.md](docs/bench/me
 | MoE expert offload (`moe_offload = "on"`) | GPU weights 15.8 → **3.0 GB** (12.8 GB of experts in host memory), at 49 vs 113 tokens/s decode and 250 vs 3,800 tokens/s prefill: no use on unified memory, which is why `auto` never acts there |
 | Entity extraction (GLiNER2.5), 1,700 words with 11 labels | **1.5 s** on the CPU, models loaded in under a second |
 
-Model swap: time to the first token of the same model (15.8 GB) depending on where the scheduler
-finds it, with the weight files evicted from the OS page cache for the Tier 3 runs as far as macOS
-allows (19% stayed resident):
+#### Model swap, CUDA and Metal
 
-![Time to first token by start tier: Tier 3 2.32 s, Tier 2 987 ms, Tier 1 54 ms](docs/bench/swap-metal-2026-10-31.svg)
+Time to the first token of the same model (15.8 GB of weights) depending on where the scheduler
+finds it, median of 3 runs on each machine. On macOS the weight files were evicted from the OS
+page cache before the Tier 3 runs as far as the system allows (19% stayed resident); Windows has
+no per-file eviction, so its Tier 3 reads come partly from the standby list, which is why Tier 3
+is only 0.6 s behind Tier 2 there. On CUDA the Tier 2 figure is the PCIe upload of the weights
+through pinned staging buffers (2.9 s) plus the projector (0.7 s) and the context; on unified
+memory a Tier 2 → Tier 1 move is a re-map.
+
+![Time to first token by start tier, CUDA vs Metal: Tier 3 4.28 s vs 2.31 s, Tier 2 3.69 s vs 987 ms, Tier 1 131 ms vs 54 ms](docs/bench/swap-2026-10-31.svg)
 
 ### How it compares
 
@@ -629,7 +638,11 @@ Behaviour that matters in production:
   Markdown report; the current baseline is `docs/bench/baseline-2026-10-29.md`. Scenario 7
   (`--scenarios 7 [--chart out.svg]`, not in the default set) stages a model in Tier 3, 2 and 1
   with `POST /v1/memory/tier` and times the first request from each; before the Tier 3 runs it
-  evicts the weight files (`--swap-files`) from the OS page cache on Linux and macOS.
+  evicts the weight files (`--swap-files`) from the OS page cache on Linux and macOS (not on
+  Windows, where Tier 3 reads may come from the standby list). `--chart-compare "<label>=<earlier
+  report>.md"` draws that report's scenario 7 medians next to the new run's, one bar per platform
+  under each start tier (`--chart-label` names the new run); the chart above was made that way.
+  Use `127.0.0.1`, not `localhost`: on Windows Python spends 2 s per request on `localhost`.
 
 ---
 

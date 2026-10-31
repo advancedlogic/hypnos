@@ -712,12 +712,64 @@ def fmt_pct(v):
     return "n/a" if v is None else f"{v * 100:.0f}%"
 
 
-def swap_chart_svg(summary, title, subtitle):
-    """Horizontal bars per start tier: tier switch + rest of TTFT, median runs. Light/dark aware."""
+def parse_swap_summary(path):
+    """The scenario 7 summary of an earlier report: one entry per start tier with the median tier switch and TTFT."""
+    labels = {label for _, label in SWAP_TIERS}
+
+    def num(s):
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    found = {}
+    in_7 = False
+    for line in lines:
+        if line.startswith("### "):
+            in_7 = line.startswith("### 7.")
+            continue
+        if not in_7 or not line.startswith("| Tier "):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) >= 4 and cells[0] in labels:
+            found[cells[0]] = {"label": cells[0], "switch_ms": num(cells[2]), "ttft_ms": num(cells[3])}
+    if len(found) != len(SWAP_TIERS):
+        raise SystemExit(f"{path}: no scenario 7 summary table (one row per start tier) found")
+    return [found[label] for _, label in SWAP_TIERS]
+
+
+def swap_chart_svg(series, title, subtitle):
+    """Horizontal bars per start tier: tier switch + rest of TTFT, median runs. Light/dark aware.
+
+    `series` is a list of (name, summary) pairs; with one series each bar is labelled with its start
+    tier, with several the tiers become groups holding one bar per series, labelled with its name.
+    """
     width, left, right, top, bar_h, gap = 720, 210, 90, 78, 30, 18
+    grouped = len(series) > 1
+    if grouped:
+        bar_h, gap, head = 22, 6, 24
+        # Room for the longest series name (about 6.4 px per character at 12 px).
+        left = max(left, 24 + int(6.4 * max(len(name) for name, _ in series)))
     plot_w = width - left - right
-    height = top + len(summary) * (bar_h + gap) + 40
-    vmax = max((s["ttft_ms"] or 0) for s in summary) or 1.0
+    # Lay out the rows: (y, label, summary entry), plus a header line per tier when grouped.
+    rows, headers, y = [], [], top
+    for _, tier_label in SWAP_TIERS:
+        if grouped:
+            headers.append((y, tier_label))
+            y += head
+        for name, summary in series:
+            entry = next((s for s in summary if s["label"] == tier_label), None)
+            if entry is None:
+                continue
+            rows.append((y, name if grouped else tier_label, entry))
+            y += bar_h + gap
+        if grouped:
+            y += 10
+    axis_y = y - (10 if grouped else 0)
+    height = axis_y + 40
+    vmax = max((s["ttft_ms"] or 0) for _, summary in series for s in summary) or 1.0
     # Round the axis up to a 1/2/5 step.
     step = 10 ** max(0, len(str(int(vmax))) - 1)
     for m in (1, 2, 5, 10):
@@ -752,7 +804,6 @@ def swap_chart_svg(summary, title, subtitle):
         out.append(f'<text class="ink2" x="{lx + 15}" y="67" font-size="11">{name}</text>')
         lx += 190
     # Grid + axis labels
-    axis_y = top + len(summary) * (bar_h + gap)
     v = 0
     while v <= axis_max:
         gx = x(v)
@@ -760,11 +811,13 @@ def swap_chart_svg(summary, title, subtitle):
         label = f"{v / 1000:g} s" if axis_max >= 2000 else f"{v:g} ms"
         out.append(f'<text class="muted" x="{gx:.1f}" y="{axis_y + 16}" font-size="11" text-anchor="middle">{label}</text>')
         v += step
-    for i, s in enumerate(summary):
-        y = top + i * (bar_h + gap)
+    for hy, tier_label in headers:
+        out.append(f'<text class="ink" x="20" y="{hy + 14}" font-size="13" font-weight="600">{esc(tier_label)}</text>')
+    for y, label, s in rows:
         ttft = s["ttft_ms"] or 0.0
         switch = min(s["switch_ms"] or 0.0, ttft)
-        out.append(f'<text class="ink" x="{left - 12}" y="{y + bar_h / 2 + 4}" font-size="13" text-anchor="end">{esc(s["label"])}</text>')
+        cls, size = ("ink2", 12) if grouped else ("ink", 13)
+        out.append(f'<text class="{cls}" x="{left - 12}" y="{y + bar_h / 2 + 4}" font-size="{size}" text-anchor="end">{esc(label)}</text>')
         if switch > 0:
             out.append(f'<rect class="s2" x="{left}" y="{y}" width="{max(x(switch) - left, 1):.1f}" height="{bar_h}" rx="4"/>')
         if ttft > switch:
@@ -788,10 +841,18 @@ def swap(c, rep, args):
     files = [f for f in args.swap_files.split(",") if f.strip()]
     summary = scenario_7(c, rep, model, args.swap_reps, files, args.swap_keep_page_cache)
     if args.chart:
+        series = [(args.chart_label or args.device or sys.platform, summary)]
+        for spec in args.chart_compare or []:
+            name, _, path = spec.partition("=")
+            if not name or not path:
+                raise SystemExit("--chart-compare takes LABEL=path/to/report.md")
+            series.append((name, parse_swap_summary(path)))
         os.makedirs(os.path.dirname(os.path.abspath(args.chart)), exist_ok=True)
-        subtitle = f"{model}, median of {args.swap_reps} runs, first streamed token, {args.device or sys.platform}"
+        subtitle = f"{model}, median of {args.swap_reps} runs, first streamed token"
+        if len(series) == 1:
+            subtitle += f", {series[0][0]}"
         with open(args.chart, "w", encoding="utf-8", newline="\n") as f:
-            f.write(swap_chart_svg(summary, "Time to first token by start tier", subtitle))
+            f.write(swap_chart_svg(series, "Time to first token by start tier", subtitle))
         print(f"chart written to {args.chart}")
 
 
@@ -815,6 +876,13 @@ def main():
     )
     ap.add_argument("--swap-keep-page-cache", action="store_true", help="scenario 7: do not evict the weight files for Tier 3")
     ap.add_argument("--chart", help="scenario 7: write an SVG chart of the median runs here")
+    ap.add_argument("--chart-label", help="scenario 7 chart: name of this run's bars (default: the server's device name)")
+    ap.add_argument(
+        "--chart-compare",
+        action="append",
+        metavar="LABEL=REPORT.md",
+        help="scenario 7 chart: also draw the scenario 7 medians of an earlier report, one bar per report under each start tier (repeatable)",
+    )
     args = ap.parse_args()
 
     c = Client(args.host)
