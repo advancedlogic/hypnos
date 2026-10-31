@@ -87,9 +87,46 @@ async fn run() -> Result<()> {
             println!("hypnos {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
+        Some("--catalog-files") => {
+            // `hypnos --catalog-files <id>[:<quant>]`: the variant's files as models.manifest
+            // lines (model repo remote local platform), for the fetch scripts.
+            let Some(spec) = args.get(1) else {
+                anyhow::bail!("usage: hypnos --catalog-files <id>[:<quant>]");
+            };
+            let path = hypnos_server::catalog::locate()
+                .with_context(|| format!("{} not found", hypnos_server::catalog::FILE_NAME))?;
+            let catalog =
+                hypnos_core::catalog::ModelCatalog::load(&path).map_err(anyhow::Error::msg)?;
+            let (entry, variant) = catalog.resolve(spec).map_err(anyhow::Error::msg)?;
+            for f in &variant.files {
+                let platform = serde_json::to_value(f.platform)?;
+                println!(
+                    "{} {} {} {} {}",
+                    entry.id,
+                    f.repo,
+                    f.remote,
+                    f.local,
+                    platform.as_str().unwrap_or("all")
+                );
+            }
+            return Ok(());
+        }
+        Some("--catalog-block") => {
+            // `hypnos --catalog-block <id>[:<quant>]`: the [[models]] block for a catalog entry.
+            let Some(spec) = args.get(1) else {
+                anyhow::bail!("usage: hypnos --catalog-block <id>[:<quant>]");
+            };
+            let path = hypnos_server::catalog::locate()
+                .with_context(|| format!("{} not found", hypnos_server::catalog::FILE_NAME))?;
+            let catalog =
+                hypnos_core::catalog::ModelCatalog::load(&path).map_err(anyhow::Error::msg)?;
+            let (entry, variant) = catalog.resolve(spec).map_err(anyhow::Error::msg)?;
+            print!("{}", entry.render_block(variant));
+            return Ok(());
+        }
         Some("--help" | "-h") => {
             println!(
-                "usage: hypnos [config.toml] [--port N]   start the server (config: $HYPNOS_CONFIG, then ./hypnos.toml;\n                                         port: --port, then $HYPNOS_PORT, then server.port, default 9999)\n       hypnos --check-config [config.toml]   validate the config and exit (1 on errors)\n       hypnos --version"
+                "usage: hypnos [config.toml] [--port N]   start the server (config: $HYPNOS_CONFIG, then ./hypnos.toml;\n                                         port: --port, then $HYPNOS_PORT, then server.port, default 9999)\n       hypnos --check-config [config.toml]   validate the config and exit (1 on errors)\n       hypnos --catalog-block <id>[:<quant>]   print the [[models]] block of a models.catalog.toml entry\n       hypnos --catalog-files <id>[:<quant>]   print its files as models.manifest lines\n       hypnos --version"
             );
             return Ok(());
         }

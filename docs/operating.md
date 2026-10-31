@@ -41,6 +41,15 @@ Three startup sanity checks: `hypnos --check-config hypnos.toml` validates the f
 starting; the first lines of the log print the detected device, the budgets and every model's
 booking; `/v1/memory/status` right after `/ready` shows the pre-staged models in their tiers.
 
+**Adding a model** from the catalog (`backend/models.catalog.toml`, `GET /v1/models/catalog`):
+`./run.sh models <id>[:<quant>]` downloads a variant's files into the models folder, `hypnos
+--catalog-block <id>[:<quant>]` prints its `[[models]]` block to append to the config, and a
+restart picks it up (size it with the formula above; the block's `total_weight_bytes` is the
+variant's files). The catalog only lists architectures Hypnos has been tested with: a GGUF that
+merely loads in llama.cpp can still get its prompt format, media markers or memory handling
+wrong. The route reports `outdated` for a file whose size differs from the catalog (an upload
+replaced upstream) and `problem` when downloaded weights report another architecture.
+
 ## 2. Which knob for which symptom
 
 | Symptom | Where to look | What to change |

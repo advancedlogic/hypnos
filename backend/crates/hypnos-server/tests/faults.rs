@@ -251,6 +251,8 @@ fn state_with(engines: Vec<Arc<MockEngine>>) -> AppState {
         ready: Arc::new(AtomicBool::new(true)),
         started_at: Instant::now(),
         version: "test",
+        catalog: hypnos_server::catalog::load(),
+        models_dir: std::env::temp_dir(),
     }
 }
 

@@ -51,11 +51,31 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 3  | 11  | 5   | 6   | 10   | 7   | 10    | 7   | 3    | 18   |
+| 3  | 12  | 5   | 6   | 10   | 7   | 10    | 7   | 3    | 18   |
 
 ---
 
 ## Backlog
+
+- [ ] 🟪 **API-11** `P2` Add, remove and replace models at runtime (a dynamic model pool)
+      Requests already route by model name (`acquire_model(id)` loads or evicts on demand); what
+      is fixed is the set of models, read once from the config. Make it changeable while the
+      server runs:
+      - `POST /v1/models` with a catalog spec (`{"catalog": "lfm3-vl:2b:Q4_K_M"}`) or a raw
+        `[[models]]` block: files must exist under `models_dir`, the GGUF's architecture must be
+        one of `TESTED_GGUF_ARCHITECTURES` (others refused), the model must fit the budgets at
+        all; it is registered without loading (first request loads it).
+      - `DELETE /v1/models/{id}`: stop admission, wait for leases, evict, unregister.
+      - `PUT /v1/models/{id}`: replace atomically (register the new one, switch the name, drain
+        and unload the old one), so clients using the name never see an error.
+      - Optional aliases (`chat` -> the current chat model) so clients keep a stable name.
+      - `ModelScheduler`'s `backends` / `admission` maps become lock-protected (the memory
+        manager's model map already is).
+      - Persist the changes in an overlay file next to the config (`hypnos.models.toml`, applied
+        at startup) instead of rewriting the user's config.
+      - With API keys set, these routes need an admin key; paths stay inside `models_dir`.
+      - `docs/api.md`, mock server, the three SDKs; the desktop Catalog's Add and the playground
+        catalog tab use the live routes (no server restart).
 
 - [ ] 🟩 **ENG-4** `P2` Add audio.cpp for text-to-speech and optional speech-to-text
       Vendor https://github.com/0xShug0/audio.cpp (pin + patches in `scripts/vendor.sh`) and link
@@ -78,17 +98,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
 
-- [ ] 🟪 **API-10** `P2` Hugging Face model inventory so users can bring their own models
-      A curated inventory of Hugging Face repos/files Hypnos can run, grouped by modality: text,
-      vision, speech-to-text, text-to-speech, image generation, embedding. Each entry names the
-      engine and format it needs (GGUF for llama.cpp incl. the mmproj for vision/audio-in, GGUF or
-      safetensors for sd.cpp, ONNX + voices for Kokoro), quantizations, size and the matching
-      `[[models]]` / `[models.arch]` block. Deliver as a machine-readable file next to
-      `models.manifest`, a `GET /v1/models/catalog` route, `./run.sh models <hf-repo>` download
-      with checksum, and a picker in the frontend / desktop settings that writes the config block.
-      Decide first: curated list vs. live HF search filtered by `gguf` tag + pipeline type, and
-      how unknown architectures are validated (`gguf_inspector.rs`) before they are offered.
-
 - [ ] 🟧 **PERF-9** `P2` Three concurrent streams on the 26B decode at 34 tokens/s each on CUDA
       Scenario 4 of `docs/bench/cuda-2026-10-31.md` (RTX 5090 laptop, `slots = 3`, 16k, f16 KV):
       one client decodes at 152-160 tokens/s; three batched clients got 34 each in one run
@@ -105,6 +114,28 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🟪 **API-10** `P2` Hugging Face model inventory so users can bring their own models
+      A curated inventory of Hugging Face repos/files Hypnos can run, grouped by modality: text,
+      vision, speech-to-text, text-to-speech, image generation, embedding. Each entry names the
+      engine and format it needs (GGUF for llama.cpp incl. the mmproj for vision/audio-in, GGUF or
+      safetensors for sd.cpp, ONNX + voices for Kokoro), quantizations, size and the matching
+      `[[models]]` / `[models.arch]` block. Deliver as a machine-readable file next to
+      `models.manifest`, a `GET /v1/models/catalog` route, `./run.sh models <hf-repo>` download
+      with checksum, and a picker in the frontend / desktop settings that writes the config block.
+      Decide first: curated list vs. live HF search filtered by `gguf` tag + pipeline type, and
+      how unknown architectures are validated (`gguf_inspector.rs`) before they are offered.
+      Decided 2026-10-31: a curated catalog (`backend/models.catalog.toml`), limited to
+      architectures Hypnos has been tested with; a model whose GGUF reports another
+      architecture is refused before it is offered.
+      Done 2026-10-31: `backend/models.catalog.toml` (lineup + LFM3, variants per quantization;
+      `hypnos-core/src/catalog.rs` checks it, renders `[[models]]` blocks, a test keeps the
+      lineup equal to `models.manifest`), `GET /v1/models/catalog` (on disk, `outdated`, a GGUF of
+      the wrong architecture as `problem`, the block), `hypnos --catalog-block|--catalog-files`,
+      `./run.sh models <id>[:<quant>]` with a SHA-256 check (fetch-models.ps1 not run: no
+      PowerShell on the Mac), SDK methods, a catalog tab in the playground and a Catalog tab plus
+      a header button in the desktop Models dialog (Add for the app's own config).
+
 
 - [x] 🟥 **BUG-6** `P1` Kokoro's fp16 graph returns all-NaN audio on Windows too; use fp32 everywhere
       Seen in the voice round-trip benchmark on the RTX 5090 laptop (2026-10-31): the two-sentence

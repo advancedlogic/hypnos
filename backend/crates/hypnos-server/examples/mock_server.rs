@@ -800,6 +800,9 @@ async fn main() -> anyhow::Result<()> {
         ready: ready.clone(),
         started_at: Instant::now(),
         version: env!("CARGO_PKG_VERSION"),
+        // The real catalog over an empty models folder: every variant reads as not installed.
+        catalog: hypnos_server::catalog::load(),
+        models_dir: std::env::temp_dir().join(format!("hypnos-mock-models-{}", std::process::id())),
     };
 
     let control = Router::new()

@@ -4,6 +4,12 @@
 #
 #   ./backend/scripts/fetch-models.sh            # every model for this platform
 #   ./backend/scripts/fetch-models.sh moss-image # one model id
+#   ./backend/scripts/fetch-models.sh lfm3-vl:2b:Q4_K_M   # a models.catalog.toml entry[:variant]
+#
+# An id that is not in the manifest is looked up in the model catalog through the hypnos binary
+# (`hypnos --catalog-files`; beside this folder in a release archive, target/release in a
+# checkout); `hypnos --catalog-block <id>[:<quant>]` then prints the config block to add.
+# Hugging Face downloads are checked against their SHA-256 (the X-Linked-ETag of LFS files).
 #
 # Before downloading, the missing files' sizes are checked against free disk space, keeping
 # HYPNOS_MODELS_MIN_FREE_GB (default 2) free; nothing is fetched when they do not fit.
@@ -37,10 +43,42 @@ if [ -n "$mv" ] && [ "$mv" -gt 1 ]; then
     exit 1
 fi
 ids="$(grep -vE '^[[:space:]]*(#|$)' "$MANIFEST" | awk '{print $1}' | sort -u)"
+SOURCE="$(tr -d '\r' < "$MANIFEST")"   # a CRLF checkout must not hide every row behind a stray CR
+CATALOG_SPEC=""
 if [ "$WANT" != all ] && ! printf '%s\n' "$ids" | grep -qx -- "$WANT"; then
-    echo "[models] unknown model '$WANT'. Known: all $(printf '%s ' $ids)"
-    exit 1
+    # Not in the lineup: a catalog entry, through the server binary that reads the catalog.
+    HYPNOS_BIN=""
+    for b in "$BASE/hypnos" "$BASE/target/release/hypnos" "$BASE/target/debug/hypnos"; do
+        [ -x "$b" ] && { HYPNOS_BIN="$b"; break; }
+    done
+    [ -n "$HYPNOS_BIN" ] || HYPNOS_BIN="$(command -v hypnos || true)"
+    if [ -n "$HYPNOS_BIN" ] && lines="$(cd "$BASE" && "$HYPNOS_BIN" --catalog-files "$WANT" 2>&1)"; then
+        SOURCE="$lines"
+        CATALOG_SPEC="$WANT"
+        WANT="$(printf '%s\n' "$lines" | awk 'NR == 1 { print $1 }')"
+    else
+        echo "[models] unknown model '$WANT'. Lineup: all $(printf '%s ' $ids)"
+        [ -n "$HYPNOS_BIN" ] && echo "[models] catalog: ${lines:-}" \
+            || echo "[models] (build the server to download catalog entries: ./run.sh build backend)"
+        exit 1
+    fi
 fi
+
+# sha256_of <file>: its SHA-256 in hex.
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+    else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+
+# expected_sha256 <repo> <remote path>: the SHA-256 Hugging Face publishes for an LFS file (its
+# X-Linked-ETag), empty for other hosts and plain git files.
+expected_sha256() {
+    case "$1" in https://*) return ;; esac
+    local hdr=(); while IFS= read -r a; do hdr+=("$a"); done < <(auth_for "$1")
+    curl -fsSI ${hdr[@]+"${hdr[@]}"} "$(file_url "$1" "$2")" 2>/dev/null | tr -d '\r' \
+        | awk 'tolower($1) == "x-linked-etag:" { gsub(/"/, "", $2); print $2 }' \
+        | grep -E '^[0-9a-f]{64}$' | head -1
+}
 
 fetched=0; kept=0; failed=0
 Q_REPO=(); Q_REMOTE=(); Q_DEST=()
@@ -81,7 +119,14 @@ download() {
     mkdir -p "$(dirname "$dest")"
     local hdr=(); while IFS= read -r a; do hdr+=("$a"); done < <(auth_for "$repo")
     echo "[models] $repo/$remote -> ${dest#$ROOT/}"
+    local want_sha; want_sha="$(expected_sha256 "$repo" "$remote")"
     if curl -fL --retry 3 -C - "${PROGRESS[@]}" ${hdr[@]+"${hdr[@]}"} -o "$dest.part" "$(file_url "$repo" "$remote")"; then
+        if [ -n "$want_sha" ] && [ "$(sha256_of "$dest.part")" != "$want_sha" ]; then
+            echo "[models] FAILED: $repo/$remote does not match its SHA-256 (removed; rerun to fetch it again)"
+            rm -f "$dest.part"
+            failed=$((failed + 1))
+            return
+        fi
         mv -f "$dest.part" "$dest"
         fetched=$((fetched + 1))
     else
@@ -105,7 +150,7 @@ while read -r model repo remote local platform _; do
             ;;
         *) queue "$repo" "$remote" "$MODELS_DIR/$local" ;;
     esac
-done < <(tr -d '\r' < "$MANIFEST")   # a CRLF checkout must not hide every row behind a stray CR
+done < <(printf '%s\n' "$SOURCE")
 
 # Disk space: everything still missing (minus resumable .part data) has to fit, plus a margin.
 if [ "${#Q_DEST[@]}" -gt 0 ]; then
@@ -135,4 +180,8 @@ for ((i = 0; i < ${#Q_DEST[@]}; i++)); do
 done
 
 echo "[models] $fetched downloaded, $kept already present, $failed failed ($PLATFORM, ${MODELS_DIR#$ROOT/}/)"
+if [ -n "$CATALOG_SPEC" ] && [ "$failed" = 0 ]; then
+    echo "[models] add it to the config (paths are relative to models_dir):"
+    echo "         $HYPNOS_BIN --catalog-block $CATALOG_SPEC >> hypnos.toml"
+fi
 [ "$failed" = 0 ]

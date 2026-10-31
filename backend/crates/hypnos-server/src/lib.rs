@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod catalog;
 pub mod default_profile;
 mod documents;
 mod entities;
@@ -80,10 +81,19 @@ pub struct AppState {
     pub ready: Arc<AtomicBool>,
     pub started_at: Instant,
     pub version: &'static str,
+    /// The model catalog (`GET /v1/models/catalog`), when `models.catalog.toml` was found.
+    pub catalog: Option<Arc<hypnos_core::catalog::ModelCatalog>>,
+    /// The folder model paths resolve against (`[server] models_dir`, else the working directory).
+    pub models_dir: PathBuf,
 }
 
 impl AppState {
     pub fn from_config(config: HypnosConfig) -> hypnos_core::error::Result<Self> {
+        let models_dir = config
+            .server
+            .models_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("."));
         let kv_park = Arc::new(KvParkPool::new(
             config.hardware.kv_park,
             config.hardware.kv_park_bytes,
@@ -139,6 +149,8 @@ impl AppState {
             ready: Arc::new(AtomicBool::new(false)),
             started_at: Instant::now(),
             version: env!("CARGO_PKG_VERSION"),
+            catalog: catalog::load(),
+            models_dir,
         })
     }
 
@@ -227,6 +239,7 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
     Router::new()
         // OpenAI Standard Endpoints across all 6 modalities
         .route("/v1/models", get(list_models))
+        .route("/v1/models/catalog", get(catalog::list_catalog))
         .route("/v1/models/:id/enable", post(enable_model))
         .route("/v1/models/:id/disable", post(disable_model))
         .route("/v1/models/:id/moe-offload", post(set_moe_offload))
@@ -303,6 +316,7 @@ fn open_while_staging(method: &axum::http::Method, route: &str) -> bool {
         || route.starts_with("/v1/logs")
         || route == "/v1/memory/status"
         || (route == "/v1/models" && method == axum::http::Method::GET)
+        || route == "/v1/models/catalog"
         // Stored pictures are served from disk, no model involved.
         || (route.starts_with("/v1/documents/") && route != "/v1/documents/convert")
 }
@@ -335,6 +349,7 @@ fn is_logged_route(route: &str) -> bool {
         && !(route.starts_with("/v1/documents/") && route != "/v1/documents/convert")
         && route != "/v1/memory/status"
         && route != "/v1/models"
+        && route != "/v1/models/catalog"
 }
 
 /// Adds a request id, records latency and status per route, and files the call in the request

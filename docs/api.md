@@ -253,6 +253,51 @@ The default lineup (`hypnos.example.toml`):
 
 A client should not hard-code ids; operators rename and replace models in the config.
 
+### `GET /v1/models/catalog`
+
+**Hypnos extension.** The model catalog (`models.catalog.toml` next to the server): models Hypnos
+has been tested with, configured here or not, each with its quantization variants, the files a
+variant needs, what of it is already in the server's models folder, and the `[[models]]` config
+block that runs it. A client picks a variant, downloads its files into `models_dir` (each file:
+`repo` + `remote`, see below) and adds `config_block` to the config. Open during startup staging.
+404 `not_found` when the server has no catalog file. `?modality=vision` keeps the entries serving
+that modality (primary or additional).
+
+```json
+{ "object": "list", "catalog_version": 1,
+  "models_dir": "/srv/hypnos/models",
+  "tested_architectures": ["gemma4", "gemma-embedding2", "lfm3"],
+  "data": [ {
+    "id": "lfm3-vl:2b", "name": "LFM3-VL 2B", "publisher": "Liquid AI", "license": "lfm1.0",
+    "architecture": "lfm3", "modality": "vision", "additional_modalities": ["text_generation"],
+    "engine": "ggml_llama", "capabilities": ["thinking"],
+    "summary": "Small vision-language model: ...", "lineup": false,
+    "configured": true, "enabled": true,
+    "variants": [ {
+      "quant": "Q8_0", "default": true, "size_bytes": 2225234528,
+      "files": [
+        { "role": "weights", "repo": "LiquidAI/LFM3-VL-2B-GGUF", "remote": "LFM3-VL-2B-Q8_0.gguf",
+          "local": "LFM3-VL-2B-Q8_0.gguf", "size": 1846238496, "platform": "all", "present": true },
+        { "role": "aux", "...": "..." } ],
+      "installed": true, "outdated": false,
+      "config_block": "# LFM3-VL 2B (Q8_0), Liquid AI, license lfm1.0. ...\n[[models]]\nid = \"lfm3-vl:2b\"\n..." } ] } ] }
+```
+
+| Field | Meaning |
+| :--- | :--- |
+| `architecture` | for `engine: "ggml_llama"`, the GGUF's `general.architecture`; always one of `tested_architectures` |
+| `capabilities` | beyond the modalities: `thinking` (`reasoning_effort`, 7.1), `tools` (7.5) |
+| `lineup` | part of the default lineup (`models.manifest`) |
+| `configured`, `enabled` | the config has a `[[models]]` block with this id; `enabled` only when configured |
+| `variants[].size_bytes` | this machine's files (`files[].platform`: `all`, `macos-arm64`, `other`) |
+| `files[].role` | the config key the file fills: `weights`, `aux` (projector or VAE), `text_encoder`, `tokenizer`, `voices`; `data` = needed beside the weights, named by no key |
+| `files[].repo`, `remote` | a Hugging Face repository (download `https://huggingface.co/<repo>/resolve/main/<remote>`) or an `https://` base URL `remote` is appended to; a `remote` ending in `/` is a whole folder |
+| `files[].local` | path under `models_dir`; `entry`, when present, is the file inside a folder the config names |
+| `files[].present`, `outdated` | on disk (a folder: not empty); `outdated` = present with another size than listed |
+| `installed`, `outdated` | every file present; some present file has another size (re-download it) |
+| `problem` | present only when the downloaded weights' GGUF reports another architecture than the entry |
+| `config_block` | the `[[models]]` + `[models.arch]` TOML for this variant, paths relative to `models_dir`; `hypnos --catalog-block <id>[:<quant>]` prints the same |
+
 ### `POST /v1/models/{id}/enable`, `POST /v1/models/{id}/disable`
 
 **Hypnos extension.** Takes a model out of service (it is evicted to disk and hidden from

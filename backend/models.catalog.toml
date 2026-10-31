@@ -1,0 +1,381 @@
+# Hypnos model catalog (API-10): models Hypnos has been tested with, their quantization
+# variants, the files each needs and the [[models]] block that runs it.
+#
+# Curated on purpose: a GGUF that loads is not yet a model that works (prompt format, media
+# markers, thinking, memory handling). A ggml_llama entry must use an architecture listed in
+# hypnos-core/src/catalog.rs (TESTED_GGUF_ARCHITECTURES); downloaded weights whose GGUF reports
+# another one are refused. `lineup = true` marks the default lineup of models.manifest (a test
+# keeps the default variants and the manifest in step).
+#
+# Entry: id, name, publisher, license, architecture (GGUF general.architecture for ggml_llama),
+# modality, additional_modalities, engine, capabilities (thinking, tools), summary, lineup,
+# [models.config] (further [[models]] keys; [models.config.arch] = [models.arch]) and one
+# [[models.variants]] per quantization: quant, default (exactly one), note, files.
+# File: role (weights | aux | text_encoder | tokenizer | voices | data), repo (Hugging Face
+# repository or an https:// base URL), remote (path in the repo, `/` = folder), local (path under
+# models_dir), entry (for a folder: the file the config path names), size (bytes), platform
+# (all | macos-arm64 | other). The block's paths, modalities, engine and total_weight_bytes come
+# from the entry and the chosen variant.
+#
+# The server serves it as GET /v1/models/catalog; `hypnos --catalog-block <id>[:<quant>]` prints a
+# block, and `./run.sh models <id>[:<quant>]` downloads a variant.
+
+catalog_version = 1
+
+# -----------------------------------------------------------------------------------------------
+# Text, vision, audio in
+# -----------------------------------------------------------------------------------------------
+
+[[models]]
+id = "gemma4:26b-q4"
+name = "Gemma 4 26B-A4B"
+publisher = "Google"
+license = "gemma"
+architecture = "gemma4"
+modality = "text_generation"
+additional_modalities = ["vision"]
+engine = "ggml_llama"
+capabilities = ["thinking", "tools"]
+summary = "Mixture-of-Experts chat and vision model (4B active parameters): the strongest answers in the lineup, with tool calling and thinking."
+lineup = true
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+slots = 3
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "f16"
+non_layer_overhead_bytes = 2415919104
+activation_workspace_bytes = 2147483648
+
+[[models.variants]]
+quant = "Q4_0"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/gemma-4-26B-A4B-it-GGUF", remote = "gemma-4-26B-A4B-it-Q4_0.gguf", local = "gemma-4-26B-A4B-it-Q4_0.gguf", size = 14618145824 },
+  { role = "aux", repo = "ggml-org/gemma-4-26B-A4B-it-GGUF", remote = "mmproj-gemma-4-26B-A4B-it-BF16.gguf", local = "mmproj-gemma-4-26B-A4B-it-BF16.gguf", size = 1194828160 },
+]
+
+[[models]]
+id = "gemma4:e4b-q4"
+name = "Gemma 4 E4B"
+publisher = "Google"
+license = "gemma"
+architecture = "gemma4"
+modality = "speech_to_text"
+additional_modalities = ["text_generation", "vision"]
+engine = "ggml_llama"
+capabilities = ["thinking", "tools"]
+summary = "Edge model that hears, sees and chats: transcription, image questions and quick answers on smaller machines."
+lineup = true
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+slots = 4
+
+[models.config.arch]
+default_context_len = 8192
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 1610612736
+activation_workspace_bytes = 536870912
+
+[[models.variants]]
+quant = "Q4_0"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/gemma-4-E4B-it-GGUF", remote = "gemma-4-E4B-it-Q4_0.gguf", local = "gemma-4-E4B-it-Q4_0.gguf", size = 4590807392 },
+  { role = "aux", repo = "ggml-org/gemma-4-E4B-it-GGUF", remote = "mmproj-gemma-4-E4B-it-BF16.gguf", local = "mmproj-gemma-4-E4B-it-BF16.gguf", size = 991552256 },
+]
+
+[[models]]
+id = "lfm3:1.7b"
+name = "LFM3 1.7B"
+publisher = "Liquid AI"
+license = "lfm1.0"
+architecture = "lfm3"
+modality = "text_generation"
+engine = "ggml_llama"
+capabilities = ["thinking"]
+summary = "Small hybrid (convolution + attention) chat model: fast on any machine, with optional thinking."
+
+[models.config]
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 268435456
+activation_workspace_bytes = 536870912
+
+[[models.variants]]
+quant = "Q8_0"
+default = true
+files = [
+  { role = "weights", repo = "LiquidAI/LFM3-1.7B-GGUF", remote = "LFM3-1.7B-Q8_0.gguf", local = "LFM3-1.7B-Q8_0.gguf", size = 1846238496 },
+]
+
+[[models.variants]]
+quant = "Q4_K_M"
+note = "Smaller and a little faster; slightly weaker answers."
+files = [
+  { role = "weights", repo = "LiquidAI/LFM3-1.7B-GGUF", remote = "LFM3-1.7B-Q4_K_M.gguf", local = "LFM3-1.7B-Q4_K_M.gguf", size = 1099627808 },
+]
+
+[[models]]
+id = "lfm3-vl:2b"
+name = "LFM3-VL 2B"
+publisher = "Liquid AI"
+license = "lfm1.0"
+architecture = "lfm3"
+modality = "vision"
+additional_modalities = ["text_generation"]
+engine = "ggml_llama"
+capabilities = ["thinking"]
+summary = "Small vision-language model: describes and answers questions about images, with optional thinking."
+
+[models.config]
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 671088640
+activation_workspace_bytes = 805306368
+
+[[models.variants]]
+quant = "Q8_0"
+default = true
+files = [
+  { role = "weights", repo = "LiquidAI/LFM3-VL-2B-GGUF", remote = "LFM3-VL-2B-Q8_0.gguf", local = "LFM3-VL-2B-Q8_0.gguf", size = 1846238496 },
+  { role = "aux", repo = "LiquidAI/LFM3-VL-2B-GGUF", remote = "mmproj-LFM3-VL-2B-BF16.gguf", local = "mmproj-LFM3-VL-2B-BF16.gguf", size = 378996032 },
+]
+
+[[models.variants]]
+quant = "Q4_K_M"
+note = "Smaller weights and a Q8_0 vision projector."
+files = [
+  { role = "weights", repo = "LiquidAI/LFM3-VL-2B-GGUF", remote = "LFM3-VL-2B-Q4_K_M.gguf", local = "LFM3-VL-2B-Q4_K_M.gguf", size = 1099627808 },
+  { role = "aux", repo = "LiquidAI/LFM3-VL-2B-GGUF", remote = "mmproj-LFM3-VL-2B-Q8_0.gguf", local = "mmproj-LFM3-VL-2B-Q8_0.gguf", size = 203031872 },
+]
+
+[[models]]
+id = "lfm3-audio:2b"
+name = "LFM3-Audio 2B"
+publisher = "Liquid AI"
+license = "lfm1.0"
+architecture = "lfm3"
+modality = "speech_to_text"
+additional_modalities = ["text_generation"]
+engine = "ggml_llama"
+summary = "Small audio model for transcription in 18 languages, and chat (its speech output is not used)."
+
+[models.config]
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+
+[models.config.arch]
+default_context_len = 8192
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 838860800
+activation_workspace_bytes = 536870912
+
+[[models.variants]]
+quant = "Q8_0"
+default = true
+files = [
+  { role = "weights", repo = "LiquidAI/LFM3-Audio-2B-GGUF", remote = "LFM3-Audio-2B-Q8_0.gguf", local = "LFM3-Audio-2B-Q8_0.gguf", size = 1846236704 },
+  { role = "aux", repo = "LiquidAI/LFM3-Audio-2B-GGUF", remote = "mmproj-LFM3-Audio-2B-BF16.gguf", local = "mmproj-LFM3-Audio-2B-BF16.gguf", size = 570846400 },
+]
+
+[[models.variants]]
+quant = "Q4_K_M"
+note = "Smaller weights and a Q8_0 audio projector."
+files = [
+  { role = "weights", repo = "LiquidAI/LFM3-Audio-2B-GGUF", remote = "LFM3-Audio-2B-Q4_K_M.gguf", local = "LFM3-Audio-2B-Q4_K_M.gguf", size = 1099626016 },
+  { role = "aux", repo = "LiquidAI/LFM3-Audio-2B-GGUF", remote = "mmproj-LFM3-Audio-2B-Q8_0.gguf", local = "mmproj-LFM3-Audio-2B-Q8_0.gguf", size = 303811840 },
+]
+
+# -----------------------------------------------------------------------------------------------
+# Embeddings, speech, images, documents, entities
+# -----------------------------------------------------------------------------------------------
+
+[[models]]
+id = "gemmaembedding2"
+name = "EmbeddingGemma 2"
+publisher = "Google"
+license = "gemma"
+architecture = "gemma-embedding2"
+modality = "embeddings"
+engine = "ggml_llama"
+summary = "768-dimension text embeddings for search and retrieval."
+lineup = true
+
+[models.config]
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier1_gpu_vram"
+keep_warm_in_ram = true
+priority = "realtime_pinned"
+
+[models.config.arch]
+default_context_len = 2048
+max_context_len = 8192
+kv_dtype = "f16"
+non_layer_overhead_bytes = 104857600
+activation_workspace_bytes = 134217728
+
+[[models.variants]]
+quant = "Q8_0"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/embeddinggemma-2-GGUF", remote = "embeddinggemma-2-Q8_0.gguf", local = "embeddinggemma-2-Q8_0.gguf", size = 309855456 },
+]
+
+[[models]]
+id = "kokoro-82m-q4"
+name = "Kokoro 82M"
+publisher = "hexgrad"
+license = "apache-2.0"
+architecture = "kokoro"
+modality = "text_to_speech"
+engine = "onnx_runtime"
+summary = "Text-to-speech with many voices, faster than real time on the CPU."
+lineup = true
+
+[models.config]
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier1_gpu_vram"
+keep_warm_in_ram = true
+priority = "realtime_pinned"
+
+[models.config.arch]
+num_layers = 12
+head_dim = 64
+default_context_len = 512
+max_context_len = 2048
+kv_dtype = "f16"
+non_layer_overhead_bytes = 15728640
+activation_workspace_bytes = 67108864
+
+[[models.variants]]
+quant = "fp32"
+default = true
+note = "The fp32 graph: the quantized exports crash on Windows and fp16 can return silence."
+files = [
+  { role = "weights", repo = "onnx-community/Kokoro-82M-v1.0-ONNX", remote = "onnx/model.onnx", local = "kokoro/model.onnx", size = 325532232 },
+  { role = "voices", repo = "onnx-community/Kokoro-82M-v1.0-ONNX", remote = "voices/", local = "kokoro/voices/", size = 28725248 },
+]
+
+[[models]]
+id = "moss-image"
+name = "MOSS-Image SFT"
+publisher = "OpenMOSS"
+license = "apache-2.0"
+architecture = "moss-image"
+modality = "image_generation"
+engine = "ggml_diffusion"
+summary = "Text-to-image diffusion transformer with a Qwen3.5 9B text encoder."
+lineup = true
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = false
+priority = "low"
+
+[models.config.arch]
+num_layers = 48
+head_dim = 128
+default_context_len = 512
+max_context_len = 1024
+kv_dtype = "f16"
+non_layer_overhead_bytes = 6442450944
+activation_workspace_bytes = 3221225472
+
+[[models.variants]]
+quant = "Q4_K"
+default = true
+files = [
+  { role = "weights", repo = "leejet/MOSS-Image-SFT-GGUF", remote = "MOSS-Image-SFT-Q4_K.gguf", local = "MOSS-Image-SFT-Q4_K.gguf", size = 3327400800 },
+  { role = "text_encoder", repo = "unsloth/Qwen3.5-9B-GGUF", remote = "Qwen3.5-9B-Q4_K_M.gguf", local = "Qwen3.5-9B-Q4_K_M.gguf", size = 5680522464 },
+  { role = "aux", repo = "Comfy-Org/MOSS-Image", remote = "vae/flux2-vae.safetensors", local = "flux2-vae.safetensors", size = 336211292 },
+  { role = "tokenizer", repo = "OpenMOSS-Team/MOSS-Image-Base", remote = "tokenizer/tokenizer.json", local = "moss_tokenizer.json", size = 19989325 },
+]
+
+[[models]]
+id = "docling"
+name = "docling"
+publisher = "docling-project"
+license = "mit"
+architecture = "docling"
+modality = "document_conversion"
+engine = "docling"
+summary = "PDFs, images and office documents to Markdown or JSON: layout, tables and OCR on the CPU."
+lineup = true
+
+[models.config]
+device = "cpu"
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = false
+priority = "normal"
+
+[models.config.arch]
+num_layers = 1
+activation_workspace_bytes = 1610612736
+
+[[models.variants]]
+quant = "int8"
+default = true
+files = [
+  { role = "weights", repo = "https://github.com/docling-project/docling.rs/releases/download/models-v1", remote = "layout_heron_int8.onnx", local = "docling/layout_heron_int8.onnx", size = 68695321 },
+  { role = "data", repo = "https://github.com/docling-project/docling.rs/releases/download/models-v1", remote = "encoder_fp16.onnx", local = "docling/tableformer/encoder_fp16.onnx", size = 54040666 },
+  { role = "data", repo = "https://github.com/docling-project/docling.rs/releases/download/models-v1", remote = "decoder_kv.onnx", local = "docling/tableformer/decoder_kv.onnx", size = 350250 },
+  { role = "data", repo = "https://github.com/docling-project/docling.rs/releases/download/models-v1", remote = "decoder_kv.onnx.data", local = "docling/tableformer/decoder_kv.onnx.data", size = 115580928 },
+  { role = "data", repo = "https://github.com/docling-project/docling.rs/releases/download/models-v1", remote = "bbox.onnx", local = "docling/tableformer/bbox.onnx", size = 52234 },
+  { role = "data", repo = "https://github.com/docling-project/docling.rs/releases/download/models-v1", remote = "bbox.onnx.data", local = "docling/tableformer/bbox.onnx.data", size = 39618560 },
+  { role = "data", repo = "https://github.com/docling-project/docling.rs/releases/download/models-v1", remote = "ocr_det.onnx", local = "docling/ocr_det.onnx", size = 9929594 },
+  { role = "data", repo = "https://github.com/docling-project/docling.rs/releases/download/models-v1", remote = "ocr_rec_v6.onnx", local = "docling/ocr_rec_v6.onnx", size = 21234383 },
+  { role = "data", repo = "https://github.com/docling-project/docling.rs/releases/download/models-v1", remote = "ocr_rec_v6_dict.txt", local = "docling/ocr_rec_v6_dict.txt", size = 74947 },
+]
+
+[[models]]
+id = "gliner2.5-multi"
+name = "GLiNER2.5 multilingual"
+publisher = "jugaadsrl"
+license = "apache-2.0"
+architecture = "gliner2.5"
+modality = "entity_extraction"
+engine = "gliner"
+summary = "Zero-shot named-entity extraction with labels chosen per request, multilingual, on the CPU."
+lineup = true
+
+[models.config]
+device = "cpu"
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = false
+priority = "normal"
+
+[models.config.arch]
+num_layers = 1
+activation_workspace_bytes = 2147483648
+
+[[models.variants]]
+quant = "fp32"
+default = true
+files = [
+  { role = "weights", repo = "jugaadsrl/gliner2.5-multi-v1-onnx", remote = "fp32_25/", local = "gliner2.5-multi/", entry = "encoder_fp32.onnx", size = 1157506606 },
+]

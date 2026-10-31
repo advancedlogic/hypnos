@@ -16,6 +16,7 @@
 #   frontend/                     the built playground, served by hypnos at /
 #   hypnos.toml                   the platform's example config (paths relative to this folder)
 #   models.manifest, scripts/     model downloader (fetch-models.sh / .ps1) into models/
+#   models.catalog.toml           the model catalog (GET /v1/models/catalog, API-10)
 #   LICENSE-*, licenses/, THIRD-PARTY-NOTICES.md, README.txt
 set -euo pipefail
 
@@ -68,7 +69,7 @@ esac
 cp -R "$TARGET/espeak-ng-data" "$STAGE/espeak-ng-data"
 cp -R "$ROOT/frontend/dist" "$STAGE/frontend"
 cp "$ROOT/backend/$CONFIG" "$STAGE/hypnos.toml"
-cp "$ROOT/backend/models.manifest" "$STAGE/"
+cp "$ROOT/backend/models.manifest" "$ROOT/backend/models.catalog.toml" "$STAGE/"
 cp "$ROOT/backend/scripts/fetch-models.sh" "$ROOT/backend/scripts/fetch-models.ps1" "$STAGE/scripts/"
 cp "$ROOT/LICENSE-MIT" "$ROOT/LICENSE-APACHE" "$ROOT/THIRD-PARTY-NOTICES.md" "$STAGE/"
 cp "$ROOT/licenses/GPL-3.0.txt" "$STAGE/licenses/"

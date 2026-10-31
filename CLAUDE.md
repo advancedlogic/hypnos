@@ -195,6 +195,19 @@ bindings' `add_cpu_moe_override` misses). If the config path does not
 exist, the server falls back to `default_profile::default_six_model_config()` in `hypnos-server`;
 keep that profile in sync with `hypnos.example.toml` when adding models or fields.
 
+Model catalog (API-10): `backend/models.catalog.toml` lists the models Hypnos has been tested
+with (the lineup, `lineup = true`, plus others such as LFM3), each with quantization variants,
+their files and the settings of its `[[models]]` block. `hypnos-core/src/catalog.rs` parses and
+checks it (a `ggml_llama` entry must use one of `TESTED_GGUF_ARCHITECTURES`; every variant's
+rendered block must parse without unknown keys; a test keeps the lineup's default variants equal
+to `models.manifest`) and renders blocks; `hypnos-server/src/catalog.rs` serves `GET
+/v1/models/catalog` (what is on disk under `models_dir`, `outdated` sizes, a GGUF of the wrong
+architecture as `problem`). `hypnos --catalog-block|--catalog-files <id>[:<quant>]` print a
+block / a variant's files as manifest lines, which `fetch-models.sh|.ps1` use for ids outside
+the manifest (with a SHA-256 check from Hugging Face's `X-Linked-ETag`). Adding an
+architecture means engine work first (prompt renderer, media markers, thinking, memory), then
+the list and a catalog entry.
+
 ### Engines (`hypnos-backends`)
 
 - `llama.rs`: `ggml_llama`. Text, vision, audio-in (via mtmd), embeddings, tool calling (`tools.rs`:

@@ -16,6 +16,7 @@
 #   Contents/Resources/espeak-ng-data/, frontend/  found by the server through ../Resources
 #   Contents/Resources/server/hypnos.toml        the template of the app's own config
 #   Contents/Resources/server/models.manifest    the lineup the app downloads (Models dialog)
+#   Contents/Resources/server/models.catalog.toml  the model catalog (API-10), when the source has it
 #   Contents/Resources/server/LICENSE-*, licenses/, THIRD-PARTY-NOTICES.md, SOURCE.txt
 set -euo pipefail
 
@@ -64,6 +65,9 @@ cp -R "$ESPEAK" "$STAGE/resources/espeak-ng-data"
 cp -R "$FRONTEND" "$STAGE/resources/frontend"
 cp "$CONFIG" "$STAGE/resources/server/hypnos.toml"
 cp "$MANIFEST" "$STAGE/resources/server/models.manifest"   # the app's model downloader (DESK-17)
+# The catalog sits next to the manifest (archives before API-10 have none).
+CATALOG="$(dirname "$MANIFEST")/models.catalog.toml"
+[ -f "$CATALOG" ] && cp "$CATALOG" "$STAGE/resources/server/models.catalog.toml"
 cp "$LEGAL/LICENSE-MIT" "$LEGAL/LICENSE-APACHE" "$LEGAL/THIRD-PARTY-NOTICES.md" "$STAGE/resources/server/"
 cp "$LEGAL/licenses/GPL-3.0.txt" "$STAGE/resources/server/licenses/"
 
