@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hypnos-client"
-version = "0.3.0"
+version = "0.4.0"
 description = "Python client for the Hypnos multi-modal inference server"
 readme = "README.md"
 requires-python = ">=3.9"
