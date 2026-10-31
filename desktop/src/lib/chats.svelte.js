@@ -149,9 +149,10 @@ export class ChatStore {
           answer.note = `answered by ${id}: ${reason}`;
         },
         onDelta: (text) => (answer.content += text),
-        onDone: ({ telemetry, usage }) => {
+        onDone: ({ telemetry, usage, requestId }) => {
           answer.telemetry = telemetry ?? undefined;
           answer.usage = usage ?? undefined;
+          answer.requestId = requestId ?? undefined;
           if (telemetry) this.lastTelemetry = { model: answer.model, telemetry, usage };
         },
       });

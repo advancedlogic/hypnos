@@ -78,7 +78,13 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
 
-- [ ] 🩵 **DESK-13** `P2` Request log viewer, as in the playground
+## In Progress
+
+_No cards yet._
+
+## Done
+
+- [x] 🩵 **DESK-13** `P2` Request log viewer, as in the playground
       A "Logs" view (a tab beside the stats panel, or its own window) over the server's request
       log: `GET /v1/logs` refreshed every few seconds while open, one row per request (time,
       route, model, key label, status, duration, tokens in / out, tok/s, tier switch, previous
@@ -89,12 +95,15 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       through the Rust SDK (`logs`, `log`, `set_log_level`, `clear_logs`) like the rest of the
       app; a row for the app's own last answer can be highlighted from its `x-request-id`.
       Copy a record as JSON. The local server's process output (DESK-5) stays in its own dialog.
-
-## In Progress
-
-_No cards yet._
-
-## Done
+      Done: Rust commands `hypnos_logs` (model / route / status filter, limit),
+      `hypnos_log`, `hypnos_set_log_level`, `hypnos_clear_logs` on the SDK; the chat `done`
+      event carries `requestId`. `Logs.svelte` replaces the chat (header button, Cmd/Ctrl+L,
+      Esc closes): table refreshed every 3 s while open and visible (pause toggle), filters
+      from the models and routes seen, level selector, Clear (confirmed), details panel with
+      the fields, error, input / output, payloads, Copy JSON and a hint about debug / trace;
+      "Log" under each answer opens its record. Ignored live test reads the log of the running
+      server (the chat's record by its request id, filters) without changing it. Not yet seen
+      in the window.
 
 - [x] 🩵 **DESK-12** `P2` Menu bar / system tray icon
       The Hypnos logo in the macOS menu bar, the Windows notification area and the Linux

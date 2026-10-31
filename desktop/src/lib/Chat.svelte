@@ -10,7 +10,7 @@
   import logo from '../assets/logo.png';
   import { telemetrySummary, tierName } from './format.js';
 
-  let { store, models, serverState, onsettings, onlocalserver } = $props();
+  let { store, models, serverState, onsettings, onlocalserver, onlog } = $props();
 
   let input = $state('');
   let showSystem = $state(false);
@@ -552,6 +552,9 @@
                   <span class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                     {#if message.content}
                       <button class="hover:text-slate-200" onclick={() => copy(message.content)}>Copy</button>
+                      {#if message.requestId && onlog}
+                        <button class="hover:text-slate-200" onclick={() => onlog(message.requestId)} title="This answer in the request log">Log</button>
+                      {/if}
                       <button class="hover:text-slate-200" onclick={() => readAloud(i)}>
                         {speakingId === answerId(i) ? 'Stop reading' : 'Read aloud'}
                       </button>

@@ -88,11 +88,19 @@ app's commands.
   make it quit instead, and on macOS hide the Dock icon); a notification tells you when an
   answer or image finishes while the window is hidden or in the background.
 
+- **Request log** (the list button in the header, or Cmd/Ctrl+L): the server's request log
+  in place of the chat, refreshed every 3 s while open: time, route, model, status, duration,
+  tokens, tok/s, tier switch, API key label. Filter by model, route and status; click a row for
+  the whole record (the input and output text from the `debug` level on, the payloads at
+  `trace`) and Copy JSON. The level selector changes what the server captures next; Clear
+  empties the log for everyone. "Log" under an answer opens that answer's record.
+
 | Shortcut | Action |
 | :--- | :--- |
 | Cmd/Ctrl+N | new chat |
 | Cmd/Ctrl+. | show or hide the stats panel |
 | Cmd/Ctrl+, | connection settings |
+| Cmd/Ctrl+L | request log |
 
 ## Installing
 
@@ -176,6 +184,7 @@ desktop/
 │       ├── LocalServer.svelte # start/stop an installed hypnos, live log
 │       ├── localServer.js    # its commands, events and saved settings
 │       ├── appPrefs.js       # tray / Dock / notification preferences, notifications
+│       ├── Logs.svelte       # request log: table, filters, level, clear, record details
 │       ├── Attachments.svelte # attachment chips (composer and messages)
 │       ├── video.js          # samples video frames in the webview
 │       └── Markdown.svelte   # marked + DOMPurify, copy buttons on code blocks
@@ -197,7 +206,8 @@ desktop/
 
 Tests: `cd src-tauri && cargo test`. Two tests need a real server and are ignored by default:
 `HYPNOS_TEST_URL=http://127.0.0.1:9999 cargo test hypnos -- --ignored` chats, cancels and checks
-the errors through the commands; `HYPNOS_TEST_URL=... HYPNOS_TEST_FILES=<dir with jfk.m4a and a
+the errors through the commands, and reads the request log (read-only: no level change, no
+clear); `HYPNOS_TEST_URL=... HYPNOS_TEST_FILES=<dir with jfk.m4a and a
 one-page sample.pdf containing "pelican"> cargo test attachments -- --ignored` prepares real
 attachments and asks a vision model about them; `cargo test web -- --ignored` (same URL, needs
 the network) reads example.com and a PDF and saves both; `cargo test mic -- --ignored` records

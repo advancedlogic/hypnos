@@ -262,6 +262,8 @@ vision model when the new message has images. `web.rs` fetches URLs on the Rust 
 on a thread of its own (CoreAudio streams are not `Send`), emits `mic-level`, and transcribes on
 stop. `tts.rs` turns an answer into speakable sentences (`speech_text`, `sentences`), synthesizes
 them in order and plays them on a rodio player thread; `speak` takes the text so far per call.
+The request log view (`Logs.svelte`) uses `hypnos_logs` / `hypnos_log` / `hypnos_set_log_level` /
+`hypnos_clear_logs`; chat `done` events carry the answer's `x-request-id` for its "Log" link.
 `tray.rs` is the tray icon (status dot drawn on the logo, menu events `tray-server` /
 `tray-open-settings` handled by the webview, close-to-tray in `on_window_event`, macOS Dock
 visibility); `local_server_stop_port` stops any local process named `hypnos` on the connection's

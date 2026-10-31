@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hypnos_client::{
-    ChatMessage, ChatRequest, Client, Content, ContentPart, Error, MemoryStatus, MemoryTier,
-    ModelStatus, Telemetry, ToolChoice, Usage,
+    ChatMessage, ChatRequest, Client, Content, ContentPart, Error, LogList, LogQuery, LogRecord,
+    MemoryStatus, MemoryTier, ModelStatus, Telemetry, ToolChoice, Usage,
 };
 
 use crate::attachments::Attachment;
@@ -418,6 +418,8 @@ pub enum ChatEvent {
         telemetry: Option<Box<Telemetry>>,
         usage: Option<Usage>,
         finish_reason: Option<String>,
+        /// The answer's `x-request-id`: its record in the request log (DESK-13).
+        request_id: Option<String>,
     },
 }
 
@@ -521,6 +523,7 @@ fn send_done(stream: &hypnos_client::ChatStream, on_event: &Channel<ChatEvent>) 
         telemetry: stream.telemetry().cloned().map(Box::new),
         usage: stream.usage().cloned(),
         finish_reason: stream.finish_reason().map(str::to_string),
+        request_id: stream.request_id().map(str::to_string),
     });
 }
 
@@ -662,6 +665,49 @@ async fn answer_with_prompt_tool<R: Runtime>(
         "[The image is now shown to the user. In one short sentence, tell them it is ready and what it shows; do not claim to see it and do not ask a question.]",
     ));
     stream_answer(client, &ChatRequest::new(model, follow_up), on_event).await
+}
+
+/// Filters of the request log view; `status` is `ok`, `error`, `4xx` or `5xx`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LogFilter {
+    pub model: Option<String>,
+    pub route: Option<String>,
+    pub status: Option<String>,
+    pub limit: Option<u32>,
+}
+
+/// `GET /v1/logs`, newest first (DESK-13).
+#[tauri::command]
+pub async fn hypnos_logs(hypnos: State<'_, Hypnos>, filter: LogFilter) -> CmdResult<LogList> {
+    let nonempty = |s: Option<String>| s.filter(|v| !v.trim().is_empty());
+    let query = LogQuery {
+        model: nonempty(filter.model),
+        route: nonempty(filter.route),
+        status: nonempty(filter.status),
+        key: None,
+        limit: filter.limit,
+    };
+    Ok(hypnos.client().await?.logs(&query).await?)
+}
+
+/// `GET /v1/logs/{id}`: one record, with the captured text and payloads at debug / trace.
+#[tauri::command]
+pub async fn hypnos_log(hypnos: State<'_, Hypnos>, id: String) -> CmdResult<LogRecord> {
+    Ok(hypnos.client().await?.log(&id).await?)
+}
+
+/// `POST /v1/logs/level`: `off`, `error`, `warn`, `info`, `debug` or `trace`.
+#[tauri::command]
+pub async fn hypnos_set_log_level(hypnos: State<'_, Hypnos>, level: String) -> CmdResult<()> {
+    hypnos.client().await?.set_log_level(&level).await?;
+    Ok(())
+}
+
+/// `DELETE /v1/logs`.
+#[tauri::command]
+pub async fn hypnos_clear_logs(hypnos: State<'_, Hypnos>) -> CmdResult<()> {
+    hypnos.client().await?.clear_logs().await?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -886,5 +932,95 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err.kind, "not_found", "{err:?}");
+    }
+
+    /// Reads the request log of a running server without changing it (no level change, no
+    /// clear): `HYPNOS_TEST_URL=... cargo test reads_the_request_log -- --ignored`.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn reads_the_request_log() {
+        use std::sync::Mutex as StdMutex;
+        use tauri::Manager;
+
+        let url = std::env::var("HYPNOS_TEST_URL").expect("HYPNOS_TEST_URL");
+        let app = tauri::test::mock_builder()
+            .manage(Hypnos::default())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        hypnos_connect(app.state(), url).await.unwrap();
+        let model = app
+            .state::<Hypnos>()
+            .pick("text_generation", None)
+            .await
+            .unwrap();
+
+        let request_id = std::sync::Arc::new(StdMutex::new(None::<String>));
+        let r = request_id.clone();
+        let channel = Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(s) = body {
+                let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+                if v["event"] == "done" {
+                    *r.lock().unwrap() = v["requestId"].as_str().map(str::to_string);
+                }
+            }
+            Ok(())
+        });
+        let message = vec![InMessage {
+            role: "user".into(),
+            content: "Reply with one word: ok".into(),
+            attachments: vec![],
+            image_prompt: None,
+        }];
+        hypnos_chat(
+            app.handle().clone(),
+            app.state(),
+            "log1".into(),
+            model.clone(),
+            message,
+            None,
+            channel,
+        )
+        .await
+        .unwrap();
+        let id = request_id
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the done event carries the request id");
+
+        let filter = LogFilter {
+            model: Some(model.clone()),
+            ..LogFilter::default()
+        };
+        let list = hypnos_logs(app.state(), filter).await.unwrap();
+        assert!(list.capacity > 0);
+        let row = list
+            .records
+            .iter()
+            .find(|r| r.id == id)
+            .expect("the chat is in the log");
+        assert_eq!(row.route, "/v1/chat/completions");
+        assert!(list
+            .records
+            .iter()
+            .all(|r| r.model.as_deref() == Some(model.as_str())));
+
+        let record = hypnos_log(app.state(), id.clone()).await.unwrap();
+        assert_eq!(record.id, id);
+        assert_eq!(record.status, 200);
+
+        let errors = hypnos_logs(
+            app.state(),
+            LogFilter {
+                status: Some("error".into()),
+                ..LogFilter::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(errors
+            .records
+            .iter()
+            .all(|r| r.status >= 400 || r.error.is_some()));
     }
 }

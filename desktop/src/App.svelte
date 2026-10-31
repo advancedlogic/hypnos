@@ -10,6 +10,7 @@
   import Chat from './lib/Chat.svelte';
   import StatsPanel from './lib/StatsPanel.svelte';
   import Settings from './lib/Settings.svelte';
+  import Logs from './lib/Logs.svelte';
   import logo from './assets/logo.png';
   import { listen } from '@tauri-apps/api/event';
   import { invoke } from '@tauri-apps/api/core';
@@ -32,6 +33,14 @@
   let status = $state({ state: 'connecting', health: null });
   let panelOpen = $state(readPanelOpen());
   let settingsOpen = $state(false);
+  /** The request log view (DESK-13) replaces the chat; `logFocus` is a record to open. */
+  let logsOpen = $state(false);
+  let logFocus = $state(null);
+
+  function showLog(id = null) {
+    logFocus = id;
+    logsOpen = true;
+  }
   let localOpen = $state(false);
   /** `{ binary, config, port, autoStart }` and the process status (DESK-5). */
   let localSettings = $state(null);
@@ -74,6 +83,10 @@
     } else if (e.key === ',') {
       e.preventDefault();
       settingsOpen = true;
+    } else if (e.key === 'l') {
+      e.preventDefault();
+      if (logsOpen) logsOpen = false;
+      else showLog();
     }
   }
 
@@ -274,6 +287,17 @@
           <span class="text-slate-500 font-mono">{new URL(connection.url).host}</span>
         {/if}
       </button>
+      <button
+        class="p-1.5 rounded-md hover:bg-slate-800 {logsOpen ? 'text-indigo-300' : 'text-slate-400 hover:text-slate-100'}"
+        onclick={() => (logsOpen ? (logsOpen = false) : showLog())}
+        title="Request log (⌘/Ctrl + L)"
+        aria-label="Request log"
+        aria-pressed={logsOpen}
+      >
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+        </svg>
+      </button>
       {#if localSettings}
         <button
           class="relative p-1.5 rounded-md text-slate-400 hover:text-slate-100 hover:bg-slate-800"
@@ -319,8 +343,14 @@
     <Sidebar {store} />
 
     <main class="flex-1 min-w-0">
-      <Chat {store} {models} {serverState} onsettings={() => (settingsOpen = true)}
+      {#if logsOpen}
+        {#key logFocus}
+          <Logs focus={logFocus} onclose={() => (logsOpen = false)} />
+        {/key}
+      {:else}
+      <Chat {store} {models} {serverState} onsettings={() => (settingsOpen = true)} onlog={showLog}
         onlocalserver={localSettings ? () => (localOpen = true) : null} />
+      {/if}
     </main>
 
     {#if panelOpen && connected}

@@ -129,3 +129,13 @@ export function setImageTool(on) {
     localStorage.setItem('hypnos.desktop.imageTool', String(on));
   } catch {}
 }
+
+/** The request log (DESK-13): `{ level, capacity, stored, records }`, newest first. */
+export const logs = (filter) => invoke('hypnos_logs', { filter });
+
+/** One record by its request id, with the captured text and payloads at debug / trace. */
+export const log = (id) => invoke('hypnos_log', { id });
+
+export const setLogLevel = (level) => invoke('hypnos_set_log_level', { level });
+
+export const clearLogs = () => invoke('hypnos_clear_logs');
