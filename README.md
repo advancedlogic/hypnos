@@ -50,32 +50,49 @@ pinned. 95 s of real time with the waits shortened (<code>tools/demo-gif/</code>
 
 ### Measured
 
-Measured on one 24 GB CUDA GPU with the default lineup (full reports in [docs/bench/](docs/bench/)):
+Full reports in [docs/bench/](docs/bench/). All chat numbers are Gemma 4 26B-A4B Q4.
+
+#### CUDA (24 GB GPUs)
 
 | Scenario | Result |
 | :--- | :--- |
-| Chat decode, Gemma 4 26B-A4B Q4 | ~100 tokens/s per stream on a 24 GB desktop GPU; **150** on an RTX 5090 laptop with 3 slots at 16k and an f16 KV cache (4 slots at 16k with q8_0 made llama.cpp re-capture its CUDA graph every step: 8 tokens/s, see [docs/bench/decode-slots-cuda-2026-10-30.md](docs/bench/decode-slots-cuda-2026-10-30.md)) |
+| Chat decode | ~100 tokens/s per stream on a 24 GB desktop GPU; **150** on an RTX 5090 laptop with 3 slots at 16k and an f16 KV cache (4 slots at 16k with q8_0 made llama.cpp re-capture its CUDA graph every step: 8 tokens/s, see [docs/bench/decode-slots-cuda-2026-10-30.md](docs/bench/decode-slots-cuda-2026-10-30.md)) |
 | Five-turn chat, time to first token per turn | 300 ms → **145 ms** with KV prefix reuse |
 | Follow-up question about the same image | 300 ms → **105 ms** (image not re-encoded) |
-| Next chat turn after the model was swapped out, 1.7k / 6.3k / 12.6k-token conversation | 1.40 / 2.56 / 4.71 s → **1.01 / 1.01 / 1.06 s** with KV parking (M5 Max, Metal; restore 2-5 ms for 230-344 MiB, [report](docs/bench/mem4-baseline-2026-10-30.md)) |
 | Four concurrent chat clients | **2.18x** the aggregate decode throughput of one (continuous batching) |
 | Text-to-speech, time to first audio | 5.4 s → **385 ms** with streaming synthesis |
 | Document conversion (docling), text page / page with two tables | **49 ms** / 1.07 s on the GPU, 133 ms / 0.9 s on the CPU (RTX 5090 laptop; [report](docs/bench/docling-cuda-2026-10-30.md)) |
-| Entity extraction (GLiNER2.5), 1,700 words with 11 labels | **1.5 s** on an M5 Max CPU, models loaded in under a second |
+| Model swap, Tier 2 → first token | **3.7-4.2 s** (RTX 5090 laptop, Windows; [report](docs/bench/swap-cuda-2026-10-30.md)) |
 
-Model swap: time to the first token of Gemma 4 26B-A4B Q4 (15.8 GB) depending on where the
-scheduler finds it, measured on an Apple M5 Max (128 GB, Metal) with the OS page cache dropped for
-the Tier 3 runs ([report](docs/bench/swap-metal-2026-10-29.md)):
+The Tier 2 promotion was 7.5 s warm and 23-59 s when another model had just been loaded before
+the PERF-6 changes: the weights are now read through pinned staging buffers instead of a file
+mapping (2.4x faster upload), and Tier 2 pins a model's projector and text-encoder files with its
+weights. KV parking and MoE expert offload are not measured on CUDA yet.
 
-![Time to first token by start tier: Tier 3 2.29 s, Tier 2 0.99 s, Tier 1 84 ms](docs/bench/swap-metal-2026-10-29.svg)
+<!-- PERF-5: add the CUDA run (bench.sh --scenarios 7) as a chart like the Metal one. -->
 
-On CUDA (RTX 5090 laptop, Windows), the same model promotes from Tier 2 in 3.7-4.2 s after the
-PERF-6 changes, down from 7.5 s warm and 23-59 s when another model had just been loaded
-([report](docs/bench/swap-cuda-2026-10-30.md)): the weights are read through pinned staging
-buffers instead of a file mapping (2.4x faster upload), and Tier 2 pins a model's projector and
-text-encoder files with its weights.
+#### Apple Silicon (M5 Max, 128 GB, Metal)
 
-<!-- PERF-5: add the CUDA run (bench.sh --scenarios 7) next to the Metal one. -->
+Release build, `hypnos.macos.example.toml` ([report](docs/bench/metal-2026-10-31.md), KV parking,
+MoE offload and slots in [docs/bench/metal-features-2026-10-31.md](docs/bench/metal-features-2026-10-31.md)):
+
+| Scenario | Result |
+| :--- | :--- |
+| Chat decode | **113-117 tokens/s** per stream; prefill 3,600-4,000 tokens/s on a 6.4k-token prompt |
+| Five-turn chat, time to first token per turn | 182 ms → **97-100 ms** with KV prefix reuse |
+| Follow-up question about the same image | 164 ms → **90 ms** (image not re-encoded) |
+| Four concurrent chat clients | **1.43x** the aggregate throughput of one with `slots = 4` (169 vs 118 tokens/s, slowest first token 274 ms); the shipped profile has `slots = 1`, where they queue (0.97x, slowest first token 3.4 s) |
+| Text-to-speech, time to first audio | 5.0 s → **359 ms** with streaming synthesis (Kokoro on the CPU, RTF 0.13) |
+| Voice round trip (11 s of speech → transcript → reply → speech) | **2.25 s** to the first audio; transcription 0.98 s (RTF 0.04) |
+| Next chat turn after the model was swapped out, 1.7k / 6.3k / 12.6k-token conversation | 1.39 / 2.57 / 4.62 s → **1.04 / 1.08 / 1.12 s** with KV parking (restore 2-5 ms for 230-344 MiB) |
+| MoE expert offload (`moe_offload = "on"`) | GPU weights 15.8 → **3.0 GB** (12.8 GB of experts in host memory), at 49 vs 113 tokens/s decode and 250 vs 3,800 tokens/s prefill: no use on unified memory, which is why `auto` never acts there |
+| Entity extraction (GLiNER2.5), 1,700 words with 11 labels | **1.5 s** on the CPU, models loaded in under a second |
+
+Model swap: time to the first token of the same model (15.8 GB) depending on where the scheduler
+finds it, with the weight files evicted from the OS page cache for the Tier 3 runs as far as macOS
+allows (19% stayed resident):
+
+![Time to first token by start tier: Tier 3 2.32 s, Tier 2 987 ms, Tier 1 54 ms](docs/bench/swap-metal-2026-10-31.svg)
 
 ### How it compares
 
@@ -517,11 +534,11 @@ Behaviour that matters in production:
 - **MoE expert offload** (`moe_offload` per model: `off` (default), `auto`, `on`;
   `POST /v1/models/{id}/moe-offload` at runtime): the expert tensors of a Mixture-of-Experts model
   stay in host memory and run on the CPU, while attention, the dense layers, the router and the KV
-  cache stay on the GPU. Gemma 4 26B-A4B then needs about 2.8 GiB of weights on the GPU instead of
-  14.7 GiB. `on` offloads every layer's experts; `auto` offloads the experts of as few of the last
-  layers as needed when the model does not fit whole, before falling back to a layer split
-  (discrete GPUs only). It costs speed: on an M5 Max decode went from ~105 to ~47 tokens/s and
-  prefill from 4,100 to 300 tokens/s, which is why `auto` never acts on unified memory; the CUDA
+  cache stay on the GPU. Gemma 4 26B-A4B then needs 3.0 GB of weights on the GPU instead of 15.8 GB
+  (projector included). `on` offloads every layer's experts; `auto` offloads the experts of as few
+  of the last layers as needed when the model does not fit whole, before falling back to a layer split
+  (discrete GPUs only). It costs speed: on an M5 Max decode went from ~113 to ~49 tokens/s and
+  prefill from ~3,800 to ~250 tokens/s, which is why `auto` never acts on unified memory; the CUDA
   measurement is pending. The placement reports `cpu_expert_layers`. Design:
   [docs/moe.md](docs/moe.md).
 - **Exposure**: binds `127.0.0.1` by default; CORS allows loopback origins only unless
