@@ -535,6 +535,7 @@ async fn answer_with_image_tool<R: Runtime>(
         Some(ChatMessage {
             role,
             content: Content::Text(system),
+            ..
         }) if role == "system" => {
             system.push_str("\n\n");
             system.push_str(TOOL_INSTRUCTION);

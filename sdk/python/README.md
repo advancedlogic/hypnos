@@ -24,7 +24,7 @@ with Client() as hypnos:        # http://127.0.0.1:9999, or $HYPNOS_BASE_URL / $
 
 | Method | Route |
 | :--- | :--- |
-| `chat`, `chat_stream` | `POST /v1/chat/completions` (text, `image_url` and `input_audio` parts) |
+| `chat`, `chat_stream` | `POST /v1/chat/completions` (text, `image_url` and `input_audio` parts, tools) |
 | `embeddings` | `POST /v1/embeddings` |
 | `transcribe` | `POST /v1/audio/transcriptions` (multipart upload) |
 | `speech`, `speech_stream` | `POST /v1/audio/speech` |
@@ -55,6 +55,35 @@ Leaving the `with` block (or `stream.close()`) closes the connection, and the se
 the next token. `stream.final()` reads the rest and returns a normal completion. A stream that
 fails after it started raises `StreamError`. Document streams yield `document.started`,
 `document.page` and `document` events; `final()` returns the whole document with its pages.
+
+## Tool calling
+
+`chat` and `chat_stream` take `tools` and `tool_choice` (`"auto"`, `"none"`, `"required"` or
+`{"type": "function", "function": {"name": ...}}`). The server never runs a tool: the model asks
+for calls, you run them and send the results back.
+
+```python
+import json
+from hypnos_client import assistant_message, function_tool, parse_arguments, tool_message
+
+weather = function_tool(
+    "get_weather", "Current weather for a city",
+    {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+)
+messages = [{"role": "user", "content": "What's the weather in Paris?"}]
+reply = hypnos.chat("gemma4:26b-q4", messages, tools=[weather])
+if reply["choices"][0]["finish_reason"] == "tool_calls":
+    messages.append(assistant_message(reply))         # keeps tool_calls, content None
+    for call in reply["choices"][0]["message"]["tool_calls"]:
+        args = parse_arguments(call)                  # {"city": "Paris"}; validate before use
+        messages.append(tool_message(call["id"], json.dumps({"temperature": 18})))
+    reply = hypnos.chat("gemma4:26b-q4", messages, tools=[weather])
+print(reply["choices"][0]["message"]["content"])
+```
+
+A stream accumulates the calls by `index` in `stream.tool_calls`, and `stream.final()` returns
+them in `message.tool_calls` with `finish_reason` `"tool_calls"`. A `tool_choice` naming a
+function that is not in `tools` raises `BadRequestError`.
 
 ## Errors and retries
 

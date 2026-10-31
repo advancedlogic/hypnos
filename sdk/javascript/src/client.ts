@@ -27,6 +27,8 @@ import type {
   PictureList,
   Speech,
   TierMove,
+  ToolChoice,
+  ToolSpec,
   Transcription,
 } from "./types.js";
 
@@ -70,6 +72,10 @@ export interface ChatOptions extends CallOptions {
   num_ctx?: number;
   /** Hypnos extension: Gemma 4's thinking channel. */
   think?: boolean;
+  /** Functions the model may call (docs/api.md section 7.5). */
+  tools?: ToolSpec[];
+  /** `"auto"` (the server's default when `tools` is set), `"none"`, `"required"` or a named function. */
+  tool_choice?: ToolChoice;
   /** Any other body field. */
   extra?: Record<string, unknown>;
 }
@@ -462,6 +468,8 @@ export class Client {
         seed: o.seed,
         num_ctx: o.num_ctx,
         think: o.think,
+        tools: o.tools,
+        tool_choice: o.tool_choice,
         stream,
       }),
       ...(o.extra ?? {}),

@@ -70,9 +70,72 @@ export type ContentPart =
   | { type: "image_url"; image_url: { url: string; detail?: string } }
   | { type: "input_audio"; input_audio: { data: string; format?: string } };
 
-export interface ChatMessage {
-  role: "system" | "user" | "assistant";
+/** A function the model may call (`tools`, docs/api.md section 7.5). */
+export interface ToolSpec {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    /** JSON Schema of the arguments object. */
+    parameters?: Record<string, unknown>;
+  };
+}
+
+/** `tool_choice`: whether and which tool the model must call. */
+export type ToolChoice =
+  | "none"
+  | "auto"
+  | "required"
+  | { type: "function"; function: { name: string } };
+
+/** A call the model asked for; `arguments` is a JSON object serialized as a string. */
+export interface ToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+/** One element of a streamed `delta.tool_calls`, accumulated by `index`. */
+export interface ToolCallDelta {
+  index: number;
+  id?: string;
+  type?: "function";
+  function?: { name?: string; arguments?: string };
+}
+
+export interface SystemMessage {
+  role: "system";
   content: string | ContentPart[];
+}
+
+export interface UserMessage {
+  role: "user";
+  content: string | ContentPart[];
+}
+
+/** An assistant turn; `content` is `null` when it only calls tools. */
+export interface AssistantMessage {
+  role: "assistant";
+  content: string | ContentPart[] | null;
+  tool_calls?: ToolCall[];
+}
+
+/** The result of a tool call, sent back to the model. */
+export interface ToolMessage {
+  role: "tool";
+  tool_call_id: string;
+  content: string | ContentPart[];
+  name?: string;
+}
+
+export type ChatMessage = SystemMessage | UserMessage | AssistantMessage | ToolMessage;
+
+/** The assistant message of a completion. */
+export interface CompletionMessage {
+  role: string;
+  content: string;
+  /** Present only when the model called tools (`finish_reason` `tool_calls`). */
+  tool_calls?: ToolCall[];
 }
 
 export interface Usage {
@@ -87,7 +150,7 @@ export interface ChatCompletion {
   object: string;
   created: number;
   model: string;
-  choices: { index: number; message: { role: string; content: string }; finish_reason: string }[];
+  choices: { index: number; message: CompletionMessage; finish_reason: string }[];
   usage: Usage;
   hypnos_telemetry?: Telemetry;
 }
@@ -99,7 +162,7 @@ export interface ChatCompletionChunk {
   model: string;
   choices: {
     index: number;
-    delta: { role?: string; content?: string };
+    delta: { role?: string; content?: string; tool_calls?: ToolCallDelta[] };
     finish_reason: string | null;
   }[];
   usage?: Usage;

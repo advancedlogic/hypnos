@@ -15,6 +15,7 @@ use std::ffi::CString;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Instant;
 
+use crate::tools::{CallParser, Parsed, CALL_OPEN};
 use async_trait::async_trait;
 use chrono::Utc;
 use hypnos_core::config::{MemoryTier, Modality, ModelConfig};
@@ -24,7 +25,7 @@ use hypnos_core::openai::{
     AudioTranscriptionRequest, AudioTranscriptionResponse, ChatChoice, ChatCompletionRequest,
     ChatCompletionResponse, ChatMessage, ChatResponseMessage, ChatStreamEvent, EmbeddingData,
     EmbeddingRequest, EmbeddingResponse, EmbeddingUsage, ExecutionTelemetry, LoadPhases,
-    PromptTokensDetails, TokenUsage,
+    PromptTokensDetails, TokenUsage, ToolCall, ToolChoice, ToolSpec,
 };
 use hypnos_core::request::RequestContext;
 use hypnos_core::ModelBackend;
@@ -185,10 +186,18 @@ pub(crate) fn load_model(
 // Prompt construction
 // ----------------------------------------------------------------------------
 
-/// Builds a Gemma 4 canonical prompt by hand (llama.cpp's built-in minimal templates only know the
-/// Gemma 1-3 `<start_of_turn>` format). Media parts are rendered as `marker`, which libmtmd replaces
-/// with the proper image / audio token spans. `<bos>` is added by the tokenizer (`add_special`).
-fn gemma4_prompt(messages: &[ChatMessage], marker: &str, think: bool) -> String {
+/// Gemma 4's turn format, as its GGUF chat template renders it (the template itself is not run:
+/// llama.cpp's basic template call cannot evaluate it), with the proper image / audio token
+/// spans. `<bos>` is added by the tokenizer (`add_special`). With `tools`, the declarations close
+/// the system turn and past calls and their results sit in the model's turn (see `tools.rs`);
+/// `prefill` is appended after the generation prompt (a forced tool call's opening).
+fn gemma4_prompt(
+    messages: &[ChatMessage],
+    marker: &str,
+    think: bool,
+    tools: &[ToolSpec],
+    prefill: &str,
+) -> String {
     let mut out = String::new();
     let system_text: Vec<String> = messages
         .iter()
@@ -196,30 +205,88 @@ fn gemma4_prompt(messages: &[ChatMessage], marker: &str, think: bool) -> String 
         .map(|m| m.content.extract_text().trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
-    if think || !system_text.is_empty() {
+    if think || !system_text.is_empty() || !tools.is_empty() {
         out.push_str("<|turn>system\n");
         if think {
             out.push_str("<|think|>\n");
         }
         out.push_str(&system_text.join("\n"));
+        for tool in tools {
+            out.push_str(&crate::tools::declaration(tool));
+        }
         out.push_str("<turn|>\n");
     }
-    for m in messages
+    let turns: Vec<&ChatMessage> = messages
         .iter()
         .filter(|m| m.role != "system" && m.role != "developer")
-    {
+        .collect();
+    let mut prev_role: Option<&str> = None;
+    // Whether the rendering stopped right after tool results (the model continues there).
+    let mut ended_on_results = false;
+    for (i, m) in turns.iter().enumerate() {
+        if m.role == "tool" {
+            continue; // rendered with the assistant message whose call it answers
+        }
         let role = match m.role.as_str() {
             "assistant" | "model" => "model",
             _ => "user",
         };
-        out.push_str("<|turn>");
-        out.push_str(role);
-        out.push('\n');
-        out.push_str(m.content.render_with_media_marker(marker).trim());
-        out.push_str("<turn|>\n");
+        if !(role == "model" && prev_role == Some("assistant")) {
+            out.push_str("<|turn>");
+            out.push_str(role);
+            out.push('\n');
+        }
+        let calls = m.tool_calls.as_deref().unwrap_or(&[]);
+        for call in calls {
+            out.push_str(&crate::tools::call_text(call));
+        }
+        let mut answered = false;
+        if !calls.is_empty() {
+            for follow in turns[i + 1..].iter().take_while(|f| f.role == "tool") {
+                let name = follow
+                    .tool_call_id
+                    .as_deref()
+                    .and_then(|id| calls.iter().find(|c| c.id == id))
+                    .map(|c| c.function.name.as_str())
+                    .or(follow.name.as_deref())
+                    .unwrap_or("unknown");
+                out.push_str(&crate::tools::response_text(
+                    name,
+                    follow.content.extract_text().trim(),
+                ));
+                answered = true;
+            }
+        }
+        let content = m.content.render_with_media_marker(marker);
+        let content = content.trim();
+        out.push_str(content);
+        let next_role = turns[i + 1..]
+            .iter()
+            .find(|f| f.role != "tool")
+            .map(|f| f.role.as_str());
+        let continues =
+            role == "model" && next_role == Some("assistant") && (calls.is_empty() || answered);
+        ended_on_results = false;
+        if !calls.is_empty() && !answered {
+            out.push_str(crate::tools::RESPONSE_OPEN);
+        } else if continues {
+        } else if answered && content.is_empty() && next_role.is_none() {
+            ended_on_results = true;
+        } else {
+            out.push_str("<turn|>\n");
+        }
+        prev_role = Some(m.role.as_str());
     }
-    out.push_str("<|turn>model\n");
+    if !ended_on_results {
+        out.push_str("<|turn>model\n");
+    }
+    out.push_str(prefill);
     out
+}
+
+/// Whether the model's native tool format is implemented (Gemma 4, `tools.rs`).
+pub(crate) fn supports_tools(arch: &str) -> bool {
+    arch.starts_with("gemma4")
 }
 
 /// Generic fallback for non-Gemma models: the GGUF's own template through llama.cpp, else ChatML.
@@ -229,9 +296,11 @@ pub(crate) fn build_prompt(
     messages: &[ChatMessage],
     marker: &str,
     think: bool,
+    tools: &[ToolSpec],
+    prefill: &str,
 ) -> String {
-    if arch.starts_with("gemma4") || arch.starts_with("gemma-embedding") {
-        return gemma4_prompt(messages, marker, think);
+    if supports_tools(arch) || arch.starts_with("gemma-embedding") {
+        return gemma4_prompt(messages, marker, think, tools, prefill);
     }
     if let Ok(tmpl) = model.chat_template(None) {
         let chat: Vec<LlamaChatMessage> = messages
@@ -338,13 +407,23 @@ impl GgmlLlamaBackend {
         }
     }
 
-    /// Shared implementation for streaming and non-streaming chat.
+    /// Shared implementation for streaming and non-streaming chat. With tools the engine's raw
+    /// output goes through a [`CallParser`]: text and calls reach the stream as they are parsed,
+    /// and the result carries both.
     async fn generate_chat(
         &self,
         req: &ChatCompletionRequest,
         rctx: &RequestContext,
         tx: Option<mpsc::Sender<ChatStreamEvent>>,
-    ) -> Result<(String, GenStats)> {
+    ) -> Result<ChatOutput> {
+        let (tools, choice) = req.active_tools().map_err(HypnosError::InvalidRequest)?;
+        // No grammar constraint here: a required or named call is forced by writing its opening.
+        let prefill = match &choice {
+            ToolChoice::Required => format!("{CALL_OPEN}call:"),
+            ToolChoice::Function(name) => format!("{CALL_OPEN}call:{name}{{"),
+            ToolChoice::Auto | ToolChoice::None => String::new(),
+        };
+        let with_tools = !tools.is_empty();
         let total_chars: usize = req
             .messages
             .iter()
@@ -386,22 +465,106 @@ impl GgmlLlamaBackend {
             top_k: req.top_k.unwrap_or(64),
             seed: req.seed.map(|s| s as u32).unwrap_or_else(rand::random),
         };
+        let id_prefix = Uuid::new_v4().simple().to_string()[..12].to_string();
+        // With tools, the engine streams into a parser that forwards text and calls.
+        let (engine_tx, forward) = match (tx, with_tools) {
+            (Some(tx), true) => {
+                let (itx, mut irx) = mpsc::channel::<ChatStreamEvent>(128);
+                let mut parser = CallParser::new(&prefill, &id_prefix);
+                let forward = tokio::spawn(async move {
+                    let mut calls = Vec::new();
+                    while let Some(event) = irx.recv().await {
+                        let parsed = match event {
+                            ChatStreamEvent::Delta(text) => parser.feed(&text),
+                            other => {
+                                let _ = tx.send(other).await;
+                                continue;
+                            }
+                        };
+                        forward_parsed(&tx, parsed, &mut calls).await;
+                    }
+                    forward_parsed(&tx, parser.finish(), &mut calls).await;
+                    calls
+                });
+                (Some(itx), Some(forward))
+            }
+            (tx, _) => (tx, None),
+        };
         let (reply_tx, reply_rx) = oneshot::channel();
         self.submit(LlamaJob::Chat(ChatJob {
             prompt: PromptSpec::Messages {
                 messages: req.messages.clone(),
                 think: req.think.unwrap_or(false),
+                tools: tools.to_vec(),
+                prefill: prefill.clone(),
             },
+            tool_markers: with_tools,
             media,
             params,
             rctx: rctx.clone(),
             started: Instant::now(),
-            stream: tx,
+            stream: engine_tx,
             reply: reply_tx,
         }))?;
-        reply_rx
+        let (raw, mut stats) = reply_rx
             .await
-            .map_err(|_| HypnosError::BackendError("engine worker dropped the request".into()))?
+            .map_err(|_| HypnosError::BackendError("engine worker dropped the request".into()))??;
+        let (content, tool_calls) = match forward {
+            // The engine dropped its sender with the request; the parser has flushed.
+            Some(forward) => (
+                String::new(),
+                forward.await.map_err(|e| {
+                    HypnosError::BackendError(format!("tool-call parser failed: {e}"))
+                })?,
+            ),
+            None if with_tools => {
+                let mut parser = CallParser::new(&prefill, &id_prefix);
+                let mut parsed = parser.feed(&raw);
+                parsed.extend(parser.finish());
+                let mut text = String::new();
+                let mut calls = Vec::new();
+                for p in parsed {
+                    match p {
+                        Parsed::Text(t) => text.push_str(&t),
+                        Parsed::Call(c) => calls.push(c),
+                    }
+                }
+                (text.trim().to_string(), calls)
+            }
+            None => (raw, Vec::new()),
+        };
+        if !tool_calls.is_empty() {
+            stats.finish_reason = "tool_calls";
+        }
+        Ok(ChatOutput {
+            content,
+            tool_calls,
+            stats,
+        })
+    }
+}
+
+/// A chat answer: its text, the calls it made (with tools) and the engine's numbers.
+struct ChatOutput {
+    content: String,
+    tool_calls: Vec<ToolCall>,
+    stats: GenStats,
+}
+
+async fn forward_parsed(
+    tx: &mpsc::Sender<ChatStreamEvent>,
+    parsed: Vec<Parsed>,
+    calls: &mut Vec<ToolCall>,
+) {
+    for p in parsed {
+        let event = match p {
+            Parsed::Text(t) => ChatStreamEvent::Delta(t),
+            Parsed::Call(c) => {
+                calls.push(c.clone());
+                ChatStreamEvent::ToolCall(c)
+            }
+        };
+        let _ = tx.send(event).await;
     }
 }
 
@@ -507,7 +670,11 @@ impl ModelBackend for GgmlLlamaBackend {
         req: &ChatCompletionRequest,
         ctx: &RequestContext,
     ) -> Result<ChatCompletionResponse> {
-        let (content, stats) = self.generate_chat(req, ctx, None).await?;
+        let ChatOutput {
+            content,
+            tool_calls,
+            stats,
+        } = self.generate_chat(req, ctx, None).await?;
         Ok(ChatCompletionResponse {
             id: format!("chatcmpl-{}", Uuid::new_v4().simple()),
             object: "chat.completion".to_string(),
@@ -518,6 +685,7 @@ impl ModelBackend for GgmlLlamaBackend {
                 message: ChatResponseMessage {
                     role: "assistant".to_string(),
                     content,
+                    tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
                 },
                 finish_reason: stats.finish_reason.to_string(),
             }],
@@ -533,7 +701,7 @@ impl ModelBackend for GgmlLlamaBackend {
         tx: mpsc::Sender<ChatStreamEvent>,
     ) -> Result<()> {
         match self.generate_chat(req, ctx, Some(tx.clone())).await {
-            Ok((_, stats)) => {
+            Ok(ChatOutput { stats, .. }) => {
                 let _ = tx
                     .send(ChatStreamEvent::Done {
                         usage: usage(&stats),
@@ -586,15 +754,19 @@ impl ModelBackend for GgmlLlamaBackend {
             &[ChatMessage {
                 role: "user".to_string(),
                 content: hypnos_core::openai::ChatMessageContent::Text(user_text),
+                ..ChatMessage::default()
             }],
             marker,
             false,
+            &[],
+            "",
         );
         let duration = wav_duration_secs(&req.audio_bytes);
         let started = Instant::now();
         let (reply_tx, reply_rx) = oneshot::channel();
         self.submit(LlamaJob::Chat(ChatJob {
             prompt: PromptSpec::Raw(prompt),
+            tool_markers: false,
             media: vec![req.audio_bytes.clone()],
             params: GenParams {
                 max_tokens: 1024,
@@ -674,5 +846,73 @@ impl ModelBackend for GgmlLlamaBackend {
             },
             hypnos_telemetry: Some(ExecutionTelemetry::for_engine(timing)),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gemma4_prompt;
+    use hypnos_core::openai::{ChatMessage, ChatMessageContent, FunctionCall, ToolCall, ToolSpec};
+    use serde_json::json;
+
+    fn msg(role: &str, text: &str) -> ChatMessage {
+        ChatMessage {
+            role: role.into(),
+            content: ChatMessageContent::Text(text.into()),
+            ..ChatMessage::default()
+        }
+    }
+
+    /// The same conversation through the GGUF's Jinja template gives exactly this (minus <bos>).
+    #[test]
+    fn a_tool_round_renders_like_the_chat_template() {
+        let tool: ToolSpec = serde_json::from_value(json!({
+            "type": "function",
+            "function": {"name": "get_weather", "description": "Weather",
+                         "parameters": {"type": "object",
+                                        "properties": {"city": {"type": "string"}},
+                                        "required": ["city"]}}
+        }))
+        .unwrap();
+        let mut call = msg("assistant", "");
+        call.tool_calls = Some(vec![ToolCall {
+            id: "c1".into(),
+            kind: "function".into(),
+            function: FunctionCall {
+                name: "get_weather".into(),
+                arguments: r#"{"city":"Paris"}"#.into(),
+            },
+        }]);
+        let mut result = msg("tool", "18 C");
+        result.tool_call_id = Some("c1".into());
+        let messages = vec![
+            msg("system", "Be brief."),
+            msg("user", "Weather in Paris?"),
+            call,
+            result,
+        ];
+        let prompt = gemma4_prompt(
+            &messages,
+            "<__media__>",
+            false,
+            std::slice::from_ref(&tool),
+            "",
+        );
+        assert_eq!(
+            prompt,
+            "<|turn>system\nBe brief.<|tool>declaration:get_weather{description:<|\"|>Weather<|\"|>,parameters:{properties:{city:{type:<|\"|>STRING<|\"|>}},required:[<|\"|>city<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n\
+             <|turn>user\nWeather in Paris?<turn|>\n\
+             <|turn>model\n<|tool_call>call:get_weather{city:<|\"|>Paris<|\"|>}<tool_call|><|tool_response>response:get_weather{value:<|\"|>18 C<|\"|>}<tool_response|>"
+        );
+
+        // The answer that followed continues the same model turn; a new question opens one.
+        let mut later = messages.clone();
+        later.push(msg("assistant", "It is 18 C."));
+        later.push(msg("user", "Thanks"));
+        let prompt = gemma4_prompt(&later, "<__media__>", false, &[tool], "<|tool_call>call:");
+        assert!(prompt.contains("<tool_response|>It is 18 C.<turn|>\n<|turn>user\nThanks<turn|>\n<|turn>model\n<|tool_call>call:"));
+        // Without tools nothing changes for an ordinary chat.
+        let plain = gemma4_prompt(&[msg("user", "Hi")], "<__media__>", false, &[], "");
+        assert_eq!(plain, "<|turn>user\nHi<turn|>\n<|turn>model\n");
     }
 }

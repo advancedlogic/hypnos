@@ -6,7 +6,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 
-import { NotFoundError, StreamError, sliceByCodePoints } from "../dist/index.js";
+import {
+  BadRequestError, NotFoundError, StreamError, assistantMessage, parseArguments, sliceByCodePoints, toolMessage,
+} from "../dist/index.js";
 import {
   CHAT, DOCS, EMBED, IMAGE, MockServer, NER, STT, TTS, USER, b64decode, enc, startsWith,
 } from "./helpers.mjs";
@@ -278,4 +280,87 @@ test("logs", async () => {
   assert.equal((await client.setLogLevel("debug")).level, "debug");
   await client.setLogLevel("info");
   assert.equal((await client.clearLogs()).cleared, true);
+});
+
+// --- tool calling (docs/api.md section 7.5) ------------------------------------------------------
+
+const TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "get_weather",
+      description: "Current weather for a city",
+      parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
+    },
+  },
+  { type: "function", function: { name: "get_time" } },
+];
+
+test("chat tool call with auto", async () => {
+  const text = "please get_weather for Paris";
+  const reply = await client.chat(CHAT, [{ role: "user", content: text }], { tools: TOOLS, tool_choice: "auto" });
+  const choice = reply.choices[0];
+  assert.equal(choice.finish_reason, "tool_calls");
+  assert.equal(choice.message.content, "");
+  assert.equal(choice.message.tool_calls.length, 1);
+  const call = choice.message.tool_calls[0];
+  assert.equal(call.type, "function");
+  assert.equal(call.function.name, "get_weather");
+  assert.ok(call.id);
+  assert.deepEqual(JSON.parse(call.function.arguments), { text });
+  assert.deepEqual(parseArguments(call), { text });
+});
+
+test("chat without a tool named answers in text", async () => {
+  const reply = await client.chat(CHAT, USER, { tools: TOOLS });
+  assert.equal(reply.choices[0].finish_reason, "stop");
+  assert.equal(reply.choices[0].message.content, "echo: hello there");
+  assert.equal(reply.choices[0].message.tool_calls, undefined);
+});
+
+test("chat tool round trip", async () => {
+  const messages = [{ role: "user", content: "what is get_time now" }];
+  const first = await client.chat(CHAT, messages, { tools: TOOLS });
+  const [call] = first.choices[0].message.tool_calls;
+  assert.equal(call.function.name, "get_time");
+  const assistant = assistantMessage(first);
+  assert.equal(assistant.role, "assistant");
+  assert.equal(assistant.content, null);
+  assert.deepEqual(assistant.tool_calls, [call]);
+  messages.push(assistant, toolMessage(call.id, '{"time": "12:00"}'));
+  const second = await client.chat(CHAT, messages, { tools: TOOLS });
+  assert.equal(second.choices[0].finish_reason, "stop");
+  assert.equal(second.choices[0].message.content, 'tool said: {"time": "12:00"}');
+});
+
+test("chat stream tool call with required", async () => {
+  const stream = await client.chatStream(CHAT, USER, { tools: TOOLS, tool_choice: "required" });
+  const completion = await stream.final();
+  assert.equal(stream.finishReason, "tool_calls");
+  assert.equal(stream.toolCalls.length, 1);
+  const call = stream.toolCalls[0];
+  assert.equal(call.function.name, "get_weather");
+  assert.ok(call.id);
+  assert.deepEqual(JSON.parse(call.function.arguments), { text: "hello there" });
+  assert.equal(completion.choices[0].finish_reason, "tool_calls");
+  assert.deepEqual(completion.choices[0].message.tool_calls, [call]);
+  assert.equal(assistantMessage(completion).content, null);
+});
+
+test("chat stream tool call with a named function", async () => {
+  const stream = await client.chatStream(CHAT, USER, {
+    tools: TOOLS,
+    tool_choice: { type: "function", function: { name: "get_time" } },
+  });
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  assert.ok(chunks.some((c) => c.choices[0]?.delta?.tool_calls?.[0]?.index === 0));
+  assert.deepEqual(stream.toolCalls.map((c) => c.function.name), ["get_time"]);
+});
+
+test("chat tool_choice naming an unknown tool", async () => {
+  await assert.rejects(
+    client.chat(CHAT, USER, { tools: TOOLS, tool_choice: { type: "function", function: { name: "nope" } } }),
+    (err) => err instanceof BadRequestError && err.status === 400 && err.type === "invalid_request_error",
+  );
 });

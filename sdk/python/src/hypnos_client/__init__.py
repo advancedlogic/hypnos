@@ -30,6 +30,7 @@ from .errors import (
     StreamError,
 )
 from .retry import NO_RETRY, RetryPolicy
+from .tools import assistant_message, function_tool, parse_arguments, tool_message
 from .streams import (
     AsyncChatStream,
     AsyncDocumentStream,
@@ -67,5 +68,9 @@ __all__ = [
     "SpeechTelemetry",
     "StreamError",
     "__version__",
+    "assistant_message",
+    "function_tool",
+    "parse_arguments",
+    "tool_message",
     "types",
 ]

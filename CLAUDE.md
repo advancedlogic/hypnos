@@ -176,7 +176,11 @@ keep that profile in sync with `hypnos.example.toml` when adding models or field
 
 ### Engines (`hypnos-backends`)
 
-- `llama.rs`: `ggml_llama`. Text, vision, audio-in (via mtmd), embeddings. `engine.rs` /
+- `llama.rs`: `ggml_llama`. Text, vision, audio-in (via mtmd), embeddings, tool calling (`tools.rs`:
+  Gemma 4's native format, rendered by `gemma4_prompt` as its GGUF template does; with tools the
+  engine passes `<|tool_call>` / `<tool_call|>` / `<|"|>` through and stops at `<|tool_response>`,
+  and a `CallParser` turns the raw text into OpenAI `tool_calls`; `tool_choice` required / named
+  is forced by prefilling the call's opening; other architectures refuse `tools` with 400). `engine.rs` /
   `worker.rs`: one worker thread per resident model owns a persistent context with `slots`
   execution slots (KV prefix reuse, continuous batching); `docs/execution-efficiency-plan.md`
   is the reference for that area. Loading (PERF-6): `models.use_mmap` unset means the weights

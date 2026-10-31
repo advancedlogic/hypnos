@@ -24,7 +24,7 @@ console.log(reply.hypnos_telemetry?.tier_switch_latency_ms);
 
 | Method | Route |
 | :--- | :--- |
-| `chat`, `chatStream` | `POST /v1/chat/completions` (text, `image_url` and `input_audio` parts) |
+| `chat`, `chatStream` | `POST /v1/chat/completions` (text, `image_url` and `input_audio` parts, tools) |
 | `embeddings` | `POST /v1/embeddings` |
 | `transcribe` | `POST /v1/audio/transcriptions` (multipart upload) |
 | `speech`, `speechStream` | `POST /v1/audio/speech` |
@@ -60,6 +60,46 @@ closes the connection, and the server stops at the next token. Every method acce
 was read, it returns what was collected. A stream that fails after it started throws
 `StreamError`. Document streams yield `document.started`, `document.page` and `document`
 events; `final()` returns the whole document with its pages put back.
+
+## Tool calling
+
+`tools` and `tool_choice` (`"auto"`, `"none"`, `"required"` or
+`{ type: "function", function: { name } }`) go in the options of `chat` and `chatStream`
+([docs/api.md section 7.5](../../docs/api.md)). The server never runs a tool: when the model
+calls one, `finish_reason` is `tool_calls` and `message.tool_calls` lists the calls. Append
+`assistantMessage(reply)` and one `toolMessage(call.id, result)` per call, then ask again with
+the same `tools`.
+
+```ts
+import { Client, assistantMessage, parseArguments, toolMessage } from "@hypnos/client";
+import type { ChatMessage, ToolSpec } from "@hypnos/client";
+
+const tools: ToolSpec[] = [{
+  type: "function",
+  function: {
+    name: "get_weather",
+    description: "Current weather for a city",
+    parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
+  },
+}];
+const messages: ChatMessage[] = [{ role: "user", content: "What's the weather in Paris?" }];
+
+let reply = await hypnos.chat("gemma4:26b-q4", messages, { tools });
+while (reply.choices[0].finish_reason === "tool_calls") {
+  messages.push(assistantMessage(reply));
+  for (const call of reply.choices[0].message.tool_calls ?? []) {
+    const { city } = parseArguments<{ city: string }>(call); // validate before running the tool
+    messages.push(toolMessage(call.id, JSON.stringify({ city, temperature: 18 })));
+  }
+  reply = await hypnos.chat("gemma4:26b-q4", messages, { tools });
+}
+console.log(reply.choices[0].message.content);
+```
+
+A `ChatStream` accumulates the calls in `stream.toolCalls` (by `index`, arguments
+concatenated, as OpenAI clients do), and `stream.final()` returns them in the message with
+`finish_reason: "tool_calls"`. A `tool_choice` naming a function that is not in `tools` is a
+`BadRequestError`.
 
 ## Errors and retries
 

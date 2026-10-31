@@ -105,9 +105,60 @@ class AudioPart(TypedDict):
 ContentPart = Union[TextPart, ImagePart, AudioPart]
 
 
+class FunctionSpec(TypedDict):
+    """A function the model may call: ``parameters`` is a JSON Schema object."""
+
+    name: str
+    description: NotRequired[str]
+    parameters: NotRequired[Dict[str, Any]]
+
+
+class ToolSpec(TypedDict):
+    """An entry of ``tools`` (docs/api.md section 7.5)."""
+
+    type: Literal["function"]
+    function: FunctionSpec
+
+
+class ToolChoiceFunctionName(TypedDict):
+    name: str
+
+
+class ToolChoiceFunction(TypedDict):
+    type: Literal["function"]
+    function: ToolChoiceFunctionName
+
+
+#: ``"none"``, ``"auto"``, ``"required"`` or ``{"type": "function", "function": {"name": ...}}``.
+ToolChoice = Union[Literal["none", "auto", "required"], ToolChoiceFunction]
+
+
+class ToolCallFunction(TypedDict):
+    name: str
+    #: A JSON object serialized as a string; :func:`hypnos_client.parse_arguments` decodes it.
+    arguments: str
+
+
+class ToolCall(TypedDict):
+    """A call the model asked for, in ``message.tool_calls``."""
+
+    id: str
+    type: Literal["function"]
+    function: ToolCallFunction
+
+
 class ChatMessage(TypedDict):
-    role: Literal["system", "user", "assistant"]
-    content: Union[str, List[ContentPart]]
+    """A message of ``messages``.
+
+    ``content`` is ``None`` on an assistant message that only calls tools (``tool_calls``); a
+    ``tool`` message carries a result for ``tool_call_id``.
+    """
+
+    role: Literal["system", "user", "assistant", "tool"]
+    content: Union[str, List[ContentPart], None]
+    tool_calls: NotRequired[List[ToolCall]]
+    tool_call_id: NotRequired[str]
+    name: NotRequired[str]
 
 
 class PromptTokensDetails(TypedDict):
@@ -123,7 +174,10 @@ class Usage(TypedDict):
 
 class ResponseMessage(TypedDict):
     role: str
+    #: ``""`` when the model only called tools.
     content: str
+    #: Present only when the model called tools (``finish_reason`` is ``"tool_calls"``).
+    tool_calls: NotRequired[List[ToolCall]]
 
 
 class ChatChoice(TypedDict):
@@ -142,9 +196,24 @@ class ChatCompletion(TypedDict):
     hypnos_telemetry: NotRequired[Telemetry]
 
 
+class ChunkToolCallFunction(TypedDict, total=False):
+    name: str
+    arguments: str
+
+
+class ChunkToolCall(TypedDict):
+    """An element of ``delta.tool_calls``: accumulate by ``index``."""
+
+    index: int
+    id: NotRequired[str]
+    type: NotRequired[Literal["function"]]
+    function: NotRequired[ChunkToolCallFunction]
+
+
 class ChunkDelta(TypedDict, total=False):
     role: str
     content: str
+    tool_calls: List[ChunkToolCall]
 
 
 class ChunkChoice(TypedDict):

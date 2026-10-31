@@ -78,6 +78,12 @@ pub struct ChatRequest {
     pub num_ctx: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub think: Option<bool>,
+    /// Functions the model may call (`docs/api.md` section 7.5).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<ToolSpec>>,
+    /// `auto` on the server when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -116,6 +122,15 @@ impl ChatRequest {
     }
     pub fn think(mut self, on: bool) -> Self {
         self.think = Some(on);
+        self
+    }
+    /// The functions the model may call; send the same tools again with the results.
+    pub fn tools(mut self, tools: Vec<ToolSpec>) -> Self {
+        self.tools = Some(tools);
+        self
+    }
+    pub fn tool_choice(mut self, choice: ToolChoice) -> Self {
+        self.tool_choice = Some(choice);
         self
     }
     pub fn extra(mut self, key: impl Into<String>, value: Value) -> Self {

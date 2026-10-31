@@ -584,6 +584,8 @@ struct ChatSseState {
     infer_start: Instant,
     queued: VecDeque<Event>,
     finished: bool,
+    /// Tool calls sent so far; each `tool_calls` delta carries its index.
+    tool_calls: u32,
 }
 
 fn sse_chunk(
@@ -703,6 +705,7 @@ async fn chat_completions_inner(
             _cancel_guard: guard,
             queued: VecDeque::new(),
             finished: false,
+            tool_calls: 0,
         };
         // First chunk announces the assistant role (OpenAI convention).
         let first = sse_chunk(
@@ -731,6 +734,28 @@ async fn chat_completions_inner(
                         serde_json::Value::Null,
                         Default::default(),
                     );
+                    Some((Ok(ev), st))
+                }
+                Some(ChatStreamEvent::ToolCall(call)) => {
+                    if st.capture_text {
+                        st.text.push_str(&format!(
+                            "\n[tool call {}({})]",
+                            call.function.name, call.function.arguments
+                        ));
+                    }
+                    // One delta per call, arguments whole (OpenAI allows them in one piece).
+                    let ev = sse_chunk(
+                        &st,
+                        json!({"tool_calls": [{
+                            "index": st.tool_calls,
+                            "id": call.id,
+                            "type": "function",
+                            "function": {"name": call.function.name, "arguments": call.function.arguments},
+                        }]}),
+                        serde_json::Value::Null,
+                        Default::default(),
+                    );
+                    st.tool_calls += 1;
                     Some((Ok(ev), st))
                 }
                 Some(ChatStreamEvent::Done {
@@ -812,7 +837,16 @@ async fn chat_completions_inner(
     details.usage = Some(resp.usage.clone());
     details.telemetry = resp.hypnos_telemetry.clone();
     if state.request_log.capture_text() {
-        details.output = resp.choices.first().map(|c| c.message.content.clone());
+        details.output = resp.choices.first().map(|c| {
+            let mut out = c.message.content.clone();
+            for call in c.message.tool_calls.iter().flatten() {
+                out.push_str(&format!(
+                    "\n[tool call {}({})]",
+                    call.function.name, call.function.arguments
+                ));
+            }
+            out
+        });
     }
     if state.request_log.capture_payloads() {
         details.response_payload = serde_json::to_value(&resp).ok();

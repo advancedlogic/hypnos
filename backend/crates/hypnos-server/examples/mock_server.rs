@@ -13,7 +13,10 @@
 //! The models are the default lineup (`gemma4:26b-q4`, `gemma4:e4b-q4`, `gemmaembedding2`,
 //! `kokoro-82m-q4`, `moss-image`, `docling`, `gliner2.5-multi`) with their real modalities:
 //! - chat answers `echo: <last user text>`, or `1 2 3 … max_tokens` when that text starts with
-//!   `count`; streams send one word per chunk, 10 ms apart;
+//!   `count`; streams send one word per chunk, 10 ms apart. With `tools` it calls one
+//!   (`finish_reason: "tool_calls"`, arguments `{"text": <last user text>}`): the named one for a
+//!   function `tool_choice`, the first for `"required"`, and for `"auto"` the first whose name
+//!   appears in the last user text. After a `tool` message it answers `tool said: <its content>`;
 //! - embeddings are 8-dimensional unit vectors derived from the text;
 //! - transcription answers `mock transcript of <n> bytes`;
 //! - speech is 50 ms of silence per input word (24 kHz, 16-bit mono WAV or PCM);
@@ -113,8 +116,41 @@ fn last_user_text(req: &ChatCompletionRequest) -> String {
         .unwrap_or_default()
 }
 
+/// The call a request with tools makes (see the module docs), if any.
+fn mock_tool_call(req: &ChatCompletionRequest) -> Result<Option<ToolCall>> {
+    let (tools, choice) = req.active_tools().map_err(HypnosError::InvalidRequest)?;
+    if tools.is_empty() || req.messages.last().is_some_and(|m| m.role == "tool") {
+        return Ok(None);
+    }
+    let text = last_user_text(req);
+    let tool = match &choice {
+        ToolChoice::Function(name) => tools.iter().find(|t| &t.function.name == name),
+        ToolChoice::Required => tools.first(),
+        _ => tools.iter().find(|t| text.contains(&t.function.name)),
+    };
+    Ok(tool.map(|t| ToolCall {
+        id: format!("call_{}", uuid::Uuid::new_v4().simple()),
+        kind: "function".into(),
+        function: FunctionCall {
+            name: t.function.name.clone(),
+            arguments: serde_json::json!({ "text": text }).to_string(),
+        },
+    }))
+}
+
 /// The words a chat request produces (see the module docs).
 fn reply_words(req: &ChatCompletionRequest) -> Vec<String> {
+    if let Some(result) = req.messages.last().filter(|m| m.role == "tool") {
+        return std::iter::once("tool said:".to_string())
+            .chain(
+                result
+                    .content
+                    .extract_text()
+                    .split_whitespace()
+                    .map(str::to_string),
+            )
+            .collect();
+    }
     let text = last_user_text(req);
     let max = req.max_tokens.unwrap_or(512).clamp(1, 8192) as usize;
     let mut words: Vec<String> = if text.trim_start().starts_with("count") {
@@ -199,6 +235,25 @@ impl ModelBackend for MockEngine {
         _ctx: &RequestContext,
     ) -> Result<ChatCompletionResponse> {
         self.faults.check(&req.model)?;
+        if let Some(call) = mock_tool_call(req)? {
+            return Ok(ChatCompletionResponse {
+                id: format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()),
+                object: "chat.completion".into(),
+                created: chrono::Utc::now().timestamp(),
+                model: req.model.clone(),
+                choices: vec![ChatChoice {
+                    index: 0,
+                    message: ChatResponseMessage {
+                        role: "assistant".into(),
+                        content: String::new(),
+                        tool_calls: Some(vec![call]),
+                    },
+                    finish_reason: "tool_calls".into(),
+                }],
+                usage: usage(req, 1),
+                hypnos_telemetry: None,
+            });
+        }
         let words = reply_words(req);
         let finish = if words.len() as u32 >= req.max_tokens.unwrap_or(512) {
             "length"
@@ -215,6 +270,7 @@ impl ModelBackend for MockEngine {
                 message: ChatResponseMessage {
                     role: "assistant".into(),
                     content: words.join(" "),
+                    tool_calls: None,
                 },
                 finish_reason: finish.into(),
             }],
@@ -230,6 +286,17 @@ impl ModelBackend for MockEngine {
         tx: mpsc::Sender<ChatStreamEvent>,
     ) -> Result<()> {
         let fail_midway = self.faults.check(&req.model)?.is_some();
+        if let Some(call) = mock_tool_call(req)? {
+            let _ = tx.send(ChatStreamEvent::ToolCall(call)).await;
+            let _ = tx
+                .send(ChatStreamEvent::Done {
+                    usage: usage(req, 1),
+                    finish_reason: "tool_calls".into(),
+                    timing: EngineTiming::default(),
+                })
+                .await;
+            return Ok(());
+        }
         let words = reply_words(req);
         for (i, word) in words.iter().enumerate() {
             if !ctx.should_continue() {

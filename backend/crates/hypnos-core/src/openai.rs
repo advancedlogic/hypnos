@@ -13,6 +13,20 @@ pub enum ChatMessageContent {
     Parts(Vec<ContentPart>),
 }
 
+impl Default for ChatMessageContent {
+    fn default() -> Self {
+        Self::Text(String::new())
+    }
+}
+
+/// `content: null` (an assistant message that only calls tools) reads as empty text.
+fn content_or_empty<'de, D>(d: D) -> Result<ChatMessageContent, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<ChatMessageContent>::deserialize(d)?.unwrap_or_default())
+}
+
 /// A media attachment extracted from a chat message, in the order it appeared.
 #[derive(Debug, Clone)]
 pub enum MediaRef {
@@ -140,13 +154,89 @@ fn default_audio_format() -> String {
     "wav".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
+    #[serde(default, deserialize_with = "content_or_empty")]
     pub content: ChatMessageContent,
+    /// An assistant message's calls (OpenAI tool calling).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    /// A `tool` message: the call it answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// A `tool` message: the function's name (optional; resolved from `tool_call_id`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// A tool the model may call (`tools[]`); only `type: "function"` exists.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolSpec {
+    #[serde(rename = "type", default = "function_type")]
+    pub kind: String,
+    pub function: FunctionSpec,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionSpec {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// JSON Schema of the arguments.
+    #[serde(default)]
+    pub parameters: Option<serde_json::Value>,
+}
+
+/// A call the model made; `arguments` is a JSON object serialized as a string (as in OpenAI).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(rename = "type", default = "function_type")]
+    pub kind: String,
+    pub function: FunctionCall,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FunctionCall {
+    pub name: String,
+    pub arguments: String,
+}
+
+fn function_type() -> String {
+    "function".to_string()
+}
+
+/// `tool_choice`: `"none"`, `"auto"` (default with tools), `"required"`, or one function.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ToolChoice {
+    None,
+    Auto,
+    Required,
+    Function(String),
+}
+
+impl ToolChoice {
+    /// Reads the OpenAI forms: a string, or `{"type": "function", "function": {"name": ...}}`.
+    pub fn parse(value: Option<&serde_json::Value>) -> Result<Self, String> {
+        match value {
+            None | Some(serde_json::Value::Null) => Ok(Self::Auto),
+            Some(serde_json::Value::String(s)) => match s.as_str() {
+                "none" => Ok(Self::None),
+                "auto" => Ok(Self::Auto),
+                "required" | "any" => Ok(Self::Required),
+                other => Err(format!("tool_choice {other:?} is not none, auto or required")),
+            },
+            Some(v) => v
+                .pointer("/function/name")
+                .and_then(|n| n.as_str())
+                .map(|n| Self::Function(n.to_string()))
+                .ok_or_else(|| "tool_choice must be a string or {\"type\": \"function\", \"function\": {\"name\": ...}}".to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChatCompletionRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
@@ -168,6 +258,28 @@ pub struct ChatCompletionRequest {
     /// Optional Hypnos extension: enable the model's thinking channel (Gemma 4). Default off.
     #[serde(default)]
     pub think: Option<bool>,
+    /// Functions the model may call (OpenAI tool calling).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<ToolSpec>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
+}
+
+impl ChatCompletionRequest {
+    /// The tools in effect: none when absent, empty or `tool_choice: "none"`.
+    pub fn active_tools(&self) -> Result<(&[ToolSpec], ToolChoice), String> {
+        let choice = ToolChoice::parse(self.tool_choice.as_ref())?;
+        let tools = self.tools.as_deref().unwrap_or(&[]);
+        if tools.is_empty() || choice == ToolChoice::None {
+            return Ok((&[], ToolChoice::None));
+        }
+        if let ToolChoice::Function(name) = &choice {
+            if !tools.iter().any(|t| &t.function.name == name) {
+                return Err(format!("tool_choice names {name:?}, which is not in tools"));
+            }
+        }
+        Ok((tools, choice))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,7 +305,10 @@ pub struct ChatChoice {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatResponseMessage {
     pub role: String,
+    /// The answer's text; empty when the model only called tools.
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,6 +334,8 @@ pub struct PromptTokensDetails {
 pub enum ChatStreamEvent {
     /// A new piece of generated text.
     Delta(String),
+    /// A complete tool call (sent as one `tool_calls` delta, arguments whole).
+    ToolCall(ToolCall),
     /// Generation finished; carries final usage, finish reason and engine timings.
     Done {
         usage: TokenUsage,

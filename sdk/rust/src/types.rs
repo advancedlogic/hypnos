@@ -3,8 +3,11 @@
 //! The server only ever adds fields (`docs/api.md` section 17, "Versioning"): every response
 //! ignores what it does not know, and the top-level responses keep it in `extra`.
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+
+use crate::error::{Error, Result};
 
 /// Unknown fields of a response, kept as JSON.
 pub type Extra = Map<String, Value>;
@@ -150,19 +153,37 @@ pub struct InputAudio {
     pub format: Option<String>,
 }
 
-/// A message's `content`: a string or an array of parts.
+/// A message's `content`: a string, an array of parts, or `null` (an assistant message that
+/// only calls tools, see [`ChatMessage::assistant_with_calls`]).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Content {
     Text(String),
     Parts(Vec<ContentPart>),
+    /// Serialized as `null`.
+    Null,
 }
 
-/// One chat message (`system`, `user` or `assistant`).
+fn content_null() -> Content {
+    Content::Null
+}
+
+/// One chat message (`system`, `user`, `assistant` or `tool`).
+///
+/// `tool_calls` is set on an assistant message that called tools, `tool_call_id` (and optionally
+/// `name`) on a `tool` message carrying a result (`docs/api.md` section 7.5). All three are left
+/// out of the JSON when `None`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
+    #[serde(default = "content_null")]
     pub content: Content,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 impl ChatMessage {
@@ -179,12 +200,203 @@ impl ChatMessage {
     pub fn user_parts(parts: Vec<ContentPart>) -> Self {
         Self::new("user", Content::Parts(parts))
     }
+    /// An assistant message that called tools, to put back in the history before the `tool`
+    /// results. An empty `content` is sent as `null`.
+    pub fn assistant_with_calls(content: impl Into<String>, calls: Vec<ToolCall>) -> Self {
+        let content: String = content.into();
+        let content = if content.is_empty() {
+            Content::Null
+        } else {
+            Content::Text(content)
+        };
+        Self {
+            tool_calls: Some(calls),
+            ..Self::new("assistant", content)
+        }
+    }
+    /// A `tool` message: the result of the call `tool_call_id` (send JSON as a string).
+    pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            tool_call_id: Some(tool_call_id.into()),
+            ..Self::new("tool", Content::Text(content.into()))
+        }
+    }
+    /// Sets `name` (optional on a `tool` message: the server finds the function from
+    /// `tool_call_id`).
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
     pub fn new(role: impl Into<String>, content: Content) -> Self {
         Self {
             role: role.into(),
             content,
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
         }
     }
+}
+
+// --- tools ----------------------------------------------------------------------------------
+
+/// A function the model may call (`docs/api.md` section 7.5).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FunctionSpec {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// A JSON Schema for the arguments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<Value>,
+}
+
+/// An entry of `tools`: `{"type": "function", "function": {...}}`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolSpec {
+    /// Always `function`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: FunctionSpec,
+}
+
+impl ToolSpec {
+    /// A function tool; `parameters` is the JSON Schema of its arguments.
+    pub fn function(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: Value,
+    ) -> Self {
+        Self {
+            kind: "function".into(),
+            function: FunctionSpec {
+                name: name.into(),
+                description: Some(description.into()),
+                parameters: Some(parameters),
+            },
+        }
+    }
+}
+
+/// `tool_choice`: `"none"`, `"auto"` (the server's default), `"required"` or a named function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolChoice {
+    /// The tools are not shown to the model.
+    None,
+    /// The model decides whether to call.
+    Auto,
+    /// The model must call one of the tools.
+    Required,
+    /// The model must call this function (400 if it is not in `tools`).
+    Function(String),
+}
+
+impl ToolChoice {
+    pub fn function(name: impl Into<String>) -> Self {
+        Self::Function(name.into())
+    }
+}
+
+impl Serialize for ToolChoice {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Self::None => s.serialize_str("none"),
+            Self::Auto => s.serialize_str("auto"),
+            Self::Required => s.serialize_str("required"),
+            Self::Function(name) => serde_json::json!({
+                "type": "function",
+                "function": { "name": name },
+            })
+            .serialize(s),
+        }
+    }
+}
+
+/// The function a [`ToolCall`] names; `arguments` is a JSON object serialized as a string.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FunctionCall {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub arguments: String,
+}
+
+impl FunctionCall {
+    /// Parses `arguments` into `T`. The model follows the schema as well as it manages:
+    /// validate before running the tool.
+    pub fn parse_arguments<T: DeserializeOwned>(&self) -> Result<T> {
+        serde_json::from_str(&self.arguments).map_err(|e| {
+            Error::Decode(format!(
+                "tool call arguments of {}: {e}: {}",
+                self.name, self.arguments
+            ))
+        })
+    }
+}
+
+/// A call the model asked for (`message.tool_calls`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ToolCall {
+    #[serde(default)]
+    pub id: String,
+    /// Always `function`.
+    #[serde(rename = "type", default = "function_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub function: FunctionCall,
+}
+
+fn function_kind() -> String {
+    "function".into()
+}
+
+impl ToolCall {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            kind: function_kind(),
+            function: FunctionCall {
+                name: name.into(),
+                arguments: arguments.into(),
+            },
+        }
+    }
+    /// The function's name.
+    pub fn name(&self) -> &str {
+        &self.function.name
+    }
+    /// [`FunctionCall::parse_arguments`].
+    pub fn parse_arguments<T: DeserializeOwned>(&self) -> Result<T> {
+        self.function.parse_arguments()
+    }
+    /// The arguments as a JSON value.
+    pub fn arguments_json(&self) -> Result<Value> {
+        self.function.parse_arguments()
+    }
+}
+
+/// A fragment of a function call in a stream chunk.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FunctionCallDelta {
+    pub name: Option<String>,
+    pub arguments: Option<String>,
+}
+
+/// An element of `delta.tool_calls`. Hypnos sends each call whole, but [`crate::ChatStream`]
+/// accumulates fragments by `index` as OpenAI clients do.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToolCallDelta {
+    pub index: u32,
+    pub id: Option<String>,
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+    pub function: Option<FunctionCallDelta>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -211,6 +423,34 @@ pub struct ResponseMessage {
     pub role: String,
     #[serde(default)]
     pub content: String,
+    /// The calls the model asked for (`finish_reason` `tool_calls`); absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+}
+
+impl ResponseMessage {
+    /// This message as a history entry: an assistant message with its `tool_calls` (content
+    /// `null` when empty and there are calls).
+    pub fn to_chat_message(&self) -> ChatMessage {
+        match &self.tool_calls {
+            Some(calls) if !calls.is_empty() => {
+                ChatMessage::assistant_with_calls(self.content.clone(), calls.clone())
+            }
+            _ => ChatMessage::assistant(self.content.clone()),
+        }
+    }
+}
+
+impl From<&ResponseMessage> for ChatMessage {
+    fn from(m: &ResponseMessage) -> Self {
+        m.to_chat_message()
+    }
+}
+
+impl From<ResponseMessage> for ChatMessage {
+    fn from(m: ResponseMessage) -> Self {
+        m.to_chat_message()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -252,6 +492,31 @@ impl ChatCompletion {
             .map(|c| c.message.content.as_str())
             .unwrap_or("")
     }
+
+    /// The first choice's tool calls (empty when the model answered in text).
+    pub fn tool_calls(&self) -> &[ToolCall] {
+        self.choices
+            .first()
+            .and_then(|c| c.message.tool_calls.as_deref())
+            .unwrap_or(&[])
+    }
+
+    /// The first choice's `finish_reason` (`stop`, `length` or `tool_calls`).
+    pub fn finish_reason(&self) -> &str {
+        self.choices
+            .first()
+            .map(|c| c.finish_reason.as_str())
+            .unwrap_or("")
+    }
+
+    /// The first choice's message as a history entry, tool calls included: append it, then one
+    /// [`ChatMessage::tool`] per call, and send the conversation again.
+    pub fn to_message(&self) -> ChatMessage {
+        self.choices
+            .first()
+            .map(|c| c.message.to_chat_message())
+            .unwrap_or_else(|| ChatMessage::assistant(""))
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -259,6 +524,7 @@ impl ChatCompletion {
 pub struct ChunkDelta {
     pub role: Option<String>,
     pub content: Option<String>,
+    pub tool_calls: Option<Vec<ToolCallDelta>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -770,4 +1036,55 @@ pub struct Speech {
     pub content_type: String,
     pub telemetry: SpeechTelemetry,
     pub request_id: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn tool_wire_forms() {
+        assert_eq!(
+            serde_json::to_value(ToolChoice::None).unwrap(),
+            json!("none")
+        );
+        assert_eq!(
+            serde_json::to_value(ToolChoice::Auto).unwrap(),
+            json!("auto")
+        );
+        assert_eq!(
+            serde_json::to_value(ToolChoice::Required).unwrap(),
+            json!("required")
+        );
+        assert_eq!(
+            serde_json::to_value(ToolChoice::function("x")).unwrap(),
+            json!({"type": "function", "function": {"name": "x"}})
+        );
+        let call = ToolCall::new("call_1", "get_weather", r#"{"city":"Paris"}"#);
+        assert_eq!(
+            serde_json::to_value(ChatMessage::assistant_with_calls("", vec![call.clone()]))
+                .unwrap(),
+            json!({"role": "assistant", "content": null, "tool_calls": [
+                {"id": "call_1", "type": "function",
+                 "function": {"name": "get_weather", "arguments": "{\"city\":\"Paris\"}"}}]})
+        );
+        assert_eq!(
+            serde_json::to_value(ChatMessage::tool("call_1", "18C")).unwrap(),
+            json!({"role": "tool", "content": "18C", "tool_call_id": "call_1"})
+        );
+        assert_eq!(
+            serde_json::to_value(ChatMessage::user("hi")).unwrap(),
+            json!({"role": "user", "content": "hi"})
+        );
+        let back: ChatMessage = serde_json::from_value(
+            json!({"role": "assistant", "content": null, "tool_calls": [call]}),
+        )
+        .unwrap();
+        assert_eq!(back.content, Content::Null);
+        assert_eq!(
+            back.tool_calls.unwrap()[0].arguments_json().unwrap(),
+            json!({"city": "Paris"})
+        );
+    }
 }

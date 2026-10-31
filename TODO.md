@@ -78,12 +78,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
 
-- [ ] 🟪 **API-9** `P3` Tool calling on `/v1/chat/completions`
-      Accept OpenAI `tools` / `tool_choice` and return `tool_calls` (and `finish_reason:
-      tool_calls`), using llama.cpp's chat-template tool support for the models that have it;
-      stream the calls as deltas. Lets DESK-11 (and any OpenAI client) use real tool calls
-      instead of a prompt convention. docs/api.md, the mock server and the three SDKs follow.
-
 - [ ] 🩵 **DESK-12** `P2` Menu bar / system tray icon
       The Hypnos logo in the macOS menu bar, the Windows notification area and the Linux
       AppIndicator area (Tauri `tray-icon`), coloured by server state: green ready, amber while
@@ -101,6 +95,25 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🟪 **API-9** `P3` Tool calling on `/v1/chat/completions`
+      Accept OpenAI `tools` / `tool_choice` and return `tool_calls` (and `finish_reason:
+      tool_calls`), using llama.cpp's chat-template tool support for the models that have it;
+      stream the calls as deltas. Lets DESK-11 (and any OpenAI client) use real tool calls
+      instead of a prompt convention. docs/api.md, the mock server and the three SDKs follow.
+      Done: `tools` / `tool_choice` on the request, `tool_calls` / `tool_call_id` / nullable
+      `content` on messages, `tool_calls` on the response and as `delta.tool_calls` chunks
+      (one per call, arguments whole), `finish_reason: "tool_calls"`. Gemma 4's native format in
+      `hypnos-backends/src/tools.rs` (declarations, past calls and results rendered as the GGUF
+      template does, a streaming `CallParser`); the engine passes the call markers through and
+      stops at `<|tool_response>`; `required` / a named function are forced by prefilling the
+      call's opening; other architectures answer 400. Mock server calls tools
+      deterministically; docs/api.md 7.5; the three SDKs (options, types, `tool_message` /
+      `toolMessage` / `ChatMessage::tool`, `assistant_message`, `parse_arguments`, streams
+      accumulate calls by index) with tests (Python 43, JS 41, Rust 44 passing). Live on
+      gemma4:e4b: a weather call, its result answered, required / named / none, streaming.
+      The desktop image tool (DESK-11) still uses its prompt convention; switching it to
+      native tools is a follow-up.
 
 - [x] ⬛ **BUILD-9** `P3` Sign and notarize the desktop installers
       The release's desktop installers are ad-hoc signed on macOS and unsigned on Windows

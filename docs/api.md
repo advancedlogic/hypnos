@@ -18,7 +18,7 @@ Hypnos extension rather than OpenAI behaviour it is marked **Hypnos extension**.
 4. [Errors](#4-errors)
 5. [Telemetry on every response](#5-telemetry-on-every-response)
 6. [Models](#6-models)
-7. [Chat completions (text, vision, audio in)](#7-chat-completions-text-vision-audio-in)
+7. [Chat completions (text, vision, audio in, tools)](#7-chat-completions-text-vision-audio-in-tools)
 8. [Embeddings](#8-embeddings)
 9. [Audio transcriptions](#9-audio-transcriptions)
 10. [Speech synthesis](#10-speech-synthesis)
@@ -266,7 +266,7 @@ model is leased. Response:
 
 ---
 
-## 7. Chat completions (text, vision, audio in)
+## 7. Chat completions (text, vision, audio in, tools)
 
 ### `POST /v1/chat/completions`
 
@@ -293,14 +293,16 @@ model is leased. Response:
 | Field | Type | Default | Notes |
 | :--- | :--- | :--- | :--- |
 | `model` | string | required | a model whose modalities include `text_generation` (or `vision` / `speech_to_text` for media parts) |
-| `messages` | array | required, non-empty | roles `system`, `user`, `assistant`; `content` is a string or an array of parts (below) |
+| `messages` | array | required, non-empty | roles `system`, `user`, `assistant`, `tool`; `content` is a string or an array of parts (below), or `null` on an assistant message that only calls tools (7.5) |
 | `max_tokens` | int | 512 | clamped to `limits.max_tokens_cap` (8192 by default) |
 | `temperature`, `top_p`, `top_k`, `seed` | number | engine defaults | sampling; `seed` makes a run reproducible on the same build |
 | `stream` | bool | false | SSE response, see 7.4 |
 | `num_ctx` | int | estimated | **Hypnos extension**: context window to reserve for this request (prompt plus generation). Unset, the server estimates it from the prompt length, the media and `max_tokens`, with a floor of 2048. Ask for more when the conversation will grow; a value above the model's `allocated_context_len` forces a context rebuild |
 | `think` | bool | false | **Hypnos extension**: turns on Gemma 4's thinking channel. The thoughts are not returned (they are consumed server-side) but they count in `completion_tokens` and in latency |
+| `tools` | array | none | functions the model may call, see 7.5 |
+| `tool_choice` | string or object | `"auto"` | `"none"`, `"auto"`, `"required"`, or `{"type": "function", "function": {"name": "..."}}`, see 7.5 |
 
-Not supported (ignored if sent): `n`, `tools` / `tool_choice` / `functions`, `response_format`,
+Not supported (ignored if sent): `n`, `functions` / `function_call` (the legacy form of tools), `parallel_tool_calls`, `response_format`,
 `logprobs`, `stop`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `user`. There is no
 `/v1/completions` route.
 
@@ -338,8 +340,9 @@ estimate budgets 576 tokens per image and 1024 per audio clip; pass `num_ctx` wh
 }
 ```
 
-`finish_reason` is `stop` (end of turn) or `length` (`max_tokens` reached). `choices` always has
-one element. `prompt_tokens_details.cached_tokens` is present only when part of the prompt was
+`finish_reason` is `stop` (end of turn), `length` (`max_tokens` reached) or `tool_calls` (the
+model called tools; `message.tool_calls` lists them and `content` is usually empty, see 7.5).
+`choices` always has one element. `prompt_tokens_details.cached_tokens` is present only when part of the prompt was
 served from the execution slot's KV cache (prefix reuse): a client that keeps the conversation
 prefix stable (same system prompt, append-only history) gets faster prefill.
 
@@ -370,17 +373,76 @@ Sequence:
 1. One chunk with `delta.role = "assistant"` and empty content (the OpenAI convention).
 2. Zero or more chunks with `delta.content` (a token or a few characters; special markers and the
    thinking channel are never emitted).
-3. One final chunk with an empty `delta`, `finish_reason` `stop` or `length`, plus `usage` and
-   `hypnos_telemetry` (no `stream_options.include_usage` needed; usage always comes).
-4. `[DONE]`.
+3. With tools, one chunk per call with `delta.tool_calls` (7.5).
+4. One final chunk with an empty `delta`, `finish_reason` `stop`, `length` or `tool_calls`, plus
+   `usage` and `hypnos_telemetry` (no `stream_options.include_usage` needed; usage always comes).
+5. `[DONE]`.
 
-If generation fails after the stream started, step 3 is instead a chunk with
+If generation fails after the stream started, step 4 is instead a chunk with
 `finish_reason: "error"` and an `error` object at the top level
 (`{"message": "...", "type": "server_error"}`), followed by `[DONE]`. A client must treat that
 chunk as a failure even though the HTTP status was 200.
 
 Closing the connection cancels generation at the next token and releases the model. The request
 timeout applies to the headers only; a stream can run as long as `max_tokens` takes.
+
+#### 7.5 Tool calling
+
+OpenAI-compatible function calling. The client describes functions in `tools`; the model either
+answers or asks for one or more calls; the client runs them and sends the results back as
+`tool` messages; the model then answers with them. The server never runs a tool itself.
+
+```json
+{ "model": "gemma4:26b-q4",
+  "messages": [ { "role": "user", "content": "What's the weather in Paris?" } ],
+  "tools": [ { "type": "function", "function": {
+      "name": "get_weather", "description": "Current weather for a city",
+      "parameters": { "type": "object",
+                      "properties": { "city": { "type": "string" },
+                                      "unit": { "type": "string", "enum": ["celsius", "fahrenheit"] } },
+                      "required": ["city"] } } } ] }
+```
+
+The answer to that:
+
+```json
+{ "choices": [ { "index": 0, "finish_reason": "tool_calls",
+    "message": { "role": "assistant", "content": "",
+      "tool_calls": [ { "id": "call_1f0c…_1", "type": "function",
+        "function": { "name": "get_weather", "arguments": "{\"city\":\"Paris\"}" } } ] } } ], … }
+```
+
+`arguments` is a JSON object serialized as a string, as in OpenAI. To continue, append the
+assistant message (with its `tool_calls`; `content` may be `null`) and one `tool` message per
+call, then send the conversation again with the same `tools`:
+
+```json
+{ "role": "assistant", "content": null, "tool_calls": [ { "id": "call_1f0c…_1", "type": "function",
+    "function": { "name": "get_weather", "arguments": "{\"city\":\"Paris\"}" } } ] },
+{ "role": "tool", "tool_call_id": "call_1f0c…_1", "content": "{\"temperature\": 18, \"condition\": \"sunny\"}" }
+```
+
+A `tool` message's `content` is a string (send JSON as a string; it reaches the model as text) or
+an array of text parts; `name` is optional, the function is found from `tool_call_id`.
+
+| `tool_choice` | Effect |
+| :--- | :--- |
+| `"auto"` (default) | the model decides whether to call |
+| `"none"` | the tools are not shown to the model; it answers in text |
+| `"required"` | the model must call one of the tools |
+| `{"type": "function", "function": {"name": "x"}}` | the model must call `x` (400 if `x` is not in `tools`) |
+
+**Streaming.** Each call arrives whole in one chunk, `delta.tool_calls` holding one element with
+its `index` (0, 1, … in the order of the calls), `id`, `type` and the complete `function.name` and
+`function.arguments`; OpenAI clients that concatenate argument fragments by `index` work
+unchanged. Text the model writes before a call arrives as `delta.content` as usual. The final
+chunk has `finish_reason: "tool_calls"`.
+
+**Models.** Tool calling uses the model's native format: Gemma 4 (all the default chat models).
+A request with `tools` (and `tool_choice` other than `"none"`) for a model without one is refused
+with 400 `invalid_request_error`. `"required"` and a named function are enforced by starting the
+model's answer with a call, not by a grammar: the arguments follow the schema as well as the model
+manages. Validate them before running the tool.
 
 ---
 

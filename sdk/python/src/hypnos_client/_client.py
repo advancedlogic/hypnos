@@ -45,6 +45,8 @@ from .types import (
     Picture,
     PictureList,
     TierMove,
+    ToolChoice,
+    ToolSpec,
     Transcription,
 )
 
@@ -228,13 +230,17 @@ class Client:
         seed: Optional[int] = None,
         num_ctx: Optional[int] = None,
         think: Optional[bool] = None,
+        tools: Optional[Sequence[Union[ToolSpec, Mapping[str, Any]]]] = None,
+        tool_choice: Optional[Union[ToolChoice, Mapping[str, Any]]] = None,
         extra: Optional[Mapping[str, Any]] = None,
     ) -> ChatCompletion:
         """``POST /v1/chat/completions``. ``num_ctx`` and ``think`` are Hypnos extensions;
-        ``extra`` adds any other body field."""
+        ``tools`` and ``tool_choice`` turn on tool calling (docs/api.md 7.5; helpers in
+        :mod:`hypnos_client.tools`); ``extra`` adds any other body field."""
         body = chat_body(
             model, list(messages), False, max_tokens=max_tokens, temperature=temperature,
-            top_p=top_p, top_k=top_k, seed=seed, num_ctx=num_ctx, think=think, extra=extra,
+            top_p=top_p, top_k=top_k, seed=seed, num_ctx=num_ctx, think=think,
+            tools=tools, tool_choice=tool_choice, extra=extra,
         )  # fmt: skip
         return cast(
             ChatCompletion,
@@ -253,12 +259,15 @@ class Client:
         seed: Optional[int] = None,
         num_ctx: Optional[int] = None,
         think: Optional[bool] = None,
+        tools: Optional[Sequence[Union[ToolSpec, Mapping[str, Any]]]] = None,
+        tool_choice: Optional[Union[ToolChoice, Mapping[str, Any]]] = None,
         extra: Optional[Mapping[str, Any]] = None,
     ) -> ChatStream:
         """``POST /v1/chat/completions`` with ``stream: true``. Close the stream to cancel."""
         body = chat_body(
             model, list(messages), True, max_tokens=max_tokens, temperature=temperature,
-            top_p=top_p, top_k=top_k, seed=seed, num_ctx=num_ctx, think=think, extra=extra,
+            top_p=top_p, top_k=top_k, seed=seed, num_ctx=num_ctx, think=think,
+            tools=tools, tool_choice=tool_choice, extra=extra,
         )  # fmt: skip
         response, release = self._send(
             "POST", "/v1/chat/completions", model=model, json=body, accept="text/event-stream"

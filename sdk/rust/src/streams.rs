@@ -17,7 +17,7 @@ use tokio::sync::OwnedSemaphorePermit;
 use crate::error::{ApiError, Error, Result};
 use crate::types::{
     ChatChoice, ChatCompletion, ChatCompletionChunk, Document, DocumentEvent, DocumentPage,
-    DocumentStarted, ResponseMessage, SpeechTelemetry, Telemetry, Usage,
+    DocumentStarted, ResponseMessage, SpeechTelemetry, Telemetry, ToolCall, ToolCallDelta, Usage,
 };
 
 type ByteStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>;
@@ -160,10 +160,43 @@ fn decode<T: serde::de::DeserializeOwned>(data: &str) -> Result<T> {
 
 // --- chat ----------------------------------------------------------------------------------
 
+/// Merges a `delta.tool_calls` element into the calls so far, by `index`: `function.arguments`
+/// fragments are concatenated, the first non-empty `id` and `name` are kept.
+fn accumulate_tool_call(calls: &mut Vec<ToolCall>, indexes: &mut Vec<u32>, delta: &ToolCallDelta) {
+    let at = match indexes.iter().position(|&i| i == delta.index) {
+        Some(at) => at,
+        None => {
+            indexes.push(delta.index);
+            calls.push(ToolCall::new("", "", ""));
+            calls.len() - 1
+        }
+    };
+    let call = &mut calls[at];
+    if let Some(id) = delta.id.as_deref().filter(|s| !s.is_empty()) {
+        if call.id.is_empty() {
+            call.id = id.to_string();
+        }
+    }
+    if let Some(kind) = delta.kind.as_deref().filter(|s| !s.is_empty()) {
+        call.kind = kind.to_string();
+    }
+    if let Some(function) = &delta.function {
+        if let Some(name) = function.name.as_deref().filter(|s| !s.is_empty()) {
+            if call.function.name.is_empty() {
+                call.function.name = name.to_string();
+            }
+        }
+        if let Some(arguments) = &function.arguments {
+            call.function.arguments.push_str(arguments);
+        }
+    }
+}
+
 /// `POST /v1/chat/completions` with `stream: true`.
 ///
 /// A [`Stream`] of [`ChatCompletionChunk`]s; [`ChatStream::text`] yields only the content
-/// pieces. `text_so_far`, `usage`, `telemetry` and `finish_reason` fill in as chunks arrive.
+/// pieces. `text_so_far`, `tool_calls`, `usage`, `telemetry` and `finish_reason` fill in as
+/// chunks arrive.
 pub struct ChatStream {
     reader: SseReader,
     request_id: Option<String>,
@@ -171,6 +204,9 @@ pub struct ChatStream {
     model: String,
     created: i64,
     text: String,
+    tool_calls: Vec<ToolCall>,
+    /// The `index` of each entry of `tool_calls`.
+    tool_call_indexes: Vec<u32>,
     finish_reason: Option<String>,
     usage: Option<Usage>,
     telemetry: Option<Telemetry>,
@@ -190,6 +226,8 @@ impl ChatStream {
             model: String::new(),
             created: 0,
             text: String::new(),
+            tool_calls: Vec::new(),
+            tool_call_indexes: Vec::new(),
             finish_reason: None,
             usage: None,
             telemetry: None,
@@ -211,6 +249,11 @@ impl ChatStream {
     }
     pub fn finish_reason(&self) -> Option<&str> {
         self.finish_reason.as_deref()
+    }
+    /// The tool calls so far, accumulated by `index` (fragments of `function.arguments`
+    /// concatenated, the first non-empty `id` and `name` kept).
+    pub fn tool_calls(&self) -> &[ToolCall] {
+        &self.tool_calls
     }
 
     /// The `delta.content` pieces, as they arrive.
@@ -245,6 +288,7 @@ impl ChatStream {
                 message: ResponseMessage {
                     role: "assistant".into(),
                     content: self.text.clone(),
+                    tool_calls: (!self.tool_calls.is_empty()).then(|| self.tool_calls.clone()),
                 },
                 finish_reason: self.finish_reason.clone().unwrap_or_else(|| "stop".into()),
             }],
@@ -273,6 +317,9 @@ impl ChatStream {
         for choice in &chunk.choices {
             if let Some(piece) = &choice.delta.content {
                 self.text.push_str(piece);
+            }
+            for delta in choice.delta.tool_calls.iter().flatten() {
+                accumulate_tool_call(&mut self.tool_calls, &mut self.tool_call_indexes, delta);
             }
             if let Some(reason) = &choice.finish_reason {
                 self.finish_reason = Some(reason.clone());
@@ -533,7 +580,29 @@ impl Stream for SpeechStream {
 
 #[cfg(test)]
 mod tests {
-    use super::SseDecoder;
+    use super::{accumulate_tool_call, SseDecoder};
+    use crate::types::{ToolCall, ToolCallDelta};
+
+    #[test]
+    fn accumulates_tool_call_fragments_by_index() {
+        let deltas: Vec<ToolCallDelta> = serde_json::from_value(serde_json::json!([
+            {"index": 0, "id": "call_a", "type": "function", "function": {"name": "f", "arguments": "{\"x\":"}},
+            {"index": 1, "id": "call_b", "type": "function", "function": {"name": "g", "arguments": "{}"}},
+            {"index": 0, "id": "", "function": {"name": "", "arguments": "1}"}},
+        ]))
+        .unwrap();
+        let (mut calls, mut indexes) = (Vec::new(), Vec::new());
+        for d in &deltas {
+            accumulate_tool_call(&mut calls, &mut indexes, d);
+        }
+        assert_eq!(
+            calls,
+            vec![
+                ToolCall::new("call_a", "f", "{\"x\":1}"),
+                ToolCall::new("call_b", "g", "{}")
+            ]
+        );
+    }
 
     #[test]
     fn decodes_events_across_chunks() {

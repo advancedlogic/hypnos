@@ -35,7 +35,7 @@ Clones share the connection pool and the bound.
 
 | Method | Route |
 | :--- | :--- |
-| `chat`, `chat_stream` | `POST /v1/chat/completions` (text, `image_url` and `input_audio` parts) |
+| `chat`, `chat_stream` | `POST /v1/chat/completions` (text, `image_url` and `input_audio` parts, tools) |
 | `embeddings` | `POST /v1/embeddings` |
 | `transcribe` | `POST /v1/audio/transcriptions` (multipart upload) |
 | `speech`, `speech_stream` | `POST /v1/audio/speech` |
@@ -75,6 +75,47 @@ stops at the next token, page or audio chunk. `final_completion()` / `final_docu
 rest and return the whole result. A stream that fails after it started yields `Error::Stream`.
 Document streams yield `DocumentEvent::Started`, `Page` and `Done`; `final_document()` returns
 the document with its pages put back.
+
+## Tool calling
+
+`ChatRequest::tools` describes functions, `tool_choice` takes `ToolChoice::Auto` (the default),
+`None`, `Required` or `ToolChoice::function("name")`. The server never runs a tool: when the
+model asks for calls, `finish_reason()` is `"tool_calls"` and `tool_calls()` lists them; append
+`completion.to_message()` (the assistant message with its calls, `content` `null`) and one
+`ChatMessage::tool(call_id, result)` per call, then send the conversation again with the same
+tools.
+
+```rust
+use hypnos_client::{ChatMessage, ChatRequest, ToolSpec};
+use serde_json::json;
+
+let tools = vec![ToolSpec::function(
+    "get_weather",
+    "Current weather for a city",
+    json!({"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}),
+)];
+let mut messages = vec![ChatMessage::user("What's the weather in Paris?")];
+let reply = hypnos
+    .chat(&ChatRequest::new("gemma4:26b-q4", messages.clone()).tools(tools.clone()))
+    .await?;
+if reply.finish_reason() == "tool_calls" {
+    messages.push(reply.to_message());
+    for call in reply.tool_calls() {
+        let args: serde_json::Value = call.parse_arguments()?; // validate before running
+        let result = json!({"city": args["city"], "temperature": 18}).to_string();
+        messages.push(ChatMessage::tool(&call.id, result));
+    }
+    let answer = hypnos
+        .chat(&ChatRequest::new("gemma4:26b-q4", messages).tools(tools))
+        .await?;
+    println!("{}", answer.text());
+}
+```
+
+`ChatMessage::assistant_with_calls(content, calls)` builds the assistant message by hand. A
+`ChatStream` accumulates `delta.tool_calls` by `index` into `stream.tool_calls()`, and
+`final_completion()` returns them with the finish reason. A named `tool_choice` that is not in
+`tools` is `Error::BadRequest`.
 
 ## Errors and retries
 

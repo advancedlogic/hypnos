@@ -17,6 +17,7 @@ import type {
   DocumentStarted,
   SpeechTelemetry,
   Telemetry,
+  ToolCall,
   Usage,
 } from "./types.js";
 
@@ -148,10 +149,13 @@ abstract class BaseStream {
 
 /**
  * `POST /v1/chat/completions` with `stream: true`. Iterate it for chunks, or `text()` for the
- * content pieces; `textSoFar`, `usage`, `telemetry` and `finishReason` fill in as they arrive.
+ * content pieces; `textSoFar`, `toolCalls`, `usage`, `telemetry` and `finishReason` fill in as
+ * they arrive.
  */
 export class ChatStream extends BaseStream implements AsyncIterable<ChatCompletionChunk> {
   textSoFar = "";
+  /** The tool calls so far, accumulated by `index` (`function.arguments` concatenated). */
+  readonly toolCalls: ToolCall[] = [];
   usage?: Usage;
   telemetry?: Telemetry;
   finishReason?: string;
@@ -169,6 +173,17 @@ export class ChatStream extends BaseStream implements AsyncIterable<ChatCompleti
         this.created ??= chunk.created;
         for (const choice of chunk.choices ?? []) {
           this.textSoFar += choice.delta?.content ?? "";
+          for (const delta of choice.delta?.tool_calls ?? []) {
+            const index = delta.index ?? this.toolCalls.length;
+            const call = (this.toolCalls[index] ??= {
+              id: "",
+              type: "function",
+              function: { name: "", arguments: "" },
+            });
+            if (!call.id && delta.id) call.id = delta.id;
+            if (!call.function.name && delta.function?.name) call.function.name = delta.function.name;
+            call.function.arguments += delta.function?.arguments ?? "";
+          }
           if (choice.finish_reason) this.finishReason = choice.finish_reason;
         }
         if (chunk.usage) this.usage = chunk.usage;
@@ -197,6 +212,12 @@ export class ChatStream extends BaseStream implements AsyncIterable<ChatCompleti
     for await (const _ of this) {
       // drain
     }
+    const message: ChatCompletion["choices"][number]["message"] = {
+      role: "assistant",
+      content: this.textSoFar,
+    };
+    const toolCalls = this.toolCalls.filter((c) => c !== undefined);
+    if (toolCalls.length) message.tool_calls = toolCalls;
     const completion: ChatCompletion = {
       id: this.id ?? "",
       object: "chat.completion",
@@ -205,8 +226,8 @@ export class ChatStream extends BaseStream implements AsyncIterable<ChatCompleti
       choices: [
         {
           index: 0,
-          message: { role: "assistant", content: this.textSoFar },
-          finish_reason: this.finishReason ?? "stop",
+          message,
+          finish_reason: this.finishReason ?? (toolCalls.length ? "tool_calls" : "stop"),
         },
       ],
       usage: this.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },

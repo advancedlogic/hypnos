@@ -198,6 +198,7 @@ async fn describe_pictures(
                         text: PICTURE_PROMPT.into(),
                     },
                 ]),
+                ..ChatMessage::default()
             }],
             max_tokens: Some(300),
             temperature: Some(0.2),
@@ -207,6 +208,7 @@ async fn describe_pictures(
             stream: None,
             num_ctx: None,
             think: Some(false),
+            ..ChatCompletionRequest::default()
         };
         match lease.backend.chat_completion(&chat, ctx).await {
             Ok(resp) => descriptions.push(

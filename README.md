@@ -25,7 +25,7 @@ the big ones come in when asked for, and nothing is evicted while a request is u
 - **Priorities, not timeouts.** `realtime_pinned` models never leave the GPU, `high` ones are kept
   warm in RAM, `low` ones are evicted first. Models that don't fully fit run with part of their
   layers on the GPU (CUDA).
-- **Drop-in for OpenAI clients.** `/v1/chat/completions` (streaming, images, audio), `/v1/embeddings`,
+- **Drop-in for OpenAI clients.** `/v1/chat/completions` (streaming, images, audio, tool calling), `/v1/embeddings`,
   `/v1/audio/transcriptions`, `/v1/audio/speech` (streaming), `/v1/images/generations`, with
   optional API keys and in-process HTTPS. Plus `/v1/documents/convert` (PDFs, images and office
   documents to Markdown with docling, page by page) and `/v1/entities` (zero-shot named-entity

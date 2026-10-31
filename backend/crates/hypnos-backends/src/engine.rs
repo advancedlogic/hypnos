@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use hypnos_core::config::{KvDataType, Modality, ModelConfig};
 use hypnos_core::error::{HypnosError, Result};
-use hypnos_core::openai::{ChatMessage, ChatStreamEvent, EngineTiming, LoadPhases};
+use hypnos_core::openai::{ChatMessage, ChatStreamEvent, EngineTiming, LoadPhases, ToolSpec};
 use hypnos_core::request::RequestContext;
 use llama_cpp_2::context::params::{KvCacheType, LlamaContextParams, LlamaPoolingType};
 use llama_cpp_2::context::session::{LlamaStateSeqFlags, SeqState};
@@ -42,7 +42,8 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 
-use crate::llama::{build_prompt, llama_backend, load_model};
+use crate::llama::{build_prompt, llama_backend, load_model, supports_tools};
+use crate::tools::{PASS_THROUGH, RESPONSE_OPEN};
 use crate::worker::{FailJob, WorkerHandle, WorkerInbox, WorkerMsg};
 use crate::EngineOptions;
 
@@ -105,6 +106,10 @@ pub(crate) enum PromptSpec {
     Messages {
         messages: Vec<ChatMessage>,
         think: bool,
+        /// Declared in the prompt (Gemma 4 only; see `tools.rs`).
+        tools: Vec<ToolSpec>,
+        /// Appended after the generation prompt (a forced tool call's opening).
+        prefill: String,
     },
     /// Already rendered (transcription builds its own single-turn prompt).
     Raw(String),
@@ -112,6 +117,8 @@ pub(crate) enum PromptSpec {
 
 pub(crate) struct ChatJob {
     pub prompt: PromptSpec,
+    /// Pass the tool-call markers through as text and stop at `<|tool_response>`.
+    pub tool_markers: bool,
     pub media: Vec<Vec<u8>>,
     pub params: GenParams,
     pub rctx: RequestContext,
@@ -551,6 +558,8 @@ struct Active {
     completion: u32,
     in_channel: bool,
     channel_header_pending: bool,
+    /// Tools are declared: tool-call markers are output, `<|tool_response>` ends the answer.
+    tool_markers: bool,
     ttft_ms: Option<f64>,
     /// Text the client has not accepted yet (its channel was full).
     unsent: String,
@@ -871,6 +880,7 @@ impl<'m> Engine<'m> {
     fn admit(&mut self, mtmd: &mut Option<MtmdContext>, job: ChatJob) {
         let ChatJob {
             prompt,
+            tool_markers,
             media,
             params,
             rctx,
@@ -884,13 +894,29 @@ impl<'m> Engine<'m> {
         }
         let admitted = Instant::now();
         let text = match prompt {
-            PromptSpec::Messages { messages, think } => build_prompt(
-                self.model,
-                &self.arch,
-                &messages,
-                mtmd_default_marker(),
+            PromptSpec::Messages {
+                messages,
                 think,
-            ),
+                tools,
+                prefill,
+            } => {
+                if !tools.is_empty() && !supports_tools(&self.arch) {
+                    let _ = reply.send(Err(HypnosError::InvalidRequest(format!(
+                        "{} ({}) has no tool-calling format in Hypnos; tools work with Gemma 4 models",
+                        self.cfg.id, self.arch
+                    ))));
+                    return;
+                }
+                build_prompt(
+                    self.model,
+                    &self.arch,
+                    &messages,
+                    mtmd_default_marker(),
+                    think,
+                    &tools,
+                    &prefill,
+                )
+            }
             PromptSpec::Raw(s) => s,
         };
         debug!(model = %self.cfg.id, prompt_chars = text.len(), media = media.len(), "chat prefill");
@@ -914,6 +940,7 @@ impl<'m> Engine<'m> {
             // Raced with another admission; wait for the next free slot.
             self.waiting.push_front(ChatJob {
                 prompt: PromptSpec::Raw(text),
+                tool_markers,
                 media,
                 params,
                 rctx,
@@ -961,6 +988,7 @@ impl<'m> Engine<'m> {
             completion: 0,
             in_channel: false,
             channel_header_pending: false,
+            tool_markers,
             ttft_ms: None,
             unsent: String::new(),
             finish: None,
@@ -1314,6 +1342,29 @@ impl<'m> Engine<'m> {
             return;
         }
         a.completion += 1;
+        if a.tool_markers && !a.in_channel {
+            // The model waits for the tool's result here; the client runs it.
+            if piece.as_slice() == RESPONSE_OPEN.as_bytes() {
+                a.finish = Some("tool_calls");
+                return;
+            }
+            if PASS_THROUGH
+                .iter()
+                .any(|m| piece.as_slice() == m.as_bytes())
+            {
+                let marker = String::from_utf8_lossy(&piece).into_owned();
+                a.text.push_str(&marker);
+                if a.stream.is_some() {
+                    a.unsent.push_str(&marker);
+                }
+                if a.completion >= a.params.max_tokens.max(1) {
+                    a.finish = Some("length");
+                } else {
+                    a.next_token = Some(token);
+                }
+                return;
+            }
+        }
         let is_marker = is_special_marker(&piece);
         if piece.as_slice() == b"<|channel>" {
             a.in_channel = true;
@@ -1519,6 +1570,7 @@ impl Active {
             completion: 0,
             in_channel: false,
             channel_header_pending: false,
+            tool_markers: false,
             ttft_ms: None,
             unsent: String::new(),
             finish: Some("stop"),

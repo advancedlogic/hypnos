@@ -46,6 +46,7 @@ async fn test_gemma4_kokoro_moss_multi_modal_lifecycle_24gb_vram() {
             messages: vec![ChatMessage {
                 role: "user".to_string(),
                 content: ChatMessageContent::Text("Hello Gemma 4!".to_string()),
+                ..ChatMessage::default()
             }],
             max_tokens: Some(32),
             temperature: None,
@@ -55,6 +56,7 @@ async fn test_gemma4_kokoro_moss_multi_modal_lifecycle_24gb_vram() {
             stream: None,
             num_ctx: None,
             think: None,
+            ..ChatCompletionRequest::default()
         };
         let text_resp = lease_26b
             .backend
@@ -78,6 +80,7 @@ async fn test_gemma4_kokoro_moss_multi_modal_lifecycle_24gb_vram() {
                         },
                     },
                 ]),
+                ..ChatMessage::default()
             }],
             max_tokens: Some(32),
             temperature: None,
@@ -87,6 +90,7 @@ async fn test_gemma4_kokoro_moss_multi_modal_lifecycle_24gb_vram() {
             stream: None,
             num_ctx: None,
             think: None,
+            ..ChatCompletionRequest::default()
         };
         let vision_resp = lease_26b
             .backend

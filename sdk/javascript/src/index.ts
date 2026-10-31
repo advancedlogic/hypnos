@@ -20,4 +20,5 @@ export * from "./errors.js";
 export { NO_RETRY, RetryPolicy } from "./retry.js";
 export type { RetryOptions } from "./retry.js";
 export { ChatStream, DocumentStream, SSEDecoder, SpeechStream } from "./streams.js";
+export { assistantMessage, parseArguments, toolMessage } from "./tools.js";
 export type * from "./types.js";

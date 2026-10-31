@@ -21,6 +21,7 @@ from .types import (
     DocumentPage,
     DocumentStarted,
     Telemetry,
+    ToolCall,
     Usage,
 )
 
@@ -34,6 +35,9 @@ class _ChatState:
         self.model: Optional[str] = None
         self.created: Optional[int] = None
         self.text = ""
+        # Tool calls by `index`: id and name from the first fragment that has them, the
+        # argument fragments concatenated (Hypnos sends each call whole, OpenAI in pieces).
+        self.calls: Dict[int, Dict[str, Any]] = {}
         self.finish_reason: Optional[str] = None
         self.usage: Optional[Usage] = None
         self.telemetry: Optional[Telemetry] = None
@@ -48,7 +52,10 @@ class _ChatState:
         self.model = chunk.get("model", self.model)
         self.created = chunk.get("created", self.created)
         for choice in chunk.get("choices", []):
-            self.text += choice.get("delta", {}).get("content") or ""
+            delta = choice.get("delta", {})
+            self.text += delta.get("content") or ""
+            for part in delta.get("tool_calls") or []:
+                self._add_call(part)
             if choice.get("finish_reason"):
                 self.finish_reason = choice["finish_reason"]
         if "usage" in chunk:
@@ -60,7 +67,27 @@ class _ChatState:
             raise stream_error(cast(Dict[str, Any], chunk), self.request_id)
         return chunk
 
+    def _add_call(self, part: Dict[str, Any]) -> None:
+        index = part.get("index", len(self.calls))
+        call = self.calls.setdefault(
+            index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
+        )
+        if part.get("id") and not call["id"]:
+            call["id"] = part["id"]
+        if part.get("type"):
+            call["type"] = part["type"]
+        function = part.get("function") or {}
+        if function.get("name") and not call["function"]["name"]:
+            call["function"]["name"] = function["name"]
+        call["function"]["arguments"] += function.get("arguments") or ""
+
+    def tool_calls(self) -> List[ToolCall]:
+        return [cast(ToolCall, self.calls[i]) for i in sorted(self.calls)]
+
     def completion(self) -> ChatCompletion:
+        message: Dict[str, Any] = {"role": "assistant", "content": self.text}
+        if self.calls:
+            message["tool_calls"] = self.tool_calls()
         result: Dict[str, Any] = {
             "id": self.id or "",
             "object": "chat.completion",
@@ -69,7 +96,7 @@ class _ChatState:
             "choices": [
                 {
                     "index": 0,
-                    "message": {"role": "assistant", "content": self.text},
+                    "message": message,
                     "finish_reason": self.finish_reason or "stop",
                 }
             ],
@@ -152,8 +179,9 @@ class ChatStream(_SyncSSE):
     """``POST /v1/chat/completions`` with ``stream=True``.
 
     Iterate it for :class:`~hypnos_client.types.ChatCompletionChunk` dicts, or over
-    :meth:`text` for the content pieces only. ``text_so_far``, ``usage``, ``telemetry`` and
-    ``finish_reason`` fill in as the chunks arrive.
+    :meth:`text` for the content pieces only. ``text_so_far``, ``tool_calls``, ``usage``,
+    ``telemetry`` and ``finish_reason`` fill in as the chunks arrive; :meth:`final` includes the
+    tool calls in ``message.tool_calls``.
     """
 
     def __init__(self, response: httpx.Response, release: Release) -> None:
@@ -175,6 +203,11 @@ class ChatStream(_SyncSSE):
     @property
     def finish_reason(self) -> Optional[str]:
         return self._state.finish_reason
+
+    @property
+    def tool_calls(self) -> List[ToolCall]:
+        """The tool calls received so far, accumulated by ``index`` (complete once the stream ended)."""
+        return self._state.tool_calls()
 
     def __iter__(self) -> Iterator[ChatCompletionChunk]:
         if self._closed:  # already read (or closed): final() returns what was collected
@@ -350,6 +383,11 @@ class AsyncChatStream(_AsyncSSE):
     @property
     def finish_reason(self) -> Optional[str]:
         return self._state.finish_reason
+
+    @property
+    def tool_calls(self) -> List[ToolCall]:
+        """The tool calls received so far, accumulated by ``index`` (complete once the stream ended)."""
+        return self._state.tool_calls()
 
     async def __aiter__(self) -> AsyncIterator[ChatCompletionChunk]:
         if self._closed:  # already read (or closed): final() returns what was collected

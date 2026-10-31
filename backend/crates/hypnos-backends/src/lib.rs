@@ -19,6 +19,7 @@ pub mod kokoro;
 pub mod llama;
 pub mod media;
 mod onnx;
+mod tools;
 mod worker;
 
 use async_trait::async_trait;

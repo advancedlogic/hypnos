@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 import httpx
 
@@ -197,6 +197,8 @@ def chat_body(
     seed: Optional[int],
     num_ctx: Optional[int],
     think: Optional[bool],
+    tools: Optional[Sequence[Any]],
+    tool_choice: Optional[Any],
     extra: Optional[Mapping[str, Any]],
 ) -> Dict[str, Any]:
     body = drop_none(
@@ -210,6 +212,8 @@ def chat_body(
             "seed": seed,
             "num_ctx": num_ctx,
             "think": think,
+            "tools": list(tools) if tools is not None else None,
+            "tool_choice": tool_choice,
             "stream": stream,
         }
     )
