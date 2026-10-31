@@ -39,6 +39,7 @@
         <a href="#endpoints">Endpoints</a>
         <a href="#models">Models</a>
         <a href="#quickstart">Quickstart</a>
+        <a href="#desktop">Desktop app</a>
         <a href="https://github.com/advancedlogic/hypnos" rel="noopener">GitHub</a>
       </nav>
       <div class="header-actions">
@@ -59,15 +60,16 @@
       <div class="hero-glow" aria-hidden="true"></div>
       <div class="container hero-grid">
         <div class="hero-copy">
-          <p class="eyebrow">Open source · Rust · CUDA and Metal</p>
+          <p class="eyebrow">Open source · Rust · CUDA and Metal · Desktop app</p>
           <h1>One endpoint for every modality on one GPU.</h1>
           <p class="lede">
             Hypnos serves chat, vision, speech-to-text, text-to-speech, embeddings, image generation,
-            document conversion and entity extraction from a single process, through the OpenAI API.
-            A lease-based scheduler decides what lives in VRAM so you don't have to.
+            document conversion and entity extraction from a single process, through the OpenAI API,
+            tool calling included. A lease-based scheduler decides what lives in VRAM so you don't have to.
           </p>
           <div class="cta-row">
             <a class="btn btn-primary" href="#quickstart">Get started</a>
+            <a class="btn btn-ghost" href="#desktop">Desktop app</a>
             <a class="btn btn-ghost" href="https://github.com/advancedlogic/hypnos" rel="noopener">
               <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
               View on GitHub
@@ -77,6 +79,7 @@
             <li><strong>No sidecars.</strong> llama.cpp, stable-diffusion.cpp, ONNX Runtime, docling.rs and GLiNER are linked in.</li>
             <li><strong>One memory budget.</strong> Every engine books weights, KV cache and scratch space with the same planner.</li>
             <li><strong>Drop-in.</strong> Works with any OpenAI client; optional API keys and in-process HTTPS.</li>
+            <li><strong>A desktop chat app.</strong> For macOS, Windows and Linux: attachments, voice, image generation and live memory stats.</li>
           </ul>
         </div>
         <figure class="hero-demo">
@@ -92,14 +95,23 @@
     <!-- Measured -->
     <section class="stats" aria-label="Measured results">
       <div class="container">
+        <h2 class="stat-group-title">CUDA <span>one 24 GB GPU, default lineup</span></h2>
         <div class="stat-grid">
-          <div class="stat"><span class="stat-value">~100<small> tok/s</small></span><span class="stat-label">Chat decode per stream, Gemma 4 26B-A4B Q4</span></div>
+          <div class="stat"><span class="stat-value">~100<small> tok/s</small></span><span class="stat-label">Chat decode per stream, Gemma 4 26B-A4B Q4; 150 on an RTX 5090 laptop with 3 slots</span></div>
           <div class="stat"><span class="stat-value">145<small> ms</small></span><span class="stat-label">Time to first token on a follow-up turn, with KV prefix reuse (from 300 ms)</span></div>
           <div class="stat"><span class="stat-value">2.18<small>×</small></span><span class="stat-label">Aggregate decode throughput with four concurrent clients (continuous batching)</span></div>
           <div class="stat"><span class="stat-value">385<small> ms</small></span><span class="stat-label">Time to first audio with streaming text-to-speech (from 5.4 s)</span></div>
-          <div class="stat"><span class="stat-value">84<small> ms</small></span><span class="stat-label">First token of a 15.8 GB model already in Tier 1; 0.99 s from Tier 2, 2.29 s from Tier 3</span></div>
+          <div class="stat"><span class="stat-value">3.7<small> s</small></span><span class="stat-label">15.8 GB model from pinned RAM to its first token (RTX 5090 laptop; from 7.5 s)</span></div>
         </div>
-        <p class="stats-note">One 24 GB CUDA GPU with the default lineup; the swap figures on an Apple M5 Max (Metal). Full reports in <a href="https://github.com/advancedlogic/hypnos/tree/main/docs/bench" rel="noopener">docs/bench</a>.</p>
+        <h2 class="stat-group-title">Apple Silicon <span>M5 Max, 128 GB, Metal</span></h2>
+        <div class="stat-grid">
+          <div class="stat"><span class="stat-value">113<small> tok/s</small></span><span class="stat-label">Chat decode per stream, Gemma 4 26B-A4B Q4; prefill up to 4,000 tok/s</span></div>
+          <div class="stat"><span class="stat-value">97<small> ms</small></span><span class="stat-label">Time to first token on a follow-up turn, with KV prefix reuse (from 182 ms)</span></div>
+          <div class="stat"><span class="stat-value">54<small> ms</small></span><span class="stat-label">First token of a 15.8 GB model already in Tier 1; 0.99 s from Tier 2, 2.32 s from Tier 3</span></div>
+          <div class="stat"><span class="stat-value">1.1<small> s</small></span><span class="stat-label">Next turn of a 12.6k-token chat after its model was swapped out, with KV parking (from 4.6 s)</span></div>
+          <div class="stat"><span class="stat-value">359<small> ms</small></span><span class="stat-label">Time to first audio with streaming text-to-speech; 2.25 s for a full voice round trip</span></div>
+        </div>
+        <p class="stats-note">Full reports, including MoE expert offload and slot counts, in <a href="https://github.com/advancedlogic/hypnos/tree/main/docs/bench" rel="noopener">docs/bench</a>.</p>
       </div>
     </section>
 
@@ -135,12 +147,27 @@
           <article class="card">
             <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg></div>
             <h3>Drop-in for OpenAI clients</h3>
-            <p>Chat with streaming, images and audio, embeddings, transcription, speech with streaming synthesis, image generation. Optional API keys, in-process HTTPS, CORS for loopback by default.</p>
+            <p>Chat with streaming, images, audio and tool calling, embeddings, transcription, speech with streaming synthesis, image generation. Optional API keys, in-process HTTPS, CORS for loopback by default.</p>
           </article>
           <article class="card">
             <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></div>
             <h3>Observable</h3>
             <p>A live playground shows each model's tier as requests come in. Every response carries its placement and timing, <code>/metrics</code> is Prometheus, and a request log keeps recent calls.</p>
+          </article>
+          <article class="card">
+            <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h11a4 4 0 0 1 0 8H8"/><path d="M11 12l-3 3 3 3"/></svg></div>
+            <h3>Swaps that keep their place</h3>
+            <p>With KV parking on, a chat model evicted for another one saves its conversations' KV cache in host RAM and restores it in milliseconds when it comes back, so the next turn prefills only what is new.</p>
+          </article>
+          <article class="card">
+            <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M17.5 14v7"/></svg></div>
+            <h3>MoE expert offload</h3>
+            <p>On a discrete GPU, a Mixture-of-Experts model can keep its expert weights on the CPU: Gemma 4 26B-A4B needs 3 GB of VRAM instead of 15.8 GB and stays resident next to the image model, at a cost in speed. Off by default.</p>
+          </article>
+          <article class="card">
+            <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+            <h3>A desktop app</h3>
+            <p>A chat client for macOS, Windows and Linux built with Tauri. It talks to a local or remote Hypnos, can start a local server itself, and shows the memory tiers live. <a href="#desktop">More below</a>.</p>
           </article>
         </div>
       </div>
@@ -157,6 +184,8 @@
             <li>Promotion from pinned RAM goes over PCIe only; nothing is re-read from disk.</li>
             <li>KV cache is booked per execution slot, with f16, q8_0 or q4_0 types and sliding-window awareness for Gemma 4.</li>
             <li>CPU engines (docling, GLiNER) book host RAM only and leave VRAM alone.</li>
+            <li>Optional KV parking keeps a demoted chat model's conversations in host RAM; when it returns with the same context layout they are restored before it takes requests.</li>
+            <li>Optional MoE offload: before splitting layers, the planner can move the expert weights of the last layers to the CPU and keep the rest on the GPU.</li>
             <li>Per-model admission queues answer 429 instead of piling up; disconnects cancel generation at the next token, chunk or step.</li>
           </ul>
         </div>
@@ -199,13 +228,13 @@
       <div class="container">
         <div class="section-head">
           <p class="eyebrow">API surface</p>
-          <h2>The OpenAI routes you already use, plus two extensions.</h2>
+          <h2>The OpenAI routes you already use, plus extensions for documents, entities and memory.</h2>
         </div>
         <div class="table-wrap">
           <table>
             <thead><tr><th>Endpoint</th><th>What it serves</th><th>Notes</th></tr></thead>
             <tbody>
-              <tr><td><code>POST /v1/chat/completions</code></td><td>Text, vision and audio chat</td><td>SSE streaming, images and audio clips in messages, continuous batching across slots, KV prefix reuse</td></tr>
+              <tr><td><code>POST /v1/chat/completions</code></td><td>Text, vision and audio chat</td><td>SSE streaming, images and audio clips in messages, tool calling (<code>tools</code>, <code>tool_choice</code>), continuous batching across slots, KV prefix reuse</td></tr>
               <tr><td><code>POST /v1/embeddings</code></td><td>Dense vector embeddings</td><td>Any GGUF embedding model llama.cpp loads</td></tr>
               <tr><td><code>POST /v1/audio/transcriptions</code></td><td>Speech-to-text</td><td>Multipart or JSON; Gemma 4 audio through libmtmd</td></tr>
               <tr><td><code>POST /v1/audio/speech</code></td><td>Text-to-speech</td><td><code>stream: true</code> returns PCM or an open-ended WAV as it is synthesized</td></tr>
@@ -213,6 +242,7 @@
               <tr><td><code>POST /v1/documents/convert</code> <span class="pill">extension</span></td><td>PDFs, images and office files to Markdown or JSON</td><td>docling.rs page by page, OCR, picture descriptions through a vision model</td></tr>
               <tr><td><code>POST /v1/entities</code> <span class="pill">extension</span></td><td>Zero-shot named-entity extraction</td><td>GLiNER2.5, labels chosen per request, multilingual</td></tr>
               <tr><td><code>GET /v1/memory/status</code> · <code>POST /v1/memory/tier</code></td><td>Tier snapshot and manual moves</td><td>Refused with 429 while the model is leased</td></tr>
+              <tr><td><code>/v1/memory/kv-park</code> · <code>POST /v1/models/{id}/moe-offload</code> <span class="pill">extension</span></td><td>Runtime switches</td><td>KV parking on or off with its RAM cap and parked conversations; a MoE model's expert offload mode</td></tr>
               <tr><td><code>GET /metrics</code> · <code>/health</code> · <code>/ready</code> · <code>/v1/logs</code></td><td>Operations</td><td>Prometheus text, probes, recent request log with timing split</td></tr>
             </tbody>
           </table>
@@ -334,8 +364,50 @@ docker run --gpus all -p 9999:9999 -v ./models:/opt/hypnos/models ghcr.io/advanc
       </div>
     </section>
 
+    <!-- Desktop -->
+    <section class="section section-alt" id="desktop">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">Desktop app</p>
+          <h2>A chat client for every modality, on your desktop.</h2>
+          <p class="section-lede">Hypnos Desktop is a Tauri app for macOS, Windows and Linux. It connects to a Hypnos server on this machine or another one and picks the right model for each job from what the server reports.</p>
+        </div>
+        <div class="feature-grid">
+          <article class="card">
+            <h3>Attach anything</h3>
+            <p>Images, PDFs and office documents (converted with docling), audio (transcribed) and video (soundtrack transcript plus sampled frames). Paste a URL and its content becomes part of the conversation.</p>
+          </article>
+          <article class="card">
+            <h3>Voice in, voice out</h3>
+            <p>Dictate with the microphone button, and have answers read aloud sentence by sentence while they stream.</p>
+          </article>
+          <article class="card">
+            <h3>Images from the chat</h3>
+            <p>Ask for a picture and the model calls the image tool; the image appears in the conversation and the model comments on it. Regenerate any answer from any turn.</p>
+          </article>
+          <article class="card">
+            <h3>See the memory tiers</h3>
+            <p>A collapsible stats panel shows each model's tier, VRAM and RAM use and the last request's timing, with switches for KV parking and MoE offload. A request log shows every call.</p>
+          </article>
+          <article class="card">
+            <h3>Runs the server for you</h3>
+            <p>Start and stop an installed <code>hypnos</code> from the app or the menu bar / tray icon, or connect to a remote one; the API key stays in the OS keychain.</p>
+          </article>
+          <article class="card">
+            <h3>Download</h3>
+            <p>Every <a href="https://github.com/advancedlogic/hypnos/releases/latest" rel="noopener">release</a> carries a <code>.dmg</code> for Apple Silicon, a <code>.msi</code> and a setup <code>.exe</code> for Windows, and a <code>.deb</code> and an <code>.AppImage</code> for Linux. The app does not include the server.</p>
+          </article>
+        </div>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://github.com/advancedlogic/hypnos/releases/latest" rel="noopener">Download the desktop app</a>
+          <a class="btn btn-ghost" href="https://github.com/advancedlogic/hypnos/blob/main/desktop/README.md" rel="noopener">Desktop guide</a>
+        </div>
+        <p class="fine">The installers are not notarized or signed yet: on macOS allow the first open in System Settings › Privacy &amp; Security › Open Anyway; on Windows choose More info › Run anyway.</p>
+      </div>
+    </section>
+
     <!-- Compare -->
-    <section class="section section-alt" id="compare">
+    <section class="section" id="compare">
       <div class="container">
         <div class="section-head">
           <p class="eyebrow">Where it fits</p>
@@ -368,6 +440,7 @@ docker run --gpus all -p 9999:9999 -v ./models:/opt/hypnos/models ghcr.io/advanc
       <nav class="footer-links" aria-label="Project links">
         <a href="https://github.com/advancedlogic/hypnos" rel="noopener">Source</a>
         <a href="https://github.com/advancedlogic/hypnos/releases" rel="noopener">Releases</a>
+        <a href="https://github.com/advancedlogic/hypnos/blob/main/desktop/README.md" rel="noopener">Desktop app</a>
         <a href="https://github.com/advancedlogic/hypnos/blob/main/README.md" rel="noopener">README</a>
         <a href="https://github.com/advancedlogic/hypnos/tree/main/docs" rel="noopener">Docs</a>
         <a href="https://github.com/advancedlogic/hypnos/blob/main/backend/hypnos.example.toml" rel="noopener">Example config</a>

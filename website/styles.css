@@ -169,6 +169,12 @@ pre code { background: none; padding: 0; font-size: 0.85rem; }
 .stat-value small { font-size: 0.95rem; color: var(--accent-text); font-weight: 600; }
 .stat-label { display: block; font-size: 0.82rem; color: var(--text-muted); margin-top: 8px; line-height: 1.4; }
 .stats-note { font-size: 0.85rem; color: var(--text-muted); margin: 16px 0 0; }
+.stat-group-title { font-family: var(--font-display); font-size: 1rem; font-weight: 700; color: var(--heading); margin: 0 0 12px; }
+.stat-group-title span { font-weight: 500; color: var(--text-muted); font-size: 0.88rem; margin-left: 8px; }
+.stat-grid + .stat-group-title { margin-top: 24px; }
+#desktop .cta-row { margin-top: 28px; }
+#desktop .btn-ghost { color: var(--heading); border-color: var(--border); }
+#desktop .btn-ghost:hover { border-color: var(--accent); color: var(--accent-text); }
 
 /* Sections */
 .section { padding: 80px 0; }

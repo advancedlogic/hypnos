@@ -136,7 +136,7 @@ Prerequisites, besides Node.js 18+ and Rust (rustup stable):
 - **macOS:** the Xcode command line tools.
 - **Windows:** the MSVC build tools and WebView2 (preinstalled on Windows 10/11).
 - **Linux:** `sudo apt install build-essential pkg-config libssl-dev libwebkit2gtk-4.1-dev
-  libayatana-appindicator3-dev librsvg2-dev patchelf` (or your distribution's equivalents; see
+  libayatana-appindicator3-dev librsvg2-dev patchelf libasound2-dev` (or your distribution's equivalents; see
   the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)).
 
 ```bash
