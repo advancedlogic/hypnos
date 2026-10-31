@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What Hypnos is
 
 An OpenAI-compatible multi-modal inference server in Rust (`backend/`) plus a Svelte 5 + Tailwind
-playground (`frontend/`). All engines (llama.cpp + libmtmd, stable-diffusion.cpp, ONNX Runtime +
+playground (`frontend/`) and a Tauri 2 desktop chat client (`desktop/`). All engines (llama.cpp + libmtmd, stable-diffusion.cpp, ONNX Runtime +
 espeak-ng, docling.rs) are compiled and linked **in-process**; there is no external runtime. The core idea is a
 3-tier memory hierarchy (Tier 1 GPU VRAM, Tier 2 pinned host RAM, Tier 3 memory-mapped NVMe) with a
 lease-based scheduler that promotes/evicts models on demand. See [README.md](README.md) for the
@@ -47,6 +47,12 @@ cd backend && cargo build --workspace --no-default-features
 # Apple Silicon (Metal); ./run.sh build does this automatically on Darwin/arm64
 cd backend && cargo build --release -p hypnos-server --no-default-features --features metal
 
+# Desktop app (Tauri 2; not part of `all`; needs the Tauri prerequisites, see desktop/README.md)
+./run.sh build desktop                 # npm install + tauri build --no-bundle
+./run.sh [start|stop|status|logs] desktop
+cd desktop && npx tauri dev            # development: Vite on 1420 + app window, hot reload
+cd desktop/src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+
 # Model files (~31 GB, listed in backend/models.manifest) into backend/models/
 ./run.sh models [model-id]             # run.bat models on Windows
 
@@ -64,13 +70,15 @@ Build notes:
 - The first backend build compiles every native engine (10-20 min). CMake generator is forced to
   Ninja; the Visual Studio generator ignores `CUDAHOSTCXX`.
 - `.github/workflows/ci.yml` runs fmt + clippy, the CPU (Linux, Windows) and Metal (macOS) builds
-  and tests, and the frontend build only for a release: `release.yml` calls it on a `v*` tag and
+  and tests, the SDK tests, the desktop app build (three OSes) and the frontend build only for a release: `release.yml` calls it on a `v*` tag and
   the Docker push and the GitHub release wait for it. Pushes and PRs start nothing; run it by
   hand (Actions > ci > Run workflow) before tagging, and run fmt + clippy + tests locally.
   Clippy runs on a pinned Rust (1.98.0 in the lint job; the builds use current stable): bump it
   on purpose, with the fixes the new lints ask for.
-- `.github/workflows/release.yml` builds the CUDA (Linux, Windows) and Metal archives on a `v*` tag
-  and publishes them as a GitHub release; a manual run only builds them as artifacts.
+- `.github/workflows/release.yml` builds the CUDA (Linux, Windows) and Metal archives and the
+  desktop installers (.dmg, .msi/.exe, .deb/.AppImage; ad-hoc signed on macOS, unsigned on
+  Windows) on a `v*` tag and publishes them as a GitHub release; a manual run only builds them as
+  artifacts.
 - `backend/backend.http` has ready-made requests for the VS Code REST Client extension.
 
 ## Architecture
@@ -225,6 +233,20 @@ real router, scheduler, auth and request log in front of mock engines for the de
 with `/mock/fail` (inject an engine error), `/mock/ready` and `/mock/reset`. A change to the
 API means a change to `docs/api.md`, the mock server and the three SDKs. In Python, edit
 `_async_client.py` and regenerate the sync client with `scripts/unasync.py`.
+
+### Desktop app (`desktop/`)
+
+Tauri 2 + Svelte 5 + Tailwind 3 (same versions as `frontend/`), its own `package.json` and a
+`src-tauri/` crate outside the backend workspace. A client only: it does not start the server.
+Vite aliases `@hypnos/client` to `sdk/javascript/src`, so the SDK needs no build step (an SDK API
+change can break the app). Requests go through `tauri-plugin-http` because the webview origin
+(`tauri://localhost`) fails the server's loopback-only CORS default; the capability allows
+loopback, and the Rust command `allow_server` adds a runtime capability for a saved remote
+origin. `get_api_key` / `set_api_key` keep the API key in the OS keychain (`keyring`), keyed by
+origin; chats and the server URL live in `tauri-plugin-store`. `ChatStore`
+(`src/lib/chats.svelte.js`) owns chats and streaming; `StatsPanel.svelte` polls
+`/v1/memory/status` only while open. A change to `/v1/memory/status`, telemetry or errors in
+`docs/api.md` may need a change here too. `desktop/README.md` is its guide.
 
 ### Frontend
 

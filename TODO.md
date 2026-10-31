@@ -84,10 +84,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       desktop app stays a pure client or ships the server (archive size, GPU builds per
       platform). After DESK-4.
 
-- [ ] ⬜ **DOC-6** `P2` Document the desktop app
-      `desktop/README.md` (prerequisites per OS, dev and build commands, connecting to a
-      server), a section in the root README, and the new directory in CLAUDE.md. After DESK-3.
-
 - [ ] ⬛ **BUILD-9** `P3` Sign and notarize the desktop installers
       The release's desktop installers are ad-hoc signed on macOS and unsigned on Windows
       (BUILD-8), so users must confirm the first open. Add an Apple Developer ID certificate
@@ -101,6 +97,14 @@ _No cards yet._
 
 ## Done
 
+- [x] ⬜ **DOC-6** `P2` Document the desktop app
+      `desktop/README.md` (prerequisites per OS, dev and build commands, connecting to a
+      server), a section in the root README, and the new directory in CLAUDE.md. After DESK-3.
+      Done: `desktop/README.md` (usage, shortcuts, installing, building per OS, how it reaches
+      a remote server, layout); README: desktop rows in the run-script table, a "Desktop app"
+      section, the installers under Prebuilt binaries, the repository tree; CLAUDE.md: the
+      commands, the CI/release notes and a "Desktop app" architecture section.
+
 - [x] ⬛ **BUILD-8** `P2` Build the desktop app from the run scripts and CI
       `./run.sh build desktop` / `run.bat build desktop` (npm install + `tauri build`) and
       `start desktop` for `tauri dev`; a desktop build job in ci.yml (macOS, Windows, Linux)
@@ -113,6 +117,7 @@ _No cards yet._
       .msi + NSIS .exe, .deb + .AppImage named `hypnos-desktop-<tag>-<platform>.*`, carrying
       the tag's version, ad-hoc signed on macOS, attached to the release with the archives.
       Not run yet: the workflows (run ci by hand before the next tag) and run.bat on Windows.
+      (commit 4627348)
 
 - [x] 🩵 **DESK-4** `P2` Connection settings and server states
       Settings screen: server URL (default `http://localhost:9999`), API key kept in the OS

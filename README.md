@@ -111,6 +111,9 @@ On Windows: `powershell -ExecutionPolicy Bypass -File scripts\fetch-models.ps1`,
 The binaries link espeak-ng statically, so the archives are distributed under the GNU GPL v3 or
 later (see [License](#license)); each one includes the license texts and links its source tag.
 
+Releases after v0.2.0 also carry installers for the [desktop app](#desktop-app)
+(`hypnos-desktop-*.dmg`, `.msi` / `.setup.exe`, `.deb` / `.AppImage`).
+
 ### Docker (CUDA)
 
 Linux with an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html):
@@ -368,8 +371,8 @@ and starting are separate steps: `build` compiles, `start` launches the compiled
 invokes cargo.
 
 ```text
-run.bat [build|start|stop|restart|status]      [backend|frontend|all]
-./run.sh [build|start|stop|restart|status|logs] [backend|frontend|all]
+run.bat [build|start|stop|restart|status]      [backend|frontend|desktop|all]
+./run.sh [build|start|stop|restart|status|logs] [backend|frontend|desktop|all]
 ```
 
 | Command                     | Effect                                                        |
@@ -383,6 +386,8 @@ run.bat [build|start|stop|restart|status]      [backend|frontend|all]
 | `... status`                | show what is running, on which PID, and whether the backend is built |
 | `./run.sh logs [target]`    | follow `.run/backend.log` / `.run/frontend.log`               |
 | `... models [model id]`     | download the model files into `backend/models/` (all, or one model) |
+| `... build desktop`         | `npm install` + `tauri build --no-bundle` of the [desktop app](#desktop-app) |
+| `... start desktop`         | open the built desktop app (`stop`, `status`, `logs desktop` too); `all` never includes it |
 
 `restart` does not rebuild: run `build` after changing Rust code, then `restart backend`.
 `HYPNOS_PROFILE=debug` makes `build`/`start` use the dev profile (`backend/target/debug/`) instead.
@@ -406,6 +411,20 @@ cd frontend
 npm install
 npm run dev
 ```
+
+### Desktop app
+
+`desktop/` is a Tauri 2 app for a running server, in the spirit of the Ollama app: a chat with
+streaming answers and a model picker, and a collapsible right panel with the server's live
+state (memory tiers, the models in each, the last answer's timings, evictions). It connects to
+`http://localhost:9999` by default; the server URL and an API key (kept in the system keychain)
+are set in its connection dialog. It does not contain the server.
+
+```bash
+./run.sh build desktop && ./run.sh start desktop   # or: cd desktop && npm install && npx tauri dev
+```
+
+Prerequisites per OS, shortcuts and how it reaches a remote server: [desktop/README.md](desktop/README.md).
 
 ---
 
@@ -574,6 +593,7 @@ hypnos/
 │       ├── hypnos-backends/     # Native llama.cpp+mtmd, stable-diffusion.cpp, ONNX Runtime, docling & GLiNER engines
 │       └── hypnos-server/       # Axum HTTP/SSE OpenAI Server & Multi-Modal Lifecycle Tests
 ├── sdk/                         # Client SDKs: python/, javascript/, rust/ (tested against a mock server)
+├── desktop/                     # Tauri 2 + Svelte 5 desktop app: chat + live stats panel (desktop/README.md)
 └── frontend/                    # Svelte 5 (Runes) + Tailwind CSS Interactive Playground
     ├── package.json
     ├── vite.config.js
