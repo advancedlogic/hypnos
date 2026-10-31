@@ -1,6 +1,11 @@
 <script>
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
+  import { open as openDialog } from '@tauri-apps/plugin-dialog';
+  import { getCurrentWebview } from '@tauri-apps/api/webview';
   import Markdown from './Markdown.svelte';
+  import Attachments from './Attachments.svelte';
+  import * as api from './hypnos.js';
+  import { sampleFrames } from './video.js';
   import logo from '../assets/logo.png';
   import { telemetrySummary, tierName } from './format.js';
 
@@ -11,11 +16,95 @@
   let scroller = $state();
   let textarea = $state();
   let stickToBottom = true;
+  /** Files being prepared or ready for the next message: `{ id, name, status, attachment?, error? }`. */
+  let pending = $state([]);
+  let dragging = $state(false);
 
   let chat = $derived(store.current);
   let running = $derived(chat ? store.isRunning(chat.id) : false);
   let modelKnown = $derived(!chat?.model || models.some((m) => m.id === chat.model));
-  let canSend = $derived(!!input.trim() && !!chat?.model && serverState === 'ready' && !running);
+  let preparing = $derived(pending.some((p) => p.status === 'preparing'));
+  let ready = $derived(pending.filter((p) => p.status === 'ready').map((p) => p.attachment));
+  let canSend = $derived(
+    (!!input.trim() || ready.length > 0) && !preparing && !!chat?.model && serverState === 'ready' && !running,
+  );
+
+  const STEPS = { image: 'resizing', document: 'converting', audio: 'transcribing', video: 'reading' };
+
+  function stepFor(name) {
+    const ext = name.split('.').pop().toLowerCase();
+    if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff'].includes(ext)) return STEPS.image;
+    if (['wav', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'oga'].includes(ext)) return STEPS.audio;
+    if (['mp4', 'mov', 'm4v', 'webm', 'mkv'].includes(ext)) return 'transcribing the soundtrack';
+    return STEPS.document;
+  }
+
+  /** Prepares a file (path) or pasted bytes in the background, as a chip above the composer. */
+  async function attach(name, prepare) {
+    const item = { id: crypto.randomUUID(), name, status: 'preparing', step: stepFor(name) };
+    pending.push(item);
+    const entry = () => pending.find((p) => p.id === item.id);
+    try {
+      let attachment = await prepare();
+      if (attachment.kind === 'video' && attachment.path) {
+        if (entry()) entry().step = 'sampling frames';
+        try {
+          attachment = { ...attachment, frames: await sampleFrames(attachment.path) };
+        } catch (e) {
+          console.warn(e);
+        }
+        if (!attachment.frames.length && !attachment.transcript) throw new Error(`${name}: neither its frames nor its sound could be read here.`);
+      }
+      if (entry()) Object.assign(entry(), { status: 'ready', attachment });
+    } catch (e) {
+      if (entry()) Object.assign(entry(), { status: 'error', error: api.errorMessage(e) });
+    }
+  }
+
+  function attachPaths(paths) {
+    for (const path of paths) attach(path.split(/[\\/]/).pop(), () => api.attachFromPath(path, chat?.model));
+  }
+
+  async function pickFiles() {
+    const picked = await openDialog({
+      multiple: true,
+      filters: [
+        { name: 'Images, documents, audio, video', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'pdf', 'docx', 'pptx', 'xlsx', 'html', 'md', 'txt', 'csv', 'json', 'wav', 'mp3', 'm4a', 'flac', 'ogg', 'mp4', 'mov', 'm4v', 'webm', 'mkv'] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    });
+    if (picked) attachPaths(Array.isArray(picked) ? picked : [picked]);
+  }
+
+  async function onPaste(e) {
+    const files = [...(e.clipboardData?.files ?? [])];
+    if (!files.length) return;
+    e.preventDefault();
+    for (const file of files) {
+      const name = file.name && file.name !== 'image.png' ? file.name : `pasted-${Date.now()}.${(file.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`;
+      attach(name, async () => api.attachFromBytes(name, new Uint8Array(await file.arrayBuffer()), chat?.model));
+    }
+  }
+
+  function removePending(i) {
+    pending.splice(i, 1);
+  }
+
+  onMount(() => {
+    let unlisten;
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const { type } = event.payload;
+        if (type === 'enter' || type === 'over') dragging = true;
+        else if (type === 'leave') dragging = false;
+        else if (type === 'drop') {
+          dragging = false;
+          attachPaths(event.payload.paths);
+        }
+      })
+      .then((u) => (unlisten = u));
+    return () => unlisten?.();
+  });
 
   // A chat without a model (or with one that left the server) takes the first available.
   $effect(() => {
@@ -45,11 +134,13 @@
   async function submit() {
     if (!canSend) return;
     const text = input;
+    const attachments = ready.map((a) => $state.snapshot(a));
     input = '';
+    pending = [];
     stickToBottom = true;
     await tick();
     autosize();
-    store.send(chat, text);
+    store.send(chat, text, attachments);
   }
 
   function onKeydown(e) {
@@ -74,7 +165,12 @@
   }
 </script>
 
-<div class="h-full flex flex-col">
+<div class="relative h-full flex flex-col">
+  {#if dragging}
+    <div class="absolute inset-2 z-20 rounded-2xl border-2 border-dashed border-indigo-400/70 bg-slate-950/80 flex items-center justify-center pointer-events-none">
+      <p class="text-sm text-indigo-200">Drop images, documents, audio or video</p>
+    </div>
+  {/if}
   <div class="h-11 shrink-0 px-4 flex items-center gap-2 border-b border-slate-800/60">
     {#if chat}
       <select
@@ -143,8 +239,13 @@
       <div class="max-w-3xl mx-auto px-4 py-6 space-y-6">
         {#each chat.messages as message, i (i)}
           {#if message.role === 'user'}
-            <div class="flex justify-end">
-              <div class="max-w-[80%] rounded-2xl bg-slate-800 px-4 py-2 text-sm whitespace-pre-wrap break-words">{message.content}</div>
+            <div class="flex flex-col items-end gap-2">
+              {#if message.attachments?.length}
+                <div class="max-w-[80%]"><Attachments items={message.attachments} /></div>
+              {/if}
+              {#if message.content}
+                <div class="max-w-[80%] rounded-2xl bg-slate-800 px-4 py-2 text-sm whitespace-pre-wrap break-words">{message.content}</div>
+              {/if}
             </div>
           {:else}
             <div class="group">
@@ -168,6 +269,7 @@
               {#if !message.pending}
                 <div class="mt-1.5 flex items-center gap-3 text-[11px] text-slate-500">
                   {#if message.stopped}<span>Stopped</span>{/if}
+                  {#if message.note}<span class="text-amber-300/80">{message.note}</span>{/if}
                   {#if message.telemetry}<span>{telemetrySummary(message.telemetry, message.usage)}</span>{/if}
                   <span class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                     {#if message.content}
@@ -189,8 +291,20 @@
   </div>
 
   <div class="shrink-0 px-4 pb-4">
+    {#if pending.length}
+      <div class="max-w-3xl mx-auto mb-2"><Attachments items={pending} onremove={removePending} /></div>
+    {/if}
     <div class="max-w-3xl mx-auto flex items-end gap-2 rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 focus-within:border-slate-500">
+      <button
+        class="w-8 h-8 shrink-0 rounded-full text-slate-400 hover:text-slate-100 hover:bg-slate-800 flex items-center justify-center"
+        onclick={pickFiles}
+        title="Attach images, documents, audio or video (or drop / paste them)"
+        aria-label="Attach files"
+      >
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.5 3.5 0 015 5l-8.6 8.6a2 2 0 01-2.8-2.8l7.9-7.9" /></svg>
+      </button>
       <textarea
+        onpaste={onPaste}
         bind:this={textarea}
         bind:value={input}
         oninput={autosize}

@@ -1,3 +1,4 @@
+mod attachments;
 mod hypnos;
 mod local_server;
 
@@ -46,6 +47,7 @@ fn set_api_key(server_url: String, api_key: Option<String>) -> Result<(), String
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(hypnos::Hypnos::default());
             app.manage(local_server::LocalServer::default());
@@ -63,6 +65,8 @@ pub fn run() {
             hypnos::hypnos_route,
             hypnos::hypnos_chat,
             hypnos::hypnos_chat_cancel,
+            attachments::attachment_from_path,
+            attachments::attachment_from_bytes,
             local_server::local_server_detect,
             local_server::local_server_start,
             local_server::local_server_stop,

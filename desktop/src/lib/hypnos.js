@@ -27,13 +27,15 @@ export const setRoutes = (routes) => invoke('hypnos_set_routes', { routes });
 export const route = (modality, preferred) => invoke('hypnos_route', { modality, preferred: preferred ?? null });
 
 /**
- * Streams an answer: `onDelta(text)` per piece, `onDone({ telemetry, usage, finishReason })` at
+ * Streams an answer: `onModel(id, reason)` when another model answers (images for a model that
+ * cannot see them), `onDelta(text)` per piece, `onDone({ telemetry, usage, finishReason })` at
  * the end. Resolves to `{ cancelled }`; `cancelChat(requestId)` stops it.
  */
-export function chat(requestId, model, messages, { onDelta, onDone }) {
+export function chat(requestId, model, messages, { onModel, onDelta, onDone }) {
   const onEvent = new Channel();
   onEvent.onmessage = (e) => {
-    if (e.event === 'delta') onDelta(e.text);
+    if (e.event === 'model') onModel?.(e.id, e.reason);
+    else if (e.event === 'delta') onDelta(e.text);
     else if (e.event === 'done') onDone(e);
   };
   return invoke('hypnos_chat', { requestId, model, messages, onEvent });
@@ -45,4 +47,16 @@ export const cancelChat = (requestId) => invoke('hypnos_chat_cancel', { requestI
 export function errorMessage(e) {
   if (e?.detail) console.warn(e.detail);
   return e?.message ?? String(e);
+}
+
+/**
+ * Prepares a file for a message (src-tauri/src/attachments.rs): `{ kind: 'image' | 'document' |
+ * 'audio' | 'video', name, size, ... }`. Documents are converted and audio transcribed here, so
+ * this can take a while (and load a model).
+ */
+export const attachFromPath = (path, chatModel) => invoke('attachment_from_path', { path, chatModel: chatModel ?? null });
+
+/** The same for bytes pasted into the composer. */
+export function attachFromBytes(name, bytes, chatModel) {
+  return invoke('attachment_from_bytes', bytes, { headers: { 'x-name': name, ...(chatModel ? { 'x-chat-model': chatModel } : {}) } });
 }

@@ -18,6 +18,15 @@ app's commands.
   current tier. Enter sends, Shift+Enter adds a line. Stop cuts an answer short (the server
   stops at the next token); Regenerate replaces the last answer. Each chat keeps its own model and
   system prompt. Chats are saved on this machine.
+- **Attachments** (the paperclip, drag and drop onto the chat, or paste): each file is prepared
+  when it is added and shows as a chip until it is ready. Images are scaled to 1024 px and sent
+  to a model that sees (when the chat's model cannot, another one answers and the answer says
+  so). PDF, DOCX, PPTX, XLSX and HTML go through docling and arrive as markdown; text and code
+  files are read as they are (both cut at about 60,000 characters with a note). Audio (WAV,
+  MP3, M4A/AAC, FLAC, Ogg Vorbis) is decoded, transcribed and sent as its transcript. Video
+  (MP4, MOV, MKV, WebM, as far as the system's webview decodes them) becomes six frames plus
+  the transcript of its soundtrack. Click a chip to read the extracted text. Attachments are
+  saved with the chat.
 - **Under each answer:** decode speed, time to first token, tokens, and the tier the model was
   loaded from when it was not on the GPU already.
 - **Stats panel** (the right side, toggled with the header button or Cmd/Ctrl+.): server version
@@ -116,10 +125,13 @@ desktop/
 │       ├── Settings.svelte   # connection dialog
 │       ├── LocalServer.svelte # start/stop an installed hypnos, live log
 │       ├── localServer.js    # its commands, events and saved settings
+│       ├── Attachments.svelte # attachment chips (composer and messages)
+│       ├── video.js          # samples video frames in the webview
 │       └── Markdown.svelte   # marked + DOMPurify, copy buttons on code blocks
 └── src-tauri/
     ├── src/lib.rs            # store plugin, keychain commands (get/set_api_key), command list
     ├── src/hypnos.rs         # every server call on hypnos-client, the model router, errors
+    ├── src/attachments.rs    # image resize, docling, audio decode (symphonia) + transcription
     ├── src/local_server.rs   # find, start, stop and log a hypnos process (health via hypnos-client)
     ├── capabilities/         # what the window may call: core + store, no HTTP
     ├── icons/                # generated from app-icon.png (assets/logo.png on a tile)
@@ -128,7 +140,9 @@ desktop/
 
 Tests: `cd src-tauri && cargo test`. Two tests need a real server and are ignored by default:
 `HYPNOS_TEST_URL=http://127.0.0.1:9999 cargo test hypnos -- --ignored` chats, cancels and checks
-the errors through the commands; the local-server test starts one itself: `HYPNOS_TEST_BINARY=../../backend/target/release/hypnos HYPNOS_TEST_CONFIG=<config with
+the errors through the commands; `HYPNOS_TEST_URL=... HYPNOS_TEST_FILES=<dir with jfk.m4a and a
+one-page sample.pdf containing "pelican"> cargo test attachments -- --ignored` prepares real
+attachments and asks a vision model about them; the local-server test starts one itself: `HYPNOS_TEST_BINARY=../../backend/target/release/hypnos HYPNOS_TEST_CONFIG=<config with
 one small model> cargo test -- --ignored` (it uses port 9997).
 
 To regenerate the icons after changing `src-tauri/icons/app-icon.png`:

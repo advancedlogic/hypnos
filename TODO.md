@@ -78,20 +78,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
 
-- [ ] 🩵 **DESK-7** `P1` Attach images, documents, audio and video to a message
-      Paperclip button + drag and drop + paste; chips with name, size and a remove button above
-      the composer. Routing (in Rust, DESK-6): images -> `image_url` data URL parts (needs a
-      `vision` model, else ModelRouter switches or the UI says why); PDF, DOCX, PPTX, XLSX,
-      HTML, MD -> `POST /v1/documents/convert` (docling), the markdown goes into the message
-      as a quoted context block (truncated with a note when it exceeds the context window);
-      audio -> `input_audio` (WAV, converted when needed) when the chat model serves
-      `speech_to_text`, else `/v1/audio/transcriptions` and the transcript as text; video ->
-      a few frames sampled in the webview (video + canvas, no ffmpeg) as images plus its
-      audio track decoded to WAV and transcribed. Limits from docs/api.md
-      (`max_image_bytes`, `max_audio_bytes`, `max_document_bytes`) checked before upload.
-      Attachments are saved with the chat (images as thumbnails, documents as their text).
-      After DESK-6.
-
 - [ ] 🩵 **DESK-8** `P2` Extract a URL's content into the chat, and download it
       URLs in the composer (or a "Read URL" action) are fetched by the Rust side (reqwest,
       size and time limits, http(s) only) and converted to markdown with docling (HTML, PDF,
@@ -141,6 +127,31 @@ _No cards yet._
 
 ## Done
 
+- [x] 🩵 **DESK-7** `P1` Attach images, documents, audio and video to a message
+      Paperclip button + drag and drop + paste; chips with name, size and a remove button above
+      the composer. Routing (in Rust, DESK-6): images -> `image_url` data URL parts (needs a
+      `vision` model, else ModelRouter switches or the UI says why); PDF, DOCX, PPTX, XLSX,
+      HTML, MD -> `POST /v1/documents/convert` (docling), the markdown goes into the message
+      as a quoted context block (truncated with a note when it exceeds the context window);
+      audio -> `input_audio` (WAV, converted when needed) when the chat model serves
+      `speech_to_text`, else `/v1/audio/transcriptions` and the transcript as text; video ->
+      a few frames sampled in the webview (video + canvas, no ffmpeg) as images plus its
+      audio track decoded to WAV and transcribed. Limits from docs/api.md
+      (`max_image_bytes`, `max_audio_bytes`, `max_document_bytes`) checked before upload.
+      Attachments are saved with the chat (images as thumbnails, documents as their text).
+      After DESK-6.
+      Done: `src-tauri/src/attachments.rs` (`attachment_from_path`, `attachment_from_bytes`
+      for paste over a raw IPC body): images -> 1024 px JPEG data URL (`image`), PDF/office/
+      HTML -> docling via the SDK, text files read directly (both capped at 60k chars),
+      audio -> symphonia decode to 16 kHz WAV -> transcription, video -> soundtrack
+      transcript + 6 frames sampled in the webview (`video.js`, asset protocol allowed per
+      file). `hypnos_chat` builds text + `image_url` parts and switches to a vision model
+      (a `model` event, shown under the answer). Composer: paperclip (dialog plugin), drop
+      overlay, paste, chips with progress and the extracted text. Deviation: audio is always
+      sent as its transcript, never as `input_audio`, so it works with any chat model and
+      persists as text. Live test passes (m4a transcript, PDF text, image colour + document
+      in one chat); video frame sampling not yet tried in the window.
+
 - [x] 🩵 **DESK-6** `P1` Route every server call through the Rust SDK in `src-tauri`
       Add `hypnos-client` (`sdk/rust`, path dependency) to the Tauri crate and expose Tauri
       commands for each call the app makes: health/ready, models, memory status, chat (stream
@@ -161,7 +172,7 @@ _No cards yet._
       for each job". The media commands (transcription, speech, images, documents) land with
       DESK-7..11, where their inputs live in Rust (file paths, the mic buffer, playback).
       Ignored live test `chats_and_cancels_through_the_sdk` passes against the running server;
-      no lease is left after a cancel.
+      no lease is left after a cancel. (commit 42ab87c)
 
 - [x] 🩵 **DESK-5** `P3` Start and stop a local Hypnos server from the app
       Optional: bundle or locate the `hypnos` binary and run it as a Tauri sidecar with a

@@ -244,7 +244,11 @@ path dependency). Every server call is a command in `src-tauri/src/hypnos.rs` on
 (chat tokens over a `tauri::ipc::Channel`, cancel by request id); the webview has no HTTP
 permission, and an SDK API change can break the app. `route` picks the model per modality from
 `/v1/memory/status` `modalities` (chat model, then the settings' choice, then a Tier 1 model),
-never hard-coded ids. The real-server tests are `#[ignore]`d (`HYPNOS_TEST_URL`;
+never hard-coded ids. `attachments.rs` prepares files when they are attached (image ->
+1024 px JPEG data URL, documents -> docling markdown, audio -> symphonia decode + transcription,
+video -> soundtrack transcript, frames sampled in the webview through the asset protocol,
+allowed per file); `hypnos_chat` turns them into text and `image_url` parts and switches to a
+vision model when the new message has images. The real-server tests are `#[ignore]`d (`HYPNOS_TEST_URL`;
 `HYPNOS_TEST_BINARY` / `HYPNOS_TEST_CONFIG`). `get_api_key` / `set_api_key` keep the API key in
 the OS keychain (`keyring`), keyed by origin; chats and the server URL live in `tauri-plugin-store`. `ChatStore`
 (`src/lib/chats.svelte.js`) owns chats and streaming; `StatsPanel.svelte` polls

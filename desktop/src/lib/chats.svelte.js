@@ -91,10 +91,11 @@ export class ChatStore {
     this.#persist();
   }
 
-  async send(chat, text) {
-    if (!text.trim() || this.isRunning(chat.id)) return;
-    if (chat.messages.length === 0) chat.title = titleFrom(text);
-    chat.messages.push({ role: 'user', content: text });
+  /** `attachments`: prepared by `attachFromPath` / `attachFromBytes` (they are saved with the chat). */
+  async send(chat, text, attachments = []) {
+    if ((!text.trim() && attachments.length === 0) || this.isRunning(chat.id)) return;
+    if (chat.messages.length === 0) chat.title = titleFrom(text || attachments[0].name);
+    chat.messages.push({ role: 'user', content: text, ...(attachments.length ? { attachments } : {}) });
     await this.#generate(chat);
   }
 
@@ -121,17 +122,21 @@ export class ChatStore {
 
     const history = chat.messages
       .slice(0, -1)
-      .filter((m) => !m.error && m.content)
-      .map(({ role, content }) => ({ role, content }));
+      .filter((m) => !m.error && (m.content || m.attachments?.length))
+      .map(({ role, content, attachments }) => ({ role, content, attachments: attachments ?? [] }));
     if (chat.system.trim()) history.unshift({ role: 'system', content: chat.system });
 
     try {
       const { cancelled } = await api.chat(requestId, chat.model, history, {
+        onModel: (id, reason) => {
+          answer.model = id;
+          answer.note = `answered by ${id}: ${reason}`;
+        },
         onDelta: (text) => (answer.content += text),
         onDone: ({ telemetry, usage }) => {
           answer.telemetry = telemetry ?? undefined;
           answer.usage = usage ?? undefined;
-          if (telemetry) this.lastTelemetry = { model: chat.model, telemetry, usage };
+          if (telemetry) this.lastTelemetry = { model: answer.model, telemetry, usage };
         },
       });
       if (cancelled) answer.stopped = true;

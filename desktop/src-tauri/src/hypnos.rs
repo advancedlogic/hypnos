@@ -7,9 +7,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hypnos_client::{
-    ChatMessage, ChatRequest, Client, Error, MemoryStatus, MemoryTier, ModelStatus, Telemetry,
-    Usage,
+    ChatMessage, ChatRequest, Client, Content, ContentPart, Error, MemoryStatus, MemoryTier,
+    ModelStatus, Telemetry, Usage,
 };
+
+use crate::attachments::Attachment;
 use serde::{Deserialize, Serialize};
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
@@ -28,7 +30,7 @@ pub struct Hypnos {
 }
 
 impl Hypnos {
-    async fn client(&self) -> Result<Arc<Client>, ErrorPayload> {
+    pub(crate) async fn client(&self) -> Result<Arc<Client>, ErrorPayload> {
         self.client
             .read()
             .await
@@ -39,6 +41,41 @@ impl Hypnos {
                 detail: None,
                 retry_after_secs: None,
             })
+    }
+
+    /// The model for a job ([`route`]), or an error saying that no enabled model does it.
+    pub(crate) async fn pick(
+        &self,
+        modality: &str,
+        preferred: Option<&str>,
+    ) -> Result<String, ErrorPayload> {
+        let models = self.client().await?.memory_status().await?.models;
+        let routes = self.routes.read().await;
+        route(
+            &models,
+            modality,
+            preferred,
+            routes.get(modality).map(String::as_str),
+        )
+        .map(str::to_string)
+        .ok_or_else(|| no_model_for(modality))
+    }
+}
+
+fn no_model_for(modality: &str) -> ErrorPayload {
+    let job = match modality {
+        "vision" => "can see images",
+        "speech_to_text" => "transcribes speech",
+        "text_to_speech" => "speaks text",
+        "image_generation" => "generates images",
+        "document_conversion" => "converts documents",
+        other => other,
+    };
+    ErrorPayload {
+        kind: "no_model".into(),
+        message: format!("No enabled model on this server {job}."),
+        detail: None,
+        retry_after_secs: None,
     }
 }
 
@@ -248,16 +285,101 @@ pub fn route<'a>(
         .map(|m| m.id.as_str())
 }
 
-/// What the webview sends for a message; attachments become parts in later cards.
+/// What the webview sends for a message.
 #[derive(Debug, Clone, Deserialize)]
 pub struct InMessage {
     pub role: String,
     pub content: String,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
+}
+
+impl InMessage {
+    fn has_images(&self) -> bool {
+        self.attachments.iter().any(|a| match a {
+            Attachment::Image { .. } => true,
+            Attachment::Video { frames, .. } => !frames.is_empty(),
+            _ => false,
+        })
+    }
+
+    /// The message as the API takes it: documents and transcripts as tagged text after the
+    /// user's words, images (and video frames) as `image_url` parts when the model can see them.
+    fn to_chat_message(&self, vision: bool) -> ChatMessage {
+        let mut text = self.content.clone();
+        let mut images = Vec::new();
+        for a in &self.attachments {
+            match a {
+                Attachment::Document {
+                    name,
+                    text: body,
+                    truncated,
+                    ..
+                } => {
+                    let cut = if *truncated {
+                        " truncated=\"true\""
+                    } else {
+                        ""
+                    };
+                    text.push_str(&format!(
+                        "\n\n<document name=\"{name}\"{cut}>\n{body}\n</document>"
+                    ));
+                }
+                Attachment::Audio {
+                    name, transcript, ..
+                } => {
+                    text.push_str(&format!(
+                        "\n\n<audio_transcript name=\"{name}\">\n{transcript}\n</audio_transcript>"
+                    ));
+                }
+                Attachment::Video {
+                    name,
+                    transcript,
+                    frames,
+                    ..
+                } => {
+                    if let Some(t) = transcript {
+                        text.push_str(&format!(
+                            "\n\n<video_transcript name=\"{name}\">\n{t}\n</video_transcript>"
+                        ));
+                    }
+                    if vision && !frames.is_empty() {
+                        text.push_str(&format!(
+                            "\n\n[{} frames of the video {name} follow, in order]",
+                            frames.len()
+                        ));
+                        images.extend(frames.iter().cloned());
+                    } else if !frames.is_empty() {
+                        text.push_str(&format!(
+                            "\n\n[video {name}: frames not shown to this model]"
+                        ));
+                    }
+                }
+                Attachment::Image { name, data_url, .. } => {
+                    if vision {
+                        images.push(data_url.clone());
+                    } else {
+                        text.push_str(&format!("\n\n[image {name}: not shown to this model]"));
+                    }
+                }
+            }
+        }
+        let content = if images.is_empty() {
+            Content::Text(text)
+        } else {
+            let mut parts = vec![ContentPart::text(text)];
+            parts.extend(images.into_iter().map(ContentPart::image_url));
+            Content::Parts(parts)
+        };
+        ChatMessage::new(self.role.clone(), content)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "event", rename_all = "camelCase")]
 pub enum ChatEvent {
+    /// Another model answers than the one asked for, and why (e.g. the message has images).
+    Model { id: String, reason: String },
     /// A piece of the answer.
     Delta { text: String },
     /// The answer is complete.
@@ -287,10 +409,35 @@ pub async fn hypnos_chat(
     on_event: Channel<ChatEvent>,
 ) -> CmdResult<ChatOutcome> {
     let client = hypnos.client().await?;
-    let messages = messages
-        .into_iter()
-        .map(|m| ChatMessage::new(m.role, hypnos_client::Content::Text(m.content)))
-        .collect();
+    let models = client.memory_status().await?.models;
+    let can_see = |id: &str| models.iter().any(|m| m.id == id && serves(m, "vision"));
+    let mut model = model;
+    // Images in the new message need a model that sees; older images are described as text
+    // to a model that does not.
+    let images_now = messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .is_some_and(InMessage::has_images);
+    if images_now && !can_see(&model) {
+        let routes = hypnos.routes.read().await;
+        let vision = route(
+            &models,
+            "vision",
+            None,
+            routes.get("vision").map(String::as_str),
+        )
+        .ok_or_else(|| no_model_for("vision"))?
+        .to_string();
+        let reason = format!("{model} cannot see images");
+        let _ = on_event.send(ChatEvent::Model {
+            id: vision.clone(),
+            reason,
+        });
+        model = vision;
+    }
+    let vision = can_see(&model);
+    let messages = messages.iter().map(|m| m.to_chat_message(vision)).collect();
     let request = ChatRequest::new(model, messages);
     let (tx, rx) = tokio::sync::oneshot::channel();
     let task = tauri::async_runtime::spawn(async move {
@@ -406,6 +553,42 @@ mod tests {
         assert_eq!(e.message, "Lost the connection to Hypnos.");
     }
 
+    #[test]
+    fn attachments_become_text_and_image_parts() {
+        let msg = InMessage {
+            role: "user".into(),
+            content: "Compare these".into(),
+            attachments: vec![
+                Attachment::Document {
+                    name: "a.pdf".into(),
+                    size: 1,
+                    text: "Alpha".into(),
+                    pages: 1,
+                    truncated: true,
+                },
+                Attachment::Image {
+                    name: "b.png".into(),
+                    size: 1,
+                    data_url: "data:image/jpeg;base64,AAAA".into(),
+                    width: 1,
+                    height: 1,
+                },
+            ],
+        };
+        let seen = serde_json::to_value(msg.to_chat_message(true)).unwrap();
+        let text = seen["content"][0]["text"].as_str().unwrap();
+        assert!(text.starts_with("Compare these"));
+        assert!(text.contains("<document name=\"a.pdf\" truncated=\"true\">\nAlpha\n</document>"));
+        assert_eq!(
+            seen["content"][1]["image_url"]["url"],
+            "data:image/jpeg;base64,AAAA"
+        );
+
+        let blind = serde_json::to_value(msg.to_chat_message(false)).unwrap();
+        let text = blind["content"].as_str().unwrap();
+        assert!(text.contains("[image b.png: not shown to this model]"));
+    }
+
     /// Against a running server: `HYPNOS_TEST_URL=http://127.0.0.1:9999 cargo test -- --ignored`.
     /// It sends two short chats to the model the router picks for text generation.
     #[tokio::test(flavor = "multi_thread")]
@@ -456,6 +639,7 @@ mod tests {
             vec![InMessage {
                 role: "user".into(),
                 content: s.into(),
+                attachments: vec![],
             }]
         };
         let outcome = hypnos_chat(
