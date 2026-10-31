@@ -22,6 +22,7 @@ fn router() -> axum::Router {
         requests_per_minute: Some(1),
         max_concurrent: None,
         tokens_per_day: None,
+        admin: false,
     }];
     cfg.server.document_pictures_dir =
         Some(std::env::temp_dir().join(format!("hypnos-keys-{}", uuid::Uuid::new_v4().simple())));

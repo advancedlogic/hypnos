@@ -15,7 +15,7 @@ use hypnos_memory::{EvictionReason, MemoryHierarchyStatus, TieredMemoryManager};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tracing::{info, warn};
 
@@ -123,9 +123,12 @@ impl SchedulerStats {
 /// KV-Cache-Aware Multi-Modal Model Scheduler.
 pub struct ModelScheduler {
     memory: Arc<TieredMemoryManager>,
-    backends: HashMap<String, Arc<dyn ModelBackend>>,
+    backends: parking_lot::RwLock<HashMap<String, Arc<dyn ModelBackend>>>,
     /// Per-model admission: bounds queued + running requests (HTTP 429 beyond the limit).
-    admission: HashMap<String, Arc<Semaphore>>,
+    admission: parking_lot::RwLock<HashMap<String, Arc<Semaphore>>>,
+    /// Per-model gate (API-11): an acquisition holds it shared; removing or replacing the model
+    /// holds it exclusively, so new requests wait for the change instead of failing.
+    gates: parking_lot::Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     max_queue_per_model: usize,
     /// Serializes tier promotion/eviction transitions while allowing concurrent execution
     /// on already-resident models.
@@ -149,8 +152,9 @@ impl ModelScheduler {
         }
         Self {
             memory,
-            backends: backend_map,
-            admission,
+            backends: parking_lot::RwLock::new(backend_map),
+            admission: parking_lot::RwLock::new(admission),
+            gates: parking_lot::Mutex::new(HashMap::new()),
             max_queue_per_model,
             transition_lock: Mutex::new(()),
             stats: SchedulerStats::default(),
@@ -170,12 +174,21 @@ impl ModelScheduler {
     }
 
     pub fn backend(&self, model_id: &str) -> Option<Arc<dyn ModelBackend>> {
-        self.backends.get(model_id).cloned()
+        self.backends.read().get(model_id).cloned()
+    }
+
+    fn gate(&self, model_id: &str) -> Arc<tokio::sync::RwLock<()>> {
+        self.gates
+            .lock()
+            .entry(model_id.to_string())
+            .or_default()
+            .clone()
     }
 
     /// Number of requests currently queued or running for `model_id`.
     pub fn in_flight(&self, model_id: &str) -> usize {
         self.admission
+            .read()
             .get(model_id)
             .map(|s| self.max_queue_per_model - s.available_permits())
             .unwrap_or(0)
@@ -205,7 +218,7 @@ impl ModelScheduler {
                     let plan = self
                         .memory
                         .demote_model_from_vram(&cfg.id, MemoryTier::Tier2PinnedRam)?;
-                    if let Some(backend) = self.backends.get(&cfg.id) {
+                    if let Some(backend) = self.backend(&cfg.id) {
                         if let Err(e) = backend.apply_placement(&plan, None).await {
                             warn!(model = %cfg.id, error = %e, "Tier 2 pre-stage callback failed");
                         }
@@ -227,11 +240,13 @@ impl ModelScheduler {
         batch_size: u32,
         ctx: &RequestContext,
     ) -> Result<ActiveModelLease> {
+        // Held while acquiring (not for the lease): a removal or replacement waits for it, and
+        // a request arriving during one waits here, then sees the new state.
+        let gate = self.gate(model_id);
+        let _gate = gate.read().await;
         let backend = self
-            .backends
-            .get(model_id)
-            .ok_or_else(|| HypnosError::ModelNotFound(model_id.to_string()))?
-            .clone();
+            .backend(model_id)
+            .ok_or_else(|| HypnosError::ModelNotFound(model_id.to_string()))?;
         if !self.memory.is_enabled(model_id)? {
             return Err(HypnosError::ModelDisabled(model_id.to_string()));
         }
@@ -239,6 +254,7 @@ impl ModelScheduler {
         // Admission control: bounded queue per model.
         let sem = self
             .admission
+            .read()
             .get(model_id)
             .cloned()
             .ok_or_else(|| HypnosError::ModelNotFound(model_id.to_string()))?;
@@ -387,7 +403,7 @@ impl ModelScheduler {
                 else {
                     continue;
                 };
-                if let Some(cand_backend) = self.backends.get(&candidate_id) {
+                if let Some(cand_backend) = self.backend(&candidate_id) {
                     cand_backend.apply_placement(&demoted_plan, None).await?;
                 }
                 self.stats.evictions.fetch_add(1, Ordering::Relaxed);
@@ -538,7 +554,7 @@ impl ModelScheduler {
         else {
             return Ok(false);
         };
-        if let Some(cand_backend) = self.backends.get(candidate_id) {
+        if let Some(cand_backend) = self.backend(candidate_id) {
             cand_backend.apply_placement(&demoted_plan, None).await?;
         }
         self.stats.evictions.fetch_add(1, Ordering::Relaxed);
@@ -624,7 +640,7 @@ impl ModelScheduler {
             .demote_if_idle(model_id, MemoryTier::Tier2PinnedRam)?
         {
             Some(demoted) => {
-                if let Some(backend) = self.backends.get(model_id) {
+                if let Some(backend) = self.backend(model_id) {
                     backend.apply_placement(&demoted, None).await?;
                 }
                 self.memory.reconcile_vram();
@@ -663,7 +679,7 @@ impl ModelScheduler {
                     limit: 0,
                 });
             };
-            if let Some(backend) = self.backends.get(model_id) {
+            if let Some(backend) = self.backend(model_id) {
                 backend.apply_placement(&demoted, None).await?;
             }
             self.memory.reconcile_vram();
@@ -710,13 +726,98 @@ impl ModelScheduler {
                         limit: 0,
                     });
                 };
-                if let Some(backend) = self.backends.get(model_id) {
+                if let Some(backend) = self.backend(model_id) {
                     backend.apply_placement(&plan, None).await?;
                 }
                 self.memory.reconcile_vram();
                 Ok(plan)
             }
         }
+    }
+
+    /// Adds a model at runtime (API-11): registered cold in Tier 3, loaded by its first request.
+    pub async fn add_model(&self, backend: Arc<dyn ModelBackend>) -> Result<()> {
+        let id = backend.config().id.clone();
+        let _guard = self.transition_lock.lock().await;
+        self.memory.register_model(backend.config().clone())?;
+        self.admission.write().insert(
+            id.clone(),
+            Arc::new(Semaphore::new(self.max_queue_per_model)),
+        );
+        self.backends.write().insert(id, backend);
+        Ok(())
+    }
+
+    /// Removes a model at runtime (API-11): new requests wait while running ones finish (up to
+    /// `drain`, else 429 `model_busy`), the engine is unloaded, and the id is gone (requests that
+    /// waited get 404).
+    pub async fn remove_model(&self, model_id: &str, drain: Duration) -> Result<()> {
+        let gate = self.gate(model_id);
+        let _exclusive = gate.write().await;
+        self.unload_drained(model_id, drain).await?;
+        let _guard = self.transition_lock.lock().await;
+        self.memory.unregister_model(model_id)?;
+        self.backends.write().remove(model_id);
+        self.admission.write().remove(model_id);
+        self.gates.lock().remove(model_id);
+        Ok(())
+    }
+
+    /// Replaces a model under the same id (API-11): requests that arrive meanwhile wait and are
+    /// then served by the new engine; running ones finish on the old (up to `drain`). When the
+    /// new model cannot be registered the old one is put back.
+    pub async fn replace_model(
+        &self,
+        backend: Arc<dyn ModelBackend>,
+        drain: Duration,
+    ) -> Result<()> {
+        let id = backend.config().id.clone();
+        let old = self
+            .backend(&id)
+            .ok_or_else(|| HypnosError::ModelNotFound(id.clone()))?;
+        let gate = self.gate(&id);
+        let _exclusive = gate.write().await;
+        self.unload_drained(&id, drain).await?;
+        let _guard = self.transition_lock.lock().await;
+        let old_cfg = self.memory.unregister_model(&id)?;
+        if let Err(e) = self.memory.register_model(backend.config().clone()) {
+            self.memory.register_model(old_cfg)?;
+            return Err(e);
+        }
+        self.backends.write().insert(id.clone(), backend);
+        info!(model = %id, previous = %old.config().weights_path.display(), "Model replaced");
+        Ok(())
+    }
+
+    /// Waits up to `drain` for `model_id`'s leases to end, then moves it to Tier 3 and unloads its
+    /// engine. The caller holds the model's gate exclusively, so no new lease can start.
+    async fn unload_drained(&self, model_id: &str, drain: Duration) -> Result<()> {
+        if self.backend(model_id).is_none() {
+            return Err(HypnosError::ModelNotFound(model_id.to_string()));
+        }
+        let deadline = Instant::now() + drain;
+        while self.memory.active_leases(model_id) > 0 {
+            if Instant::now() >= deadline {
+                return Err(HypnosError::Busy {
+                    model: model_id.to_string(),
+                    in_flight: self.memory.active_leases(model_id),
+                    limit: 0,
+                });
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let _guard = self.transition_lock.lock().await;
+        let (_, plan) = self.memory.get_model_state(model_id)?;
+        if plan.primary_tier != MemoryTier::Tier3NvmeSsd || plan.pinned_ram_bytes > 0 {
+            let demoted = self
+                .memory
+                .demote_model_from_vram(model_id, MemoryTier::Tier3NvmeSsd)?;
+            if let Some(backend) = self.backend(model_id) {
+                backend.apply_placement(&demoted, None).await?;
+            }
+            self.memory.reconcile_vram();
+        }
+        Ok(())
     }
 
     /// Releases every engine (frees VRAM and host allocations). Used on graceful shutdown.
@@ -732,7 +833,7 @@ impl ModelScheduler {
                     .demote_model_from_vram(&id, MemoryTier::Tier3NvmeSsd)
                 {
                     Ok(p) => {
-                        if let Some(b) = self.backends.get(&id) {
+                        if let Some(b) = self.backend(&id) {
                             if let Err(e) = b.apply_placement(&p, None).await {
                                 warn!(model = %id, error = %e, "Engine release failed during shutdown");
                             }

@@ -774,6 +774,7 @@ async fn main() -> anyhow::Result<()> {
             requests_per_minute: Some(*rpm),
             max_concurrent: None,
             tokens_per_day: None,
+            admin: false,
         })
         .collect();
     let auth = Arc::new(auth::ApiAuth::new(
@@ -803,6 +804,27 @@ async fn main() -> anyhow::Result<()> {
         // The real catalog over an empty models folder: every variant reads as not installed.
         catalog: hypnos_server::catalog::load(),
         models_dir: std::env::temp_dir().join(format!("hypnos-mock-models-{}", std::process::id())),
+        // Models added at runtime get a mock engine too, sized like the lineup's; no file checks
+        // and no overlay (nothing outlives the process).
+        pool: Arc::new(hypnos_server::pool::ModelPool::with_factory(
+            &hypnos_core::config::HypnosConfig::from_toml_str("")?,
+            {
+                let faults = faults.clone();
+                Arc::new(move |mut config: ModelConfig| {
+                    config.total_weight_bytes = 256 * 1024 * 1024;
+                    config.initial_tier = MemoryTier::Tier3NvmeSsd;
+                    config.arch.default_context_len = config.arch.default_context_len.min(4096);
+                    config.arch.activation_workspace_bytes = 64 * 1024 * 1024;
+                    config.arch.non_layer_overhead_bytes = 64 * 1024 * 1024;
+                    Arc::new(MockEngine {
+                        config,
+                        resident: AtomicBool::new(false),
+                        faults: faults.clone(),
+                    }) as Arc<dyn ModelBackend>
+                })
+            },
+            false,
+        )),
     };
 
     let control = Router::new()

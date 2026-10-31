@@ -5,6 +5,7 @@ mod documents;
 mod entities;
 pub mod metrics;
 pub mod pictures;
+pub mod pool;
 pub mod quota;
 pub mod request_log;
 
@@ -85,6 +86,8 @@ pub struct AppState {
     pub catalog: Option<Arc<hypnos_core::catalog::ModelCatalog>>,
     /// The folder model paths resolve against (`[server] models_dir`, else the working directory).
     pub models_dir: PathBuf,
+    /// Adding, replacing and removing models at runtime (API-11).
+    pub pool: Arc<pool::ModelPool>,
 }
 
 impl AppState {
@@ -108,6 +111,7 @@ impl AppState {
             .cloned()
             .map(|m| create_backend_for_model(m, &engine_opts))
             .collect();
+        let pool = Arc::new(pool::ModelPool::new(&config, engine_opts.clone()));
         let memory = Arc::new(TieredMemoryManager::new(&config.hardware, config.models)?);
         let scheduler = Arc::new(ModelScheduler::new(memory, backends, &config.limits));
         let log_level = LogLevel::parse(&config.server.request_log_level).unwrap_or(LogLevel::Info);
@@ -151,6 +155,7 @@ impl AppState {
             version: env!("CARGO_PKG_VERSION"),
             catalog: catalog::load(),
             models_dir,
+            pool,
         })
     }
 
@@ -238,7 +243,11 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
     let timeout = state.request_timeout();
     Router::new()
         // OpenAI Standard Endpoints across all 6 modalities
-        .route("/v1/models", get(list_models))
+        .route("/v1/models", get(list_models).post(pool::add_model))
+        .route(
+            "/v1/models/:id",
+            axum::routing::put(pool::replace_model).delete(pool::remove_model),
+        )
         .route("/v1/models/catalog", get(catalog::list_catalog))
         .route("/v1/models/:id/enable", post(enable_model))
         .route("/v1/models/:id/disable", post(disable_model))

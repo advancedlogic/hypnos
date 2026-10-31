@@ -208,6 +208,19 @@ the manifest (with a SHA-256 check from Hugging Face's `X-Linked-ETag`). Adding 
 architecture means engine work first (prompt renderer, media markers, thinking, memory), then
 the list and a catalog entry.
 
+Runtime model pool (API-11): `POST /v1/models` (`{"catalog": ...}` or `{"config": "<[[models]]
+block>"}`), `PUT /v1/models/{id}` (replace under the same id) and `DELETE /v1/models/{id}` change
+the models while the server runs (`hypnos-server/src/pool.rs`). A new block goes through the
+startup checks (`check_block`: parse, paths inside `models_dir`, GGUF arch detection,
+`validate`, a tested architecture for `ggml_llama`). `ModelScheduler::add_model` /
+`replace_model` / `remove_model` use a per-model gate: acquisitions hold it shared, a
+replacement or removal exclusively, so new requests wait (not fail) while running ones drain
+(`drain_secs`, else 429), and `TieredMemoryManager::register_model` / `unregister_model` add or
+drop the memory entry. Changes persist in `<config stem>.models.toml` (`apply_overlay` at startup,
+before `apply_models_dir`); the config file is never rewritten. With API keys these routes need
+an admin key (plain `api_keys`, or `[[server.keys]] admin = true`; else 403 `permission_denied`).
+The mock server's pool makes mock engines without file checks (`ModelPool::with_factory`).
+
 ### Engines (`hypnos-backends`)
 
 - `llama.rs`: `ggml_llama`. Text, vision, audio-in (via mtmd), embeddings, tool calling (`tools.rs`:

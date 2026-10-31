@@ -87,6 +87,10 @@ The scheme is matched case-insensitively and surrounding whitespace is trimmed. 
 `/ready` and, unless the operator closes it, `/metrics` stay open. When no keys are configured
 the header is ignored and may be absent.
 
+Changing the model pool (`POST /v1/models`, `PUT` / `DELETE /v1/models/{id}`, section 6) needs an
+admin key: every plain `server.api_keys` entry is one, a `[[server.keys]]` entry only with
+`admin = true`. Other keys get 403 `permission_denied` there.
+
 **401** (missing, malformed or unknown key) uses the OpenAI error shape, so the OpenAI SDKs raise
 their usual authentication error, and carries `WWW-Authenticate: Bearer realm="hypnos"`:
 
@@ -154,6 +158,7 @@ Authentication and quota errors add `"param": null` and `"code"` (section 2).
 | ---: | :--- | :--- | :--- |
 | 400 | `invalid_request_error` | malformed body, unknown field value, a limit of section 1 exceeded, modality mismatch (e.g. an image sent to a text-only model) | fix the request |
 | 401 | `invalid_request_error` / `invalid_api_key` | see section 2 | fix the key |
+| 403 | `permission_denied` | changing the model pool (section 6) with a key that is not an admin key | use an admin key |
 | 404 | `model_not_found` | unknown model id | check `GET /v1/models` |
 | 404 | `model_disabled` | the model is configured but switched off | `POST /v1/models/{id}/enable` (if allowed) or pick another |
 | 404 | `not_found` | unknown document id or picture index, unknown log record | nothing to retry |
@@ -297,6 +302,49 @@ that modality (primary or additional).
 | `installed`, `outdated` | every file present; some present file has another size (re-download it) |
 | `problem` | present only when the downloaded weights' GGUF reports another architecture than the entry |
 | `config_block` | the `[[models]]` + `[models.arch]` TOML for this variant, paths relative to `models_dir`; `hypnos --catalog-block <id>[:<quant>]` prints the same |
+
+### `POST /v1/models`, `PUT /v1/models/{id}`, `DELETE /v1/models/{id}`
+
+**Hypnos extension.** Changes the model pool while the server runs: requests are routed by model
+name, so a model added here is served by its id right away (its first request loads it), a
+replaced one keeps its id, and a removed one answers 404 `model_not_found`. With API keys set
+(section 2) these routes need an admin key: a plain `server.api_keys` entry, or a
+`[[server.keys]]` entry with `admin = true`; any other key gets 403 `permission_denied`. Changes
+are kept in an overlay next to the config (`<config name>.models.toml`) and applied at the next
+start; the config file itself is never rewritten. Not open during startup staging.
+
+Body of `POST` and `PUT`, one of:
+
+```json
+{ "catalog": "lfm3-vl:2b:Q4_K_M" }
+{ "config": "[[models]]\nid = \"my-model\"\nmodality = \"text_generation\"\nengine = \"ggml_llama\"\nweights_path = \"my-model-Q4_K_M.gguf\"\n[models.arch]\n" }
+```
+
+`catalog` is an entry of `GET /v1/models/catalog`, `<id>` or `<id>:<quant>` (its default variant
+without a quant); `config` is one `[[models]]` block as in the config file, paths relative to
+`models_dir`. The model goes through the startup checks: its files must exist inside `models_dir`,
+`[models.arch]` values it leaves out are read from the GGUF, the config validation must pass, and
+a `ggml_llama` model's GGUF must report one of the catalog's `tested_architectures`. A failed check
+is 400 `invalid_request_error` with the reasons. The model's files must already be on disk
+(`./run.sh models <id>[:<quant>]`, or the desktop app's Models dialog).
+
+- `POST /v1/models` adds the model; 400 when its id is taken. Answers 201.
+- `PUT /v1/models/{id}` replaces the model `{id}` with the one in the body, under the same id
+  (the block's own `id` is ignored). Requests that arrive meanwhile wait and are then served by
+  the new model; running ones finish on the old one, which is then unloaded. `drain_secs` in the
+  body (default 120) bounds that wait: past it the replacement is refused with 429 `model_busy`
+  and the old model stays. 404 for an unknown `{id}`.
+- `DELETE /v1/models/{id}?drain_secs=120` removes the model the same way: new requests wait,
+  running ones finish (429 `model_busy` past `drain_secs`), the engine is unloaded, and the
+  waiting requests then get 404.
+
+```json
+{ "model": "lfm3-vl:2b", "action": "added", "persisted": true,
+  "placement": { "...": "see appendix" } }
+```
+
+`action` is `added`, `replaced` or `removed`; `persisted` is false when the overlay could not be
+written (the change is live until the next restart); `placement` is absent on a removal.
 
 ### `POST /v1/models/{id}/enable`, `POST /v1/models/{id}/disable`
 

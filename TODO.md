@@ -57,26 +57,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Backlog
 
-- [ ] 🟪 **API-11** `P2` Add, remove and replace models at runtime (a dynamic model pool)
-      Requests already route by model name (`acquire_model(id)` loads or evicts on demand); what
-      is fixed is the set of models, read once from the config. Make it changeable while the
-      server runs:
-      - `POST /v1/models` with a catalog spec (`{"catalog": "lfm3-vl:2b:Q4_K_M"}`) or a raw
-        `[[models]]` block: files must exist under `models_dir`, the GGUF's architecture must be
-        one of `TESTED_GGUF_ARCHITECTURES` (others refused), the model must fit the budgets at
-        all; it is registered without loading (first request loads it).
-      - `DELETE /v1/models/{id}`: stop admission, wait for leases, evict, unregister.
-      - `PUT /v1/models/{id}`: replace atomically (register the new one, switch the name, drain
-        and unload the old one), so clients using the name never see an error.
-      - Optional aliases (`chat` -> the current chat model) so clients keep a stable name.
-      - `ModelScheduler`'s `backends` / `admission` maps become lock-protected (the memory
-        manager's model map already is).
-      - Persist the changes in an overlay file next to the config (`hypnos.models.toml`, applied
-        at startup) instead of rewriting the user's config.
-      - With API keys set, these routes need an admin key; paths stay inside `models_dir`.
-      - `docs/api.md`, mock server, the three SDKs; the desktop Catalog's Add and the playground
-        catalog tab use the live routes (no server restart).
-
 - [ ] 🟩 **ENG-4** `P2` Add audio.cpp for text-to-speech and optional speech-to-text
       Vendor https://github.com/0xShug0/audio.cpp (pin + patches in `scripts/vendor.sh`) and link
       it in-process as a new engine for `POST /v1/audio/speech`, next to Kokoro. Optionally offer
@@ -111,7 +91,25 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## In Progress
 
-_No cards yet._
+- [ ] 🟪 **API-11** `P2` Add, remove and replace models at runtime (a dynamic model pool)
+      Requests already route by model name (`acquire_model(id)` loads or evicts on demand); what
+      is fixed is the set of models, read once from the config. Make it changeable while the
+      server runs:
+      - `POST /v1/models` with a catalog spec (`{"catalog": "lfm3-vl:2b:Q4_K_M"}`) or a raw
+        `[[models]]` block: files must exist under `models_dir`, the GGUF's architecture must be
+        one of `TESTED_GGUF_ARCHITECTURES` (others refused), the model must fit the budgets at
+        all; it is registered without loading (first request loads it).
+      - `DELETE /v1/models/{id}`: stop admission, wait for leases, evict, unregister.
+      - `PUT /v1/models/{id}`: replace atomically (register the new one, switch the name, drain
+        and unload the old one), so clients using the name never see an error.
+      - Optional aliases (`chat` -> the current chat model) so clients keep a stable name.
+      - `ModelScheduler`'s `backends` / `admission` maps become lock-protected (the memory
+        manager's model map already is).
+      - Persist the changes in an overlay file next to the config (`hypnos.models.toml`, applied
+        at startup) instead of rewriting the user's config.
+      - With API keys set, these routes need an admin key; paths stay inside `models_dir`.
+      - `docs/api.md`, mock server, the three SDKs; the desktop Catalog's Add and the playground
+        catalog tab use the live routes (no server restart).
 
 ## Done
 

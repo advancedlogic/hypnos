@@ -579,6 +579,10 @@ pub struct ApiKeyProfile {
     pub max_concurrent: Option<u32>,
     #[serde(default)]
     pub tokens_per_day: Option<u64>,
+    /// May change the model pool (`POST /v1/models`, `PUT` / `DELETE /v1/models/{id}`). Plain
+    /// `api_keys` always may.
+    #[serde(default)]
+    pub admin: bool,
 }
 
 impl ApiKeyProfile {

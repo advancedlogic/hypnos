@@ -253,6 +253,21 @@ fn state_with(engines: Vec<Arc<MockEngine>>) -> AppState {
         version: "test",
         catalog: hypnos_server::catalog::load(),
         models_dir: std::env::temp_dir(),
+        pool: Arc::new(hypnos_server::pool::ModelPool::with_factory(
+            &hypnos_core::config::HypnosConfig::from_toml_str("").unwrap(),
+            Arc::new(|config| {
+                Arc::new(MockEngine {
+                    config,
+                    resident: AtomicBool::new(false),
+                    fail_loads: AtomicBool::new(false),
+                    fail_generation: AtomicBool::new(false),
+                    device_oom: AtomicUsize::new(0),
+                    generations: AtomicUsize::new(0),
+                    placements: Mutex::new(Vec::new()),
+                }) as Arc<dyn ModelBackend>
+            }),
+            false,
+        )),
     }
 }
 
@@ -537,4 +552,146 @@ async fn moe_offload_is_switched_per_model_by_the_api() {
             .status(),
         404
     );
+}
+
+async fn send(
+    app: &axum::Router,
+    method: Method,
+    path: &str,
+    body: &str,
+    key: Option<&str>,
+) -> axum::response::Response {
+    let mut req = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(k) = key {
+        req = req.header(header::AUTHORIZATION, format!("Bearer {k}"));
+    }
+    app.clone()
+        .oneshot(req.body(Body::from(body.to_string())).unwrap())
+        .await
+        .expect("response")
+}
+
+/// API-11: a model added, used, replaced and removed through the routes, no restart.
+#[tokio::test]
+async fn models_are_added_replaced_and_removed_through_the_api() {
+    let app = build_router(state(engine("base")), &[]);
+    let chat = |m: &str| {
+        format!(r#"{{"model":"{m}","messages":[{{"role":"user","content":"hi"}}],"max_tokens":4}}"#)
+    };
+    let block = r#"[[models]]
+id = "extra"
+modality = "text_generation"
+engine = "ggml_llama"
+weights_path = "extra.gguf"
+total_weight_bytes = 1073741824
+[models.arch]
+num_layers = 4
+"#;
+    let body = serde_json::json!({ "config": block }).to_string();
+    let resp = send(&app, Method::POST, "/v1/models", &body, None).await;
+    assert_eq!(resp.status(), 201, "{}", text(resp).await);
+    let resp = send(&app, Method::POST, "/v1/models", &body, None).await;
+    assert_eq!(resp.status(), 400, "the id is taken");
+
+    let resp = post(&app, "/v1/chat/completions", &chat("extra")).await;
+    assert_eq!(resp.status(), 200, "{}", text(resp).await);
+    let models: serde_json::Value =
+        serde_json::from_str(&text(get(&app, "/v1/models").await).await).unwrap();
+    assert!(models["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["id"] == "extra"));
+
+    // Replaced from the catalog under the same id.
+    let resp = send(
+        &app,
+        Method::PUT,
+        "/v1/models/extra",
+        r#"{"catalog": "lfm3:1.7b:Q4_K_M"}"#,
+        None,
+    )
+    .await;
+    assert_eq!(resp.status(), 200, "{}", text(resp).await);
+    let status: serde_json::Value =
+        serde_json::from_str(&text(get(&app, "/v1/memory/status").await).await).unwrap();
+    let extra = status["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == "extra")
+        .unwrap()
+        .clone();
+    assert_eq!(extra["total_weight_bytes"], 1_099_627_808u64, "{extra}");
+    assert_eq!(
+        post(&app, "/v1/chat/completions", &chat("extra"))
+            .await
+            .status(),
+        200
+    );
+
+    let resp = send(&app, Method::DELETE, "/v1/models/extra", "", None).await;
+    assert_eq!(resp.status(), 200, "{}", text(resp).await);
+    assert_eq!(
+        post(&app, "/v1/chat/completions", &chat("extra"))
+            .await
+            .status(),
+        404
+    );
+    assert_eq!(
+        send(&app, Method::DELETE, "/v1/models/extra", "", None)
+            .await
+            .status(),
+        404
+    );
+    let resp = send(
+        &app,
+        Method::POST,
+        "/v1/models",
+        r#"{"catalog": "nope"}"#,
+        None,
+    )
+    .await;
+    assert_eq!(resp.status(), 400);
+}
+
+#[tokio::test]
+async fn changing_the_pool_needs_an_admin_key() {
+    let mut st = state(engine("base"));
+    st.auth = Arc::new(auth::ApiAuth::new(
+        &["operator".to_string()],
+        &[hypnos_core::config::ApiKeyProfile {
+            label: "app".into(),
+            key: "user-key".into(),
+            requests_per_minute: None,
+            max_concurrent: None,
+            tokens_per_day: None,
+            admin: false,
+        }],
+        &ApiKeyLimits::default(),
+        false,
+    ));
+    let app = build_router(st, &[]);
+    let resp = send(
+        &app,
+        Method::DELETE,
+        "/v1/models/base",
+        "",
+        Some("user-key"),
+    )
+    .await;
+    assert_eq!(resp.status(), 403);
+    assert!(text(resp).await.contains("permission_denied"));
+    let resp = send(
+        &app,
+        Method::DELETE,
+        "/v1/models/base",
+        "",
+        Some("operator"),
+    )
+    .await;
+    assert_eq!(resp.status(), 200, "{}", text(resp).await);
 }

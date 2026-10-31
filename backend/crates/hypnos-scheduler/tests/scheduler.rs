@@ -686,3 +686,138 @@ async fn cpu_model_books_ram_and_frees_it_from_idle_warm_models() {
     let lease = sched.acquire_model("cpu", None, 1, &ctx).await.unwrap();
     assert_eq!(lease.tier_switch_latency_ms, 0.0);
 }
+
+// ---- runtime model pool (API-11) ------------------------------------------------------------
+
+#[tokio::test]
+async fn models_are_added_served_and_removed_at_runtime() {
+    let (sched, _) = build(
+        12,
+        vec![model(
+            "a",
+            4,
+            ModelPriority::Normal,
+            MemoryTier::Tier3NvmeSsd,
+        )],
+        4,
+    );
+    let ctx = RequestContext::unbounded();
+    let b = MockBackend::new(model(
+        "b",
+        2,
+        ModelPriority::Normal,
+        MemoryTier::Tier3NvmeSsd,
+    ));
+    sched.add_model(b.clone()).await.unwrap();
+    assert!(sched.memory().model_ids().contains(&"b".to_string()));
+    let lease = sched.acquire_model("b", None, 1, &ctx).await.unwrap();
+    assert!(b.is_resident(), "the first request loads an added model");
+    drop(lease);
+
+    let dup = MockBackend::new(model(
+        "a",
+        1,
+        ModelPriority::Normal,
+        MemoryTier::Tier3NvmeSsd,
+    ));
+    assert!(matches!(
+        sched.add_model(dup).await,
+        Err(HypnosError::InvalidRequest(_))
+    ));
+
+    sched
+        .remove_model("b", std::time::Duration::from_secs(1))
+        .await
+        .unwrap();
+    assert!(!b.is_resident(), "removal unloads the engine");
+    assert_eq!(b.tiers().last(), Some(&MemoryTier::Tier3NvmeSsd));
+    assert!(sched.backend("b").is_none());
+    assert!(matches!(
+        sched.acquire_model("b", None, 1, &ctx).await,
+        Err(HypnosError::ModelNotFound(_))
+    ));
+    // The VRAM it booked is free again.
+    assert_eq!(sched.status().tier1_vram_used_bytes, 0);
+}
+
+#[tokio::test]
+async fn removal_waits_for_running_requests_or_gives_up() {
+    let (sched, _) = build(
+        12,
+        vec![model(
+            "a",
+            4,
+            ModelPriority::Normal,
+            MemoryTier::Tier3NvmeSsd,
+        )],
+        4,
+    );
+    let ctx = RequestContext::unbounded();
+    let lease = sched.acquire_model("a", None, 1, &ctx).await.unwrap();
+
+    // Too short a drain: refused as busy, the model stays.
+    assert!(matches!(
+        sched
+            .remove_model("a", std::time::Duration::from_millis(100))
+            .await,
+        Err(HypnosError::Busy { .. })
+    ));
+    assert!(sched.backend("a").is_some());
+
+    let s = sched.clone();
+    let removal =
+        tokio::spawn(async move { s.remove_model("a", std::time::Duration::from_secs(5)).await });
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    assert!(!removal.is_finished(), "waits for the running request");
+    drop(lease);
+    removal.await.unwrap().unwrap();
+    assert!(sched.backend("a").is_none());
+}
+
+#[tokio::test]
+async fn a_replacement_serves_waiting_requests_with_the_new_engine() {
+    let (sched, mocks) = build(
+        12,
+        vec![model(
+            "a",
+            4,
+            ModelPriority::Normal,
+            MemoryTier::Tier3NvmeSsd,
+        )],
+        4,
+    );
+    let ctx = RequestContext::unbounded();
+    let old_lease = sched.acquire_model("a", None, 1, &ctx).await.unwrap();
+
+    let new = MockBackend::new(model(
+        "a",
+        2,
+        ModelPriority::Normal,
+        MemoryTier::Tier3NvmeSsd,
+    ));
+    let s = sched.clone();
+    let n = new.clone();
+    let replacement =
+        tokio::spawn(async move { s.replace_model(n, std::time::Duration::from_secs(5)).await });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // A request arriving during the replacement waits for it rather than failing.
+    let s = sched.clone();
+    let waiting = tokio::spawn(async move {
+        let ctx = RequestContext::unbounded();
+        s.acquire_model("a", None, 1, &ctx)
+            .await
+            .map(|l| l.backend.config().total_weight_bytes)
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(!replacement.is_finished() && !waiting.is_finished());
+
+    drop(old_lease);
+    replacement.await.unwrap().unwrap();
+    assert_eq!(
+        waiting.await.unwrap().unwrap(),
+        2 * GB,
+        "served by the new engine"
+    );
+    assert!(!mocks[0].is_resident(), "the old engine was unloaded");
+    assert!(new.is_resident());
+}

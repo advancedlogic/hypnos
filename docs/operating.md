@@ -42,10 +42,14 @@ starting; the first lines of the log print the detected device, the budgets and 
 booking; `/v1/memory/status` right after `/ready` shows the pre-staged models in their tiers.
 
 **Adding a model** from the catalog (`backend/models.catalog.toml`, `GET /v1/models/catalog`):
-`./run.sh models <id>[:<quant>]` downloads a variant's files into the models folder, `hypnos
---catalog-block <id>[:<quant>]` prints its `[[models]]` block to append to the config, and a
-restart picks it up (size it with the formula above; the block's `total_weight_bytes` is the
-variant's files). The catalog only lists architectures Hypnos has been tested with: a GGUF that
+`./run.sh models <id>[:<quant>]` downloads a variant's files into the models folder, then
+`POST /v1/models {"catalog": "<id>[:<quant>]"}` adds it to the running server (no restart; its
+first request loads it), `PUT /v1/models/{id}` swaps a model for another variant or another model
+under the same name (requests wait for the swap, running ones finish first) and `DELETE` takes
+one out. These changes are kept in `<config name>.models.toml` next to the config and applied at
+the next start; delete that file to go back to the config alone. With API keys set they need an
+admin key. Size the pool with the formula above (a block's `total_weight_bytes` is the variant's
+files); `hypnos --catalog-block <id>[:<quant>]` prints a block for the config file instead. The catalog only lists architectures Hypnos has been tested with: a GGUF that
 merely loads in llama.cpp can still get its prompt format, media markers or memory handling
 wrong. The route reports `outdated` for a file whose size differs from the catalog (an upload
 replaced upstream) and `problem` when downloaded weights report another architecture.

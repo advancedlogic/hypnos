@@ -143,6 +143,8 @@ pub struct TieredMemoryManager {
     /// The last health reading and when it was taken.
     gpu_health: parking_lot::Mutex<Option<(Instant, GpuHealth)>>,
     lock_host_memory: bool,
+    /// Discrete GPU: weight buffers are pinnable host memory (not on unified memory).
+    pinnable_buffers: bool,
     models: RwLock<HashMap<String, ManagedModelMemory>>,
     vram_used_bytes: AtomicU64,
     pinned_ram_used_bytes: AtomicU64,
@@ -211,49 +213,9 @@ impl TieredMemoryManager {
         }
         let mut models = HashMap::new();
 
-        for mut cfg in model_configs {
-            let host_buffer = MmapWeightBuffer::open_or_virtual(
-                &cfg.weights_path,
-                cfg.total_weight_bytes,
-                !is_uma,
-            )?;
-            let aux_buffers = [&cfg.aux_weights_path, &cfg.text_encoder_path]
-                .into_iter()
-                .flatten()
-                .filter(|p| p.is_file())
-                .map(|p| MmapWeightBuffer::open_or_virtual(p, 0, !is_uma))
-                .collect::<Result<Vec<_>>>()?;
-            if cfg.total_weight_bytes == 0 {
-                let aux: u64 = aux_buffers.iter().map(|b| b.len_bytes()).sum();
-                cfg.total_weight_bytes = (host_buffer.len_bytes() + aux).max(512 * 1024 * 1024);
-            }
-
-            let initial_placement = LayerPlacementPlan {
-                primary_tier: MemoryTier::Tier3NvmeSsd,
-                gpu_layers: 0,
-                pinned_ram_layers: 0,
-                ssd_layers: cfg.arch.num_layers,
-                vram_weight_bytes: 0,
-                vram_kv_and_workspace_bytes: 0,
-                pinned_ram_bytes: 0,
-                allocated_context_len: 0,
-                cpu_expert_layers: 0,
-            };
-
-            let enabled = cfg.enabled;
-            models.insert(
-                cfg.id.clone(),
-                ManagedModelMemory {
-                    config: cfg,
-                    enabled,
-                    placement: initial_placement,
-                    host_buffer,
-                    aux_buffers,
-                    last_used: Instant::now(),
-                    active_leases: 0,
-                    total_requests_served: 0,
-                },
-            );
+        for cfg in model_configs {
+            let entry = Self::managed_entry(cfg, !is_uma)?;
+            models.insert(entry.config.id.clone(), entry);
         }
 
         Ok(Self {
@@ -266,6 +228,7 @@ impl TieredMemoryManager {
             device_id: hw_config.device_id,
             gpu_health: parking_lot::Mutex::new(None),
             lock_host_memory,
+            pinnable_buffers: !is_uma,
             models: RwLock::new(models),
             vram_used_bytes: AtomicU64::new(0),
             pinned_ram_used_bytes: AtomicU64::new(0),
@@ -510,6 +473,82 @@ impl TieredMemoryManager {
     }
 
     /// Returns a clone of the model's static configuration and current placement.
+    /// A model's entry, cold in Tier 3: its weight buffers opened (not pinned) and, when the
+    /// config leaves `total_weight_bytes` at 0, the size taken from its files.
+    fn managed_entry(mut cfg: ModelConfig, pinnable: bool) -> Result<ManagedModelMemory> {
+        let host_buffer =
+            MmapWeightBuffer::open_or_virtual(&cfg.weights_path, cfg.total_weight_bytes, pinnable)?;
+        let aux_buffers = [&cfg.aux_weights_path, &cfg.text_encoder_path]
+            .into_iter()
+            .flatten()
+            .filter(|p| p.is_file())
+            .map(|p| MmapWeightBuffer::open_or_virtual(p, 0, pinnable))
+            .collect::<Result<Vec<_>>>()?;
+        if cfg.total_weight_bytes == 0 {
+            let aux: u64 = aux_buffers.iter().map(|b| b.len_bytes()).sum();
+            cfg.total_weight_bytes = (host_buffer.len_bytes() + aux).max(512 * 1024 * 1024);
+        }
+        let placement = LayerPlacementPlan {
+            primary_tier: MemoryTier::Tier3NvmeSsd,
+            gpu_layers: 0,
+            pinned_ram_layers: 0,
+            ssd_layers: cfg.arch.num_layers,
+            vram_weight_bytes: 0,
+            vram_kv_and_workspace_bytes: 0,
+            pinned_ram_bytes: 0,
+            allocated_context_len: 0,
+            cpu_expert_layers: 0,
+        };
+        let enabled = cfg.enabled;
+        Ok(ManagedModelMemory {
+            config: cfg,
+            enabled,
+            placement,
+            host_buffer,
+            aux_buffers,
+            last_used: Instant::now(),
+            active_leases: 0,
+            total_requests_served: 0,
+        })
+    }
+
+    /// Adds a model at runtime (API-11), cold in Tier 3. Refused when the id is taken.
+    pub fn register_model(&self, cfg: ModelConfig) -> Result<()> {
+        let id = cfg.id.clone();
+        let entry = Self::managed_entry(cfg, self.pinnable_buffers)?;
+        let mut guard = self.models.write();
+        if guard.contains_key(&id) {
+            return Err(HypnosError::InvalidRequest(format!(
+                "a model with id '{id}' already exists"
+            )));
+        }
+        guard.insert(id.clone(), entry);
+        info!(model = %id, "Model registered");
+        Ok(())
+    }
+
+    /// Removes a model at runtime (API-11). It must be cold (Tier 3, nothing pinned) and unleased;
+    /// the scheduler demotes it first. Returns its config.
+    pub fn unregister_model(&self, model_id: &str) -> Result<ModelConfig> {
+        let mut guard = self.models.write();
+        let entry = guard
+            .get(model_id)
+            .ok_or_else(|| HypnosError::ModelNotFound(model_id.to_string()))?;
+        if entry.active_leases > 0
+            || entry.placement.primary_tier != MemoryTier::Tier3NvmeSsd
+            || entry.placement.pinned_ram_bytes > 0
+        {
+            return Err(HypnosError::Busy {
+                model: model_id.to_string(),
+                in_flight: entry.active_leases.max(1),
+                limit: 0,
+            });
+        }
+        let entry = guard.remove(model_id).expect("checked above");
+        info!(model = %model_id, "Model unregistered");
+        Ok(entry.config)
+    }
+
     pub fn get_model_state(&self, model_id: &str) -> Result<(ModelConfig, LayerPlacementPlan)> {
         let guard = self.models.read();
         let entry = guard

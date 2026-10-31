@@ -66,6 +66,7 @@ struct KeyEntry {
     digest: [u8; 32],
     label: String,
     limits: ApiKeyLimits,
+    admin: bool,
 }
 
 /// The configured keys (as digests), their labels and limits, and which routes they guard.
@@ -93,6 +94,7 @@ impl ApiAuth {
                     digest,
                     label: format!("key-{}", hex8(&digest)),
                     limits: defaults.clone(),
+                    admin: true,
                 }
             })
             .collect();
@@ -104,12 +106,22 @@ impl ApiAuth {
                     digest: sha256(p.key.trim().as_bytes()),
                     label: p.label.trim().to_string(),
                     limits: p.limits(defaults),
+                    admin: p.admin,
                 }),
         );
         Self {
             entries,
             metrics_require_auth,
         }
+    }
+
+    /// Whether the request with this key label (`None`: no key presented) may change the model
+    /// pool: anyone without authentication, else plain `api_keys` and `admin = true` profiles.
+    pub fn is_admin(&self, label: Option<&str>) -> bool {
+        if !self.enabled() {
+            return true;
+        }
+        label.is_some_and(|l| self.entries.iter().any(|e| e.admin && e.label == l))
     }
 
     /// True when at least one key is configured.
@@ -365,6 +377,7 @@ mod tests {
             requests_per_minute: Some(5),
             max_concurrent: Some(2),
             tokens_per_day: None,
+            admin: false,
         }];
         let auth = ApiAuth::new(&["plain-key".into()], &profiles, &defaults, false);
         assert_eq!(auth.key_count(), 2);

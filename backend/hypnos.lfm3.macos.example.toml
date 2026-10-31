@@ -64,6 +64,8 @@ log_format = "pretty"
 # requests_per_minute = 60             # beyond it: HTTP 429 rate_limit_error with Retry-After
 # max_concurrent = 4                   # in flight at once; a stream counts until it ends
 # tokens_per_day = 2000000             # prompt + completion tokens per UTC day
+# admin = false                       # true: may add, replace and remove models (POST/PUT/DELETE
+#                                      # /v1/models); plain api_keys always may
 # Limits for every key (plain api_keys included) that does not set its own.
 # [server.api_key_defaults]
 # requests_per_minute = 0
