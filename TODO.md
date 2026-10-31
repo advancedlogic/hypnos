@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 2  | 9   | 5   | 4   | 8    | 5   | 9     | 7   | 3    | 6    |
+| 2  | 9   | 5   | 4   | 8    | 5   | 10    | 7   | 3    | 6    |
 
 ---
 
@@ -84,20 +84,35 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       desktop app stays a pure client or ships the server (archive size, GPU builds per
       platform). After DESK-4.
 
-- [ ] ⬛ **BUILD-8** `P2` Build the desktop app from the run scripts and CI
-      `./run.sh build desktop` / `run.bat build desktop` (npm install + `tauri build`) and
-      `start desktop` for `tauri dev`; a desktop build job in ci.yml (macOS, Windows, Linux)
-      and, later, signed bundles (.dmg, .msi, .AppImage) in release.yml. After DESK-1.
-
 - [ ] ⬜ **DOC-6** `P2` Document the desktop app
       `desktop/README.md` (prerequisites per OS, dev and build commands, connecting to a
       server), a section in the root README, and the new directory in CLAUDE.md. After DESK-3.
+
+- [ ] ⬛ **BUILD-9** `P3` Sign and notarize the desktop installers
+      The release's desktop installers are ad-hoc signed on macOS and unsigned on Windows
+      (BUILD-8), so users must confirm the first open. Add an Apple Developer ID certificate
+      + notarization (`APPLE_CERTIFICATE`, `APPLE_ID`, `APPLE_TEAM_ID`, app-specific password)
+      and a Windows code-signing certificate as repository secrets and wire them into the
+      `desktop` job of release.yml (Tauri reads them from the environment).
 
 ## In Progress
 
 _No cards yet._
 
 ## Done
+
+- [x] ⬛ **BUILD-8** `P2` Build the desktop app from the run scripts and CI
+      `./run.sh build desktop` / `run.bat build desktop` (npm install + `tauri build`) and
+      `start desktop` for `tauri dev`; a desktop build job in ci.yml (macOS, Windows, Linux)
+      and, later, signed bundles (.dmg, .msi, .AppImage) in release.yml. After DESK-1.
+      Done: `run.sh` / `run.bat` take a `desktop` target, left out of `all`: `build desktop`
+      (npm install + `tauri build --no-bundle`, HYPNOS_PROFILE=debug adds `--debug`), and
+      `start`/`stop`/`restart`/`status`/`logs desktop` around the built binary; `start` never
+      compiles, so development stays `npx tauri dev`. ci.yml: a desktop job on
+      ubuntu-22.04/windows/macos-15 (fmt + clippy + tests on Linux). release.yml: .dmg,
+      .msi + NSIS .exe, .deb + .AppImage named `hypnos-desktop-<tag>-<platform>.*`, carrying
+      the tag's version, ad-hoc signed on macOS, attached to the release with the archives.
+      Not run yet: the workflows (run ci by hand before the next tag) and run.bat on Windows.
 
 - [x] 🩵 **DESK-4** `P2` Connection settings and server states
       Settings screen: server URL (default `http://localhost:9999`), API key kept in the OS
@@ -113,7 +128,7 @@ _No cards yet._
       be removed). The probe tells unreachable / unauthorized (401 on `GET /v1/models`) /
       warming up / ready apart and keeps polling, so the app recovers by itself. Not yet
       tested end to end against a non-loopback server. App icon and in-app logo from
-      `assets/logo.png` on a white tile.
+      `assets/logo.png` on a white tile. (commit dc485e6)
 
 - [x] 🩵 **DESK-3** `P1` Collapsible right panel with live Hypnos stats
       Polls `GET /v1/memory/status` (1-2 s, paused while collapsed or the window is hidden):

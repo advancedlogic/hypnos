@@ -32,6 +32,12 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "14.0"
+    },
+    "shortDescription": "Chat and live stats for a Hypnos server",
+    "category": "DeveloperTool"
   }
 }

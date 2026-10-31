@@ -2,7 +2,7 @@
 # ============================================================================
 #  Hypnos process manager (Linux / macOS / Git Bash)
 #
-#    ./run.sh [build|start|stop|restart|status|logs] [backend|frontend|all]
+#    ./run.sh [build|start|stop|restart|status|logs] [backend|frontend|desktop|all]
 #
 #    ./run.sh build            -> compile the backend (cargo build --release) + npm install
 #    ./run.sh                  -> start all (background, logs in .run/; never compiles)
@@ -10,6 +10,7 @@
 #    ./run.sh stop             -> stop backend and frontend
 #    ./run.sh logs             -> follow both logs
 #    ./run.sh models [id]      -> download model files into backend/models/ (backend/models.manifest)
+#    ./run.sh build desktop    -> npm install + tauri build of the desktop app (not part of `all`)
 #
 #  Build and start are separate steps: `start` launches the compiled binary
 #  backend/target/<profile>/hypnos (hypnos.exe on Windows) and refuses to run when it is
@@ -19,6 +20,8 @@
 #
 #  Backend : Rust server on http://localhost:9999  (compiled hypnos binary)
 #  Frontend: Vite dev server on http://localhost:5173 (npm run dev)
+#  Desktop : Tauri app window (desktop/src-tauri/target/<profile>/hypnos-desktop); only when
+#            named, since it needs the Tauri prerequisites and opens a window
 #  Output goes to .run/*.log. On Linux/macOS each service runs in its own process group
 #  (pid in .run/*.pid); on Windows (Git Bash) the listening port is the source of truth.
 # ============================================================================
@@ -62,6 +65,12 @@ BACKEND_TARGET_DIR="$ROOT_DIR/backend/target/$HYPNOS_PROFILE"
 BACKEND_BIN="$BACKEND_TARGET_DIR/hypnos"
 [ "$IS_WINDOWS" = 1 ] && BACKEND_BIN="$BACKEND_BIN.exe"
 
+# The desktop app follows the same profile: `tauri build` (release) or `tauri build --debug`.
+DESKTOP_BIN="$ROOT_DIR/desktop/src-tauri/target/$HYPNOS_PROFILE/hypnos-desktop"
+[ "$IS_WINDOWS" = 1 ] && DESKTOP_BIN="$DESKTOP_BIN.exe"
+DESKTOP_BUILD_FLAGS=()
+[ "$HYPNOS_PROFILE" = debug ] && DESKTOP_BUILD_FLAGS=(--debug)
+
 # Prefer the rustup-managed toolchain: the native engines need rustc >= 1.92 and a standalone
 # Rust install may come first on PATH.
 # `rustup run stable cargo` pins rustc as well: calling cargo by path still resolves `rustc` from
@@ -78,7 +87,7 @@ fi
 usage() {
     cat <<EOF
 
-  Usage: ./run.sh [build|start|stop|restart|status|logs] [backend|frontend|all]
+  Usage: ./run.sh [build|start|stop|restart|status|logs] [backend|frontend|desktop|all]
 
     ./run.sh build              cargo build --release the backend + npm install the frontend
     ./run.sh build backend      compile only the Rust server (backend/target/$HYPNOS_PROFILE/hypnos)
@@ -89,8 +98,11 @@ usage() {
     ./run.sh status             show what is running and whether the backend is built
     ./run.sh logs [target]      tail the log file(s) in .run/
     ./run.sh models [model id]  download the model files (about 31 GB for all) into backend/models/
+    ./run.sh build desktop      npm install + tauri build the desktop app (no installers)
+    ./run.sh start desktop      open the built desktop app ("all" leaves it out)
 
   start/restart never compile; run ./run.sh build after changing Rust code.
+  For desktop development with hot reload: cd desktop && npx tauri dev
   HYPNOS_PROFILE=debug selects the dev profile (backend/target/debug/hypnos).
 
 EOF
@@ -140,11 +152,12 @@ kill_tree() {
     fi
 }
 
-# is_running <name> <port>: prints a pid and returns 0 when the service is up.
+# is_running <name> <port>: prints a pid and returns 0 when the service is up. An empty port
+# (the desktop app listens on none) checks the pid file only.
 is_running() {
     local name="$1" port="$2" pid
-    pid="$(port_pids "$port" | head -n1)"
-    if [ -n "$pid" ]; then echo "$pid"; return 0; fi
+    [ -n "$port" ] && pid="$(port_pids "$port" | head -n1)"
+    if [ -n "${pid:-}" ]; then echo "$pid"; return 0; fi
     if [ "$IS_WINDOWS" = 0 ] && [ -f "$RUN_DIR/$name.pid" ]; then
         pid="$(tr -d '[:space:]' < "$RUN_DIR/$name.pid")"
         if pid_alive "$pid"; then echo "$pid"; return 0; fi
@@ -279,6 +292,19 @@ build_frontend() {
     echo "[Hypnos] frontend dependencies ready."
 }
 
+# build_desktop: npm install + `tauri build --no-bundle` (the app binary; the installers are
+# made by release.yml). Tauri compiles the Rust side with the cargo first on PATH (rustup's).
+build_desktop() {
+    echo "[Hypnos] Building the desktop app ($HYPNOS_PROFILE profile) -> $DESKTOP_BIN"
+    (cd "$ROOT_DIR/desktop" && npm install && npx tauri build --no-bundle ${DESKTOP_BUILD_FLAGS[@]+"${DESKTOP_BUILD_FLAGS[@]}"})
+    local rc=$?
+    if [ "$rc" != 0 ]; then
+        echo "[Hypnos] desktop build FAILED (exit code $rc)."
+        return 1
+    fi
+    echo "[Hypnos] desktop app built: $DESKTOP_BIN"
+}
+
 # ---------------------------------------------------------------------------
 # services
 # ---------------------------------------------------------------------------
@@ -324,6 +350,57 @@ start_frontend() {
     wait_up frontend "$FRONTEND_PORT" 15
 }
 
+start_desktop() {
+    local pid
+    if pid="$(is_running desktop "")"; then
+        echo "[Hypnos] desktop app already running (pid $pid)."
+        return 0
+    fi
+    if [ ! -x "$DESKTOP_BIN" ]; then
+        echo "[Hypnos] desktop app not built: $DESKTOP_BIN"
+        echo "         Run ./run.sh build desktop first."
+        return 1
+    fi
+    echo "[Hypnos] desktop app starting ($DESKTOP_BIN)"
+    echo "         log: $RUN_DIR/desktop.log"
+    spawn desktop "$ROOT_DIR/desktop" "$DESKTOP_BIN"
+    sleep 2
+    pid="$(tr -d '[:space:]' < "$RUN_DIR/desktop.pid" 2>/dev/null)"
+    if [ "$IS_WINDOWS" = 0 ] && ! pid_alive "$pid"; then
+        startup_failed desktop
+        return 1
+    fi
+    echo "[Hypnos] desktop app RUNNING (pid $pid)"
+}
+
+stop_desktop() {
+    local pid stopped=0
+    if [ -f "$RUN_DIR/desktop.pid" ]; then
+        pid="$(tr -d '[:space:]' < "$RUN_DIR/desktop.pid")"
+        if [ "$IS_WINDOWS" = 0 ] && pid_alive "$pid"; then kill_tree "$pid"; stopped=1; fi
+    fi
+    rm -f "$RUN_DIR/desktop.pid"
+    if [ "$IS_WINDOWS" = 1 ] && "$SYSTEMROOT/System32/tasklist.exe" //FI "IMAGENAME eq hypnos-desktop.exe" //NH 2>/dev/null | grep -qi 'hypnos-desktop.exe'; then
+        "$SYSTEMROOT/System32/taskkill.exe" //IM hypnos-desktop.exe //F >/dev/null 2>&1
+        stopped=1
+    fi
+    if [ "$stopped" = 1 ]; then echo "[Hypnos] desktop app stopped."; else echo "[Hypnos] desktop app was not running."; fi
+}
+
+status_desktop() {
+    local pid
+    if pid="$(is_running desktop "")"; then
+        echo "[Hypnos] desktop: RUNNING  (pid $pid)"
+    else
+        echo "[Hypnos] desktop: stopped"
+    fi
+    if [ -x "$DESKTOP_BIN" ]; then
+        echo "[Hypnos] desktop binary: $DESKTOP_BIN"
+    else
+        echo "[Hypnos] desktop binary: not built (./run.sh build desktop)"
+    fi
+}
+
 status_one() {
     local name="$1" port="$2" pid
     if pid="$(is_running "$name" "$port")"; then
@@ -346,6 +423,7 @@ logs() {
     case "$TARGET" in
         backend)  files=("$RUN_DIR/backend.log") ;;
         frontend) files=("$RUN_DIR/frontend.log") ;;
+        desktop)  files=("$RUN_DIR/desktop.log") ;;
         all)      files=("$RUN_DIR/backend.log" "$RUN_DIR/frontend.log") ;;
     esac
     for f in "${files[@]}"; do touch "$f"; done
@@ -360,31 +438,42 @@ if [ "$ACTION" = models ]; then
     exec bash "$ROOT_DIR/backend/scripts/fetch-models.sh" "$TARGET"
 fi
 
-case "$TARGET" in backend|frontend|all) ;; *) echo "[Hypnos] Unknown target '$TARGET'."; usage ;; esac
+case "$TARGET" in backend|frontend|desktop|all) ;; *) echo "[Hypnos] Unknown target '$TARGET'."; usage ;; esac
+
+# want <service>: the service is named, or part of `all` (backend and frontend only).
+want() {
+    [ "$TARGET" = "$1" ] || { [ "$TARGET" = all ] && [ "$1" != desktop ]; }
+}
 
 RC=0
 case "$ACTION" in
     build)
-        [ "$TARGET" != frontend ] && { build_backend  || RC=1; }
-        [ "$TARGET" != backend ]  && { build_frontend || RC=1; }
+        want backend  && { build_backend  || RC=1; }
+        want frontend && { build_frontend || RC=1; }
+        want desktop  && { build_desktop  || RC=1; }
         ;;
     start)
-        [ "$TARGET" != frontend ] && { start_backend  || RC=1; }
-        [ "$TARGET" != backend ]  && { start_frontend || RC=1; }
+        want backend  && { start_backend  || RC=1; }
+        want frontend && { start_frontend || RC=1; }
+        want desktop  && { start_desktop  || RC=1; }
         ;;
     stop)
-        [ "$TARGET" != backend ]  && stop_one frontend "$FRONTEND_PORT"
-        [ "$TARGET" != frontend ] && stop_one backend "$BACKEND_PORT"
+        want desktop  && stop_desktop
+        want frontend && stop_one frontend "$FRONTEND_PORT"
+        want backend  && stop_one backend "$BACKEND_PORT"
         ;;
     restart)
-        [ "$TARGET" != backend ]  && stop_one frontend "$FRONTEND_PORT"
-        [ "$TARGET" != frontend ] && stop_one backend "$BACKEND_PORT"
-        [ "$TARGET" != frontend ] && { start_backend  || RC=1; }
-        [ "$TARGET" != backend ]  && { start_frontend || RC=1; }
+        want desktop  && stop_desktop
+        want frontend && stop_one frontend "$FRONTEND_PORT"
+        want backend  && stop_one backend "$BACKEND_PORT"
+        want backend  && { start_backend  || RC=1; }
+        want frontend && { start_frontend || RC=1; }
+        want desktop  && { start_desktop  || RC=1; }
         ;;
     status)
-        [ "$TARGET" != frontend ] && status_one backend "$BACKEND_PORT"
-        [ "$TARGET" != backend ]  && status_one frontend "$FRONTEND_PORT"
+        want backend  && status_one backend "$BACKEND_PORT"
+        want frontend && status_one frontend "$FRONTEND_PORT"
+        want desktop  && status_desktop
         ;;
     logs)
         logs

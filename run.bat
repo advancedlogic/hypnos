@@ -5,13 +5,14 @@ cd /d "%~dp0"
 REM ============================================================================
 REM  Hypnos process manager (Windows)
 REM
-REM    run.bat [build|start|stop|restart|status] [backend|frontend|all]
+REM    run.bat [build|start|stop|restart|status] [backend|frontend|desktop|all]
 REM    run.bat models [all|<model id>]   download model files into backend\models\
 REM
 REM    run.bat build            -> compile the backend (cargo build --release) + npm install
 REM    run.bat                  -> start all (never compiles)
 REM    run.bat restart backend  -> stop + start the already-built backend binary
 REM    run.bat stop             -> stop backend and frontend
+REM    run.bat build desktop    -> npm install + tauri build of the desktop app (not part of `all`)
 REM
 REM  Build and start are separate steps: `start` launches the compiled executable
 REM  backend\target\<profile>\hypnos.exe and refuses to run when it is missing, so a
@@ -21,6 +22,7 @@ REM  HYPNOS_CONFIG=<file> (relative to backend\) to start the backend with your 
 REM
 REM  Backend : Rust server on http://localhost:9999  (hypnos.exe, own console window)
 REM  Frontend: Vite dev server on http://localhost:5173 (npm run dev, own console window)
+REM  Desktop : Tauri app (desktop\src-tauri\target\<profile>\hypnos-desktop.exe), only when named
 REM  PIDs are kept in .run\*.pid so stop/restart can kill the whole process tree;
 REM  the listening port is used as a fallback when no PID file exists.
 REM ============================================================================
@@ -42,6 +44,10 @@ set "CARGO_PROFILE_FLAG=--profile %HYPNOS_PROFILE%"
 if /i "%HYPNOS_PROFILE%"=="release" set "CARGO_PROFILE_FLAG=--release"
 if /i "%HYPNOS_PROFILE%"=="debug"   set "CARGO_PROFILE_FLAG="
 set "BACKEND_EXE=%ROOT%\backend\target\%HYPNOS_PROFILE%\hypnos.exe"
+REM The desktop app follows the same profile: `tauri build` (release) or `tauri build --debug`.
+set "DESKTOP_EXE=%ROOT%\desktop\src-tauri\target\%HYPNOS_PROFILE%\hypnos-desktop.exe"
+set "DESKTOP_BUILD_FLAG="
+if /i "%HYPNOS_PROFILE%"=="debug" set "DESKTOP_BUILD_FLAG=--debug"
 
 REM Use the Windows tools explicitly: Git for Windows puts a Unix `find` on PATH.
 set "SYS32=%SystemRoot%\System32"
@@ -64,8 +70,19 @@ if /i "%ACTION%"=="-h" goto :usage
 if /i "%ACTION%"=="--help" goto :usage
 if /i "%ACTION%"=="models" goto :do_models
 
-if /i not "%TARGET%"=="all" if /i not "%TARGET%"=="backend" if /i not "%TARGET%"=="frontend" (
+if /i not "%TARGET%"=="all" if /i not "%TARGET%"=="backend" if /i not "%TARGET%"=="frontend" if /i not "%TARGET%"=="desktop" (
     echo [Hypnos] Unknown target "%TARGET%".
+    goto :usage
+)
+
+REM The desktop app is never part of `all`: it needs the Tauri prerequisites and opens a window.
+if /i "%TARGET%"=="desktop" (
+    if /i "%ACTION%"=="build"   call :build_desktop & set "RC=!errorlevel!" & goto :end_rc
+    if /i "%ACTION%"=="start"   call :start_desktop & set "RC=!errorlevel!" & goto :end_rc
+    if /i "%ACTION%"=="stop"    call :stop_desktop & goto :end
+    if /i "%ACTION%"=="restart" call :stop_desktop & call :start_desktop & set "RC=!errorlevel!" & goto :end_rc
+    if /i "%ACTION%"=="status"  call :status_desktop & goto :end
+    echo [Hypnos] Unknown action "%ACTION%".
     goto :usage
 )
 
@@ -193,6 +210,26 @@ if not "!BUILD_RC!"=="0" (
 echo [Hypnos] frontend dependencies ready.
 exit /b 0
 
+REM build_desktop: npm install + `tauri build --no-bundle` (the app binary; release.yml makes the
+REM installers). Tauri compiles the Rust side with the cargo first on PATH (rustup's, set above).
+:build_desktop
+echo [Hypnos] Building the desktop app ^(%HYPNOS_PROFILE% profile^) -^> %DESKTOP_EXE%
+call :ensure_msvc_env
+pushd "%ROOT%\desktop"
+call npm install
+set "BUILD_RC=!errorlevel!"
+if "!BUILD_RC!"=="0" (
+    call npx tauri build --no-bundle %DESKTOP_BUILD_FLAG%
+    set "BUILD_RC=!errorlevel!"
+)
+popd
+if not "!BUILD_RC!"=="0" (
+    echo [Hypnos] desktop build FAILED ^(exit code !BUILD_RC!^).
+    exit /b 1
+)
+echo [Hypnos] desktop app built: %DESKTOP_EXE%
+exit /b 0
+
 REM ----------------------------------------------------------------------------
 REM start_backend: run the compiled executable in its own console window; the window's cmd.exe PID is saved.
 REM Never compiles: a missing binary is an error that points at `run.bat build backend`.
@@ -245,6 +282,51 @@ if not exist "%ROOT%\frontend\node_modules" (
 call :launch frontend "%RUN_DIR%\frontend.cmd"
 if not defined NEW_PID exit /b 1
 echo [Hypnos] frontend starting ^(pid !NEW_PID!^) -^> http://localhost:%FRONTEND_PORT%
+exit /b 0
+
+REM start_desktop: open the built app (a GUI executable, no console window); its PID is saved.
+:start_desktop
+%SYS32%\tasklist.exe /FI "IMAGENAME eq hypnos-desktop.exe" /NH 2>nul | %SYS32%\findstr.exe /I /C:"hypnos-desktop.exe" >nul && (
+    echo [Hypnos] desktop app already running.
+    exit /b 0
+)
+if not exist "%DESKTOP_EXE%" (
+    echo [Hypnos] desktop app not built: %DESKTOP_EXE%
+    echo          Run `run.bat build desktop` first.
+    exit /b 1
+)
+set "NEW_PID="
+set "HYPNOS_LAUNCHER=%DESKTOP_EXE%"
+for /f "usebackq delims=" %%p in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "(Start-Process -FilePath $env:HYPNOS_LAUNCHER -WorkingDirectory (Split-Path $env:HYPNOS_LAUNCHER) -PassThru).Id"`) do set "NEW_PID=%%p"
+if not defined NEW_PID (
+    echo [Hypnos] Failed to launch the desktop app.
+    exit /b 1
+)
+> "%RUN_DIR%\desktop.pid" echo !NEW_PID!
+echo [Hypnos] desktop app RUNNING ^(pid !NEW_PID!^)
+exit /b 0
+
+:stop_desktop
+del /q "%RUN_DIR%\desktop.pid" >nul 2>&1
+%SYS32%\tasklist.exe /FI "IMAGENAME eq hypnos-desktop.exe" /NH 2>nul | %SYS32%\findstr.exe /I /C:"hypnos-desktop.exe" >nul && (
+    %SYS32%\taskkill.exe /IM hypnos-desktop.exe /F >nul 2>&1
+    echo [Hypnos] desktop app stopped.
+    exit /b 0
+)
+echo [Hypnos] desktop app was not running.
+exit /b 0
+
+:status_desktop
+%SYS32%\tasklist.exe /FI "IMAGENAME eq hypnos-desktop.exe" /NH 2>nul | %SYS32%\findstr.exe /I /C:"hypnos-desktop.exe" >nul && (
+    echo [Hypnos] desktop: RUNNING
+) || (
+    echo [Hypnos] desktop: stopped
+)
+if exist "%DESKTOP_EXE%" (
+    echo [Hypnos] desktop binary: %DESKTOP_EXE%
+) else (
+    echo [Hypnos] desktop binary: not built ^(run.bat build desktop^)
+)
 exit /b 0
 
 REM launch <name> <launcher.cmd>: opens a new console window running the launcher and records its PID.
@@ -343,7 +425,7 @@ exit /b 0
 REM ----------------------------------------------------------------------------
 :usage
 echo.
-echo   Usage: run.bat [build^|start^|stop^|restart^|status] [backend^|frontend^|all]
+echo   Usage: run.bat [build^|start^|stop^|restart^|status] [backend^|frontend^|desktop^|all]
 echo.
 echo     run.bat build              cargo build --release the backend + npm install the frontend
 echo     run.bat build backend      compile only the Rust server ^(backend\target\%HYPNOS_PROFILE%\hypnos.exe^)
@@ -353,9 +435,12 @@ echo     run.bat restart frontend   restart only the Vite dev server ^(port %FRO
 echo     run.bat stop               stop both
 echo     run.bat status             show what is running and whether the backend is built
 echo     run.bat models [model id]  download the model files ^(about 31 GB for all^) into backend\models\
+echo     run.bat build desktop      npm install + tauri build the desktop app ^(no installers^)
+echo     run.bat start desktop      open the built desktop app ^("all" leaves it out^)
 echo.
 echo   start/restart never compile; run `run.bat build` after changing Rust code.
 echo   HYPNOS_PROFILE=debug selects the dev profile ^(backend\target\debug\hypnos.exe^).
+echo   For desktop development with hot reload: cd desktop ^&^& npx tauri dev
 echo.
 exit /b 1
 

@@ -141,6 +141,68 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
+  # The desktop app's installers, not signed with a developer identity yet (ad-hoc on macOS, so
+  # Gatekeeper offers "Open Anyway" instead of calling the app damaged; SmartScreen on Windows
+  # shows "More info > Run anyway").
+  desktop:
+    name: desktop ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 22.04 keeps the glibc floor of the .deb and the AppImage low (2.35).
+          - { platform: linux-x64, os: ubuntu-22.04, bundles: "deb,appimage" }
+          - { platform: windows-x64, os: windows-2022, bundles: "msi,nsis" }
+          - { platform: macos-arm64, os: macos-15, bundles: "dmg" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux webview deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2
+      - name: macOS deployment target
+        if: runner.os == 'macOS'
+        run: echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Build the installers
+        working-directory: desktop
+        shell: bash
+        run: |
+          npm ci
+          # The tag's version goes into the installers; a manual run keeps tauri.conf.json's.
+          args=(--bundles ${{ matrix.bundles }})
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            args+=(--config "{\"version\":\"${GITHUB_REF_NAME#v}\"}")
+          fi
+          npx tauri build "${args[@]}"
+      - name: Collect
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME}"
+          [[ "$GITHUB_REF" == refs/tags/* ]] || version="$(git describe --tags --always)"
+          mkdir -p dist
+          bundle=desktop/src-tauri/target/release/bundle
+          for f in "$bundle"/dmg/*.dmg "$bundle"/msi/*.msi "$bundle"/nsis/*.exe "$bundle"/deb/*.deb "$bundle"/appimage/*.AppImage; do
+            [ -f "$f" ] || continue
+            ext="${f##*.}"
+            [ "$ext" = exe ] && ext="setup.exe"
+            cp "$f" "dist/hypnos-desktop-$version-${{ matrix.platform }}.$ext"
+          done
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hypnos-desktop-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
   docker:
     name: docker (CUDA, GHCR)
     # Builds and pushes in one step, so the whole job waits for the checks.
@@ -186,7 +248,7 @@ jobs:
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ci, build]
+    needs: [ci, build, desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -201,7 +263,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd dist
-          sha256sum -- *.tar.gz *.zip > SHA256SUMS
+          files=(*.tar.gz *.zip hypnos-desktop-*)
+          sha256sum -- "${files[@]}" > SHA256SUMS
           cat > notes.md <<EOF
           Prebuilt archives for ${GITHUB_REF_NAME}. Unpack, then follow \`README.txt\` inside
           (download models with \`scripts/fetch-models\`, run \`hypnos\`, open http://127.0.0.1:9999).
@@ -211,6 +274,12 @@ jobs:
           | \`linux-x64-cuda\` | glibc 2.39+, NVIDIA driver 570+, CUDA 12 runtime (cudart, cuBLAS), libgomp1 |
           | \`windows-x64-cuda\` | NVIDIA driver 570+, plus \`windows-x64-cuda12-runtime.zip\` unpacked beside \`hypnos.exe\` (or the CUDA Toolkit 12.x) |
           | \`macos-arm64-metal\` | Apple Silicon, macOS 14+ |
+
+          Desktop app (a chat client with live server stats; it connects to a running Hypnos):
+          \`hypnos-desktop-*-macos-arm64.dmg\`, \`-windows-x64.msi\` / \`.setup.exe\`,
+          \`-linux-x64.deb\` / \`.AppImage\`. The installers are not signed yet: on macOS open it
+          once with System Settings > Privacy & Security > Open Anyway, on Windows choose More info >
+          Run anyway.
 
           Document conversion on the GPU (docling with \`device = "gpu"\`, off by default) additionally
           needs driver 580+, the CUDA 13 runtime and cuDNN 9 for CUDA 13; see \`README.txt\` in the archive.
@@ -225,11 +294,11 @@ jobs:
           # moved gets the archives attached and is published; otherwise one is created.
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber \
-              -- *.tar.gz *.zip SHA256SUMS
+              -- "${files[@]}" SHA256SUMS
             gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false \
               --title "Hypnos $GITHUB_REF_NAME" --notes-file notes.md
           else
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
               --title "Hypnos $GITHUB_REF_NAME" --notes-file notes.md \
-              -- *.tar.gz *.zip SHA256SUMS
+              -- "${files[@]}" SHA256SUMS
           fi
