@@ -63,15 +63,37 @@ xcrun notarytool store-credentials hypnos-notary \
 ```
 
 ### 1.4 Export the certificate for CI
-In Keychain Access, open *My Certificates*, right-click the Developer ID Application
-certificate (expand it to check that the private key is underneath), choose Export, then
-`.p12` with a strong password. Then:
+CI needs the certificate **together with its private key**, as a `.p12` file. There are two
+ways to export one:
+
+- **Keychain Access:**
+  1. Select the **login** keychain.
+  2. Open the **My Certificates** tab.
+  3. Expand *Developer ID Application: …* with ▸; the private key must show underneath.
+  4. Right-click the certificate row, or select both the certificate and the key, and choose
+     Export.
+  5. Pick **Personal Information Exchange (.p12)** and set a strong password.
+- **Xcode:** Settings > Accounts > the team > Manage Certificates…, then right-click the
+  Developer ID Application certificate > **Export Certificate**. This always writes a `.p12`
+  with the key.
+
+If Keychain Access offers only `.cer`, `.pem` or `.p7b`, you selected the bare certificate:
+the *Certificates* tab, or a row with no key under it. Those formats hold only the public
+part, which CI cannot sign with. Use *My Certificates* or Xcode. If no key shows under the
+certificate on this Mac, the key is on the Mac that made the CSR: export from there.
+
+`security export -k login.keychain-db -t identities -f pkcs12 -P '<password>' -o cert.p12`
+works from the terminal, but it exports **every** identity in the keychain, for example
+*Apple Development* ones as well. Prefer one of the two ways above.
+
+Check the file before you upload it. It should list one private key and the Developer ID
+certificate:
 
 ```bash
-base64 -i DeveloperID.p12 | pbcopy     # paste as the APPLE_CERTIFICATE secret
+openssl pkcs12 -in cert.p12 -info -nokeys -legacy 2>/dev/null | grep -E 'subject=|friendlyName'
 ```
 
-Keep the `.p12` out of the repository and delete the local copy once the secret is set.
+Keep the `.p12` out of the repository and delete the local copy once the secret is set (2.2).
 
 ---
 
@@ -107,10 +129,45 @@ Add these repository secrets (Settings > Secrets and variables > Actions):
 | `APPLE_PASSWORD` | the app-specific password |
 | `APPLE_TEAM_ID` | `TEAMID1234` |
 
-With the first three, the app is signed. With all six, it is also notarized and the ticket is
-stapled. The release notes step reads the secrets and says "The macOS app is signed and
-notarized." Run the workflow by hand first (Actions > release > Run workflow): a manual run
-only produces artifacts, so you can check the `.dmg` before you tag.
+From the terminal, `gh secret set NAME` reads the value from a prompt that does not echo, or
+from stdin. That keeps the values out of your shell history and out of any chat or log:
+
+```bash
+base64 -i cert.p12 | gh secret set APPLE_CERTIFICATE
+gh secret set APPLE_CERTIFICATE_PASSWORD     # prompts
+gh secret set APPLE_PASSWORD                 # prompts
+gh secret set APPLE_SIGNING_IDENTITY --body "Developer ID Application: Your Name (TEAMID1234)"
+gh secret set APPLE_TEAM_ID --body TEAMID1234
+gh secret set APPLE_ID --body you@example.com
+gh secret list
+rm cert.p12
+```
+
+With the first three, the app and the server are signed. With all six, they are also
+notarized, and the app's ticket is stapled. The release notes step reads the secrets and says
+"The macOS app and server are signed and notarized." Run the workflow by hand first (Actions >
+release > Run workflow). A manual run only produces artifacts, so you can check the `.dmg` and
+the server archive before you tag.
+
+#### Who can use the key
+
+- **The published app and binaries** carry the signature and the *public* certificate chain,
+  which anyone can read. They never contain the private key, so nobody can sign as you by
+  copying them.
+- **GitHub secrets** are stored encrypted and cannot be read back, by you or by anyone else.
+  A workflow that runs in the repository can still *use* them. In this repository:
+  - No workflow runs on `pull_request` or `pull_request_target`, so a pull request from a
+    fork never receives the secrets.
+  - `release.yml` runs only on a `v*` tag or a manual run, and both need write access.
+  - On the runner, the `.p12` is decoded into a temporary file that is deleted right after
+    import into a temporary keychain, on a VM that GitHub destroys after the job.
+- **When you add collaborators** with write access, remember that they can push a workflow
+  that prints or sends out secrets. Before that happens, move the `APPLE_*` secrets into a
+  GitHub **Environment** (Settings > Environments) with required reviewers, and reference that
+  environment from the jobs that sign.
+- **If the key leaks,** revoke the certificate at developer.apple.com > Certificates, create a
+  new one (1.2) and replace the secrets. Revocation also invalidates what was signed with the
+  old certificate, so do it only for a real leak.
 
 To use an API key instead of an Apple ID, Tauri reads `APPLE_API_KEY` (key ID),
 `APPLE_API_ISSUER` and `APPLE_API_KEY_PATH` (a path to the `.p8`). `release.yml` does not
@@ -309,6 +366,8 @@ The release notes say "The macOS app and server are signed and notarized" when
 | *The signature does not include a secure timestamp* | `--timestamp` missing, or `--timestamp=none` | re-sign with `--timestamp` (needs network) |
 | *The executable does not have the hardened runtime enabled* | `--options runtime` missing | re-sign with it |
 | `codesign` hangs in CI | the keychain is locked, or the key's partition list is not set | `security unlock-keychain` + `set-key-partition-list` as in 3.6 |
+| `xcrun: error: unable to find utility "store-credentials"` | the tool name is missing | `xcrun notarytool store-credentials …` |
+| Keychain Access exports only `.cer` / `.pem` / `.p7b` | bare certificate selected, without its key | *My Certificates* tab or Xcode (1.4) |
 | `codesign` asks for a password locally | first use of the private key by `codesign` | click *Always Allow* |
 | `hypnos` dies at startup with *Library Validation failed* | the dylib and the binary are signed by different teams, or the dylib was changed after signing | sign both with the same identity, the dylib first |
 | desktop: microphone records silence or no prompt appears | `Entitlements.plist` not applied | `codesign -d --entitlements - Hypnos.app` must list `audio-input` |
