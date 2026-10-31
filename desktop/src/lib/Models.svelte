@@ -5,10 +5,13 @@
 
   /**
    * The local server's model files (DESK-17): pick from the lineup, download with progress,
-   * change the folder. `config`: the local server's config path; `onchanged` restarts the server
-   * after files arrived or the folder moved; `firstRun` shows the welcome line.
+   * change the folder; add models of the curated catalog (API-10). `config`: the local server's
+   * config path; `binary`: its server binary (renders a catalog model's config block);
+   * `onchanged` restarts the server after files arrived, a model was added or the folder moved;
+   * `firstRun` shows the welcome line; `tab` opens on `lineup` or `catalog`.
    */
-  let { config, firstRun = false, onchanged, onclose } = $props();
+  let { config, binary = null, firstRun = false, tab = 'lineup', onchanged, onclose } = $props();
+  let view = $state(untrack(() => tab)); // 'lineup' | 'catalog'
 
   let cat = $state(null);
   let loadError = $state(null);
@@ -18,6 +21,12 @@
   let error = $state(null);
   let note = $state(null);
   let moveFiles = $state(true);
+  let entries = $state(null); // catalog models the config does not have
+  let entriesError = $state(null);
+  let chosen = $state({}); // id -> quant
+  let adding = $state(null); // id being added
+  let shownBlock = $state(null); // { id, quant, text } for a config the app does not write
+  let copied = $state(false);
 
   const MODALITY = {
     text_generation: 'Chat',
@@ -32,10 +41,17 @@
 
   async function refresh() {
     loadError = null;
+    entriesError = null;
     try {
       cat = await models.catalog(config);
     } catch (e) {
       loadError = String(e?.message ?? e);
+    }
+    try {
+      entries = await models.catalogEntries(config);
+    } catch (e) {
+      entries = [];
+      entriesError = String(e?.message ?? e);
     }
   }
 
@@ -59,26 +75,35 @@
     selected = new Set(missing.map((m) => m.id));
   }
 
+  /** Follows a download's events in `progress`; true once it finished. */
+  function track(e, stoppedNote) {
+    if (e.event === 'start') progress.total = e.totalBytes;
+    else if (e.event === 'file') {
+      progress.file = e.local;
+      progress.fileSize = e.size;
+      progress.fileBytes = e.from;
+      progress.verifying = false;
+    } else if (e.event === 'progress') {
+      progress.done = e.doneBytes;
+      progress.fileBytes = e.fileBytes;
+    } else if (e.event === 'verifying') progress.verifying = true;
+    else if (e.event === 'cancelled') note = stoppedNote;
+    return e.event === 'done';
+  }
+
+  function startProgress() {
+    progress = { done: 0, total: null, file: null, fileBytes: 0, fileSize: null, verifying: false };
+  }
+
   async function download() {
     error = null;
     note = null;
     busy = 'download';
-    progress = { done: 0, total: null, file: null, fileBytes: 0, fileSize: null, verifying: false };
+    startProgress();
     let finished = false;
     try {
       await models.download(config, [...selected], (e) => {
-        if (e.event === 'start') progress.total = e.totalBytes;
-        else if (e.event === 'file') {
-          progress.file = e.local;
-          progress.fileSize = e.size;
-          progress.fileBytes = e.from;
-          progress.verifying = false;
-        } else if (e.event === 'progress') {
-          progress.done = e.doneBytes;
-          progress.fileBytes = e.fileBytes;
-        } else if (e.event === 'verifying') progress.verifying = true;
-        else if (e.event === 'done') finished = true;
-        else if (e.event === 'cancelled') note = 'Stopped. What was downloaded is kept; Download resumes it.';
+        if (track(e, 'Stopped. What was downloaded is kept; Download resumes it.')) finished = true;
       });
     } catch (e) {
       error = String(e?.message ?? e);
@@ -116,6 +141,67 @@
       busy = null;
       progress = null;
     }
+  }
+
+  const CAPABILITY = { thinking: 'Thinking', tools: 'Tools' };
+
+  function quantOf(entry) {
+    return chosen[entry.id] ?? entry.variants.find((v) => v.default)?.quant ?? entry.variants[0]?.quant;
+  }
+
+  function variantOf(entry) {
+    const q = quantOf(entry);
+    return entry.variants.find((v) => v.quant === q) ?? entry.variants[0];
+  }
+
+  function missingBytes(v) {
+    return Math.max(0, v.size - v.have);
+  }
+
+  /** Downloads the chosen variant, appends its block to the app's config, restarts the server. */
+  async function add(entry) {
+    const v = variantOf(entry);
+    error = null;
+    note = null;
+    shownBlock = null;
+    busy = 'download';
+    adding = entry.id;
+    startProgress();
+    let added = false;
+    try {
+      added = await models.addFromCatalog(config, binary, entry.id, v.quant, (e) =>
+        track(e, `Stopped. What was downloaded is kept; Add resumes ${entry.name}.`),
+      );
+    } catch (e) {
+      error = String(e?.message ?? e);
+    } finally {
+      busy = null;
+      adding = null;
+      progress = null;
+    }
+    if (added) {
+      note = `Added ${entry.name} (${v.quant}). The local server restarted with it.`;
+      await onchanged?.();
+    }
+    await refresh();
+  }
+
+  /** For a config the app does not write: the block to paste into it. */
+  async function showBlock(entry) {
+    const v = variantOf(entry);
+    error = null;
+    copied = false;
+    try {
+      shownBlock = { id: entry.id, quant: v.quant, text: await models.catalogBlock(binary, entry.id, v.quant) };
+    } catch (e) {
+      shownBlock = null;
+      error = String(e?.message ?? e);
+    }
+  }
+
+  async function copyBlock() {
+    await navigator.clipboard.writeText(shownBlock.text);
+    copied = true;
   }
 
   function pct(done, total) {
@@ -176,7 +262,16 @@
     </div>
 
     <div class="flex-1 min-h-0 overflow-y-auto border-t border-slate-800">
-      {#if loadError}
+      <div class="sticky top-0 z-10 flex gap-1 px-5 pt-2 bg-slate-900 border-b border-slate-800" role="tablist">
+        {#each [['lineup', 'Lineup'], ['catalog', `Catalog${entries ? ` (${entries.length})` : ''}`]] as [id, label] (id)}
+          <button role="tab" aria-selected={view === id}
+            class="px-3 py-1.5 text-xs -mb-px border-b-2 {view === id ? 'border-indigo-400 text-slate-100' : 'border-transparent text-slate-400 hover:text-slate-200'}"
+            onclick={() => (view = id)}>{label}</button>
+        {/each}
+      </div>
+      {#if view === 'catalog'}
+        <!-- the catalog, below -->
+      {:else if loadError}
         <p class="p-5 text-xs text-rose-300">{loadError}</p>
       {:else if !cat}
         <p class="p-5 text-xs text-slate-500">Reading the lineup…</p>
@@ -217,6 +312,95 @@
             </li>
           {/each}
         </ul>
+      {/if}
+
+      {#if view === 'catalog' && !entries}
+        <p class="p-5 text-xs text-slate-500">Reading the catalog…</p>
+      {:else if view === 'catalog'}
+        <div>
+          <div class="px-5 pt-3 pb-1">
+            <p class="text-xs text-slate-500">
+              {#if cat?.managed}
+                Tested models this config does not have yet. Add downloads the chosen variant and adds it to the config.
+              {:else}
+                Tested models this config does not have yet. Download their files with ./run.sh models and paste the
+                block into {config.split('/').pop()}.
+              {/if}
+            </p>
+          </div>
+          {#if entriesError}
+            <p class="px-5 py-2 text-xs text-amber-300">{entriesError}</p>
+          {:else if !entries.length}
+            <p class="px-5 py-2 text-xs text-slate-500">The config has every model of the catalog.</p>
+          {/if}
+          <ul class="divide-y divide-slate-800">
+            {#each entries as m (m.id)}
+              {@const v = variantOf(m)}
+              {@const short = cat?.freeBytes != null && missingBytes(v) > cat.freeBytes}
+              <li class="px-5 py-3 space-y-1.5">
+                <div class="flex items-center gap-2 flex-wrap text-sm">
+                  <span class="text-slate-200 font-medium">{m.name}</span>
+                  <span class="text-xs text-slate-500">{m.publisher}</span>
+                  <span class="text-[10px] px-1.5 rounded bg-slate-800 text-slate-400" title="License">{m.license}</span>
+                  {#each [m.modality, ...m.additionalModalities] as mod}
+                    <span class="text-[10px] px-1.5 rounded bg-slate-800 text-slate-300">{MODALITY[mod] ?? mod}</span>
+                  {/each}
+                  {#each m.capabilities as c}
+                    <span class="text-[10px] px-1.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-900">{CAPABILITY[c] ?? c}</span>
+                  {/each}
+                  <span class="ml-auto font-mono text-[11px] text-slate-500">{m.id}</span>
+                </div>
+                <p class="text-xs text-slate-400">{m.summary}</p>
+                <div class="flex items-center gap-2 text-xs">
+                  <select class="bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-slate-200 disabled:opacity-40"
+                    value={v.quant} onchange={(e) => (chosen = { ...chosen, [m.id]: e.currentTarget.value })}
+                    disabled={!!busy} aria-label="Variant of {m.name}">
+                    {#each m.variants as o (o.quant)}
+                      <option value={o.quant}>{o.quant}, {models.gb(o.size)}{o.default ? ' (default)' : ''}</option>
+                    {/each}
+                  </select>
+                  <span class="tabular-nums {short ? 'text-rose-300' : 'text-slate-500'}">
+                    {#if v.installed}
+                      <span class="text-emerald-400">Downloaded</span>
+                    {:else if v.have > 0}
+                      {models.gb(v.have)} of {models.gb(v.size)} downloaded
+                    {:else}
+                      Not downloaded
+                    {/if}
+                    {#if short && !v.installed}: more than the free space{/if}
+                  </span>
+                  <span class="ml-auto"></span>
+                  {#if adding === m.id}
+                    <span class="text-slate-400">Adding…</span>
+                  {:else if cat?.managed}
+                    <button class="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50"
+                      onclick={() => add(m)} disabled={!!busy || short || !cat?.dirExists || !binary}
+                      title={binary ? '' : 'No server binary: choose one in the local server settings'}>
+                      Add
+                    </button>
+                  {:else}
+                    <button class="px-2.5 py-1 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                      onclick={() => showBlock(m)} disabled={!!busy || !binary}>
+                      Config block
+                    </button>
+                  {/if}
+                </div>
+                {#if v.note}
+                  <p class="text-[11px] text-slate-500">{v.note}</p>
+                {/if}
+                {#if shownBlock && shownBlock.id === m.id}
+                  <div class="relative">
+                    <pre class="text-[11px] font-mono text-slate-300 bg-slate-950 border border-slate-800 rounded p-2 overflow-x-auto">{shownBlock.text}</pre>
+                    <button class="absolute top-1.5 right-1.5 text-[11px] px-2 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800"
+                      onclick={copyBlock}>
+                      {copied ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        </div>
       {/if}
     </div>
 

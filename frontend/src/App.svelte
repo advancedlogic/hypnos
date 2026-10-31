@@ -39,7 +39,7 @@
   // Memory Hierarchy Status from GET /v1/memory/status
   let memoryStatus = $state(null);
 
-  // Active Playground Tab: 'chat' | 'stt' | 'tts' | 'embeddings' | 'image'
+  // Active Playground Tab: 'chat' | 'stt' | 'tts' | 'embeddings' | 'image' | 'documents' | 'entities' | 'logs' | 'catalog'
   let activeTab = $state('chat');
 
   // Telemetry Log History
@@ -409,6 +409,120 @@
     const timer = setInterval(fetchLogs, 3000);
     return () => clearInterval(timer);
   });
+
+  // ---- Model catalog (GET /v1/models/catalog) -----------------------------
+  // The playground cannot write the server's config or its models folder: per entry it shows the
+  // download command and the [[models]] block to add, then the server needs a restart.
+  let catalog = $state(null);
+  let catalogError = $state('');
+  let catalogMissing = $state(false);
+  let catalogLoading = $state(false);
+  let catalogModality = $state('');
+  let catalogVariant = $state({}); // entry id -> chosen quant
+  let catalogOpen = $state({}); // entry id -> details expanded
+  let catalogCopied = $state('');
+  const isWindows = typeof navigator !== 'undefined' && /Win/i.test(navigator.userAgent);
+
+  async function fetchCatalog() {
+    catalogLoading = true;
+    try {
+      const res = await apiFetch('/v1/models/catalog');
+      if (res.status === 404) {
+        catalog = null;
+        catalogMissing = true;
+        catalogError = '';
+        return;
+      }
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try {
+          msg = (await res.json())?.error?.message || msg;
+        } catch {
+          // keep the status
+        }
+        throw new Error(msg);
+      }
+      catalog = await res.json();
+      catalogMissing = false;
+      catalogError = '';
+    } catch (err) {
+      catalogError = err.message;
+    } finally {
+      catalogLoading = false;
+    }
+  }
+
+  $effect(() => {
+    if (activeTab === 'catalog' && !catalog && !catalogMissing) fetchCatalog();
+  });
+
+  function entryModalities(m) {
+    return [m.modality, ...(m.additional_modalities || [])];
+  }
+
+  const catalogModalities = $derived(
+    [...new Set((catalog?.data || []).flatMap(entryModalities))].sort()
+  );
+
+  // Entries grouped by primary modality, after the modality filter (primary or additional).
+  const catalogGroups = $derived.by(() => {
+    const groups = new Map();
+    for (const m of catalog?.data || []) {
+      if (catalogModality && !entryModalities(m).includes(catalogModality)) continue;
+      if (!groups.has(m.modality)) groups.set(m.modality, []);
+      groups.get(m.modality).push(m);
+    }
+    return [...groups.entries()];
+  });
+
+  function selectedVariant(m) {
+    const quant = catalogVariant[m.id];
+    return (
+      m.variants.find((v) => v.quant === quant) ||
+      m.variants.find((v) => v.default) ||
+      m.variants[0]
+    );
+  }
+
+  function variantState(v) {
+    if (!v) return { label: 'no variants', cls: 'bg-slate-700/50 text-slate-300' };
+    if (v.outdated) return { label: 'outdated', cls: 'bg-amber-500/20 text-amber-300' };
+    if (v.installed) return { label: 'installed', cls: 'bg-emerald-500/20 text-emerald-300' };
+    if ((v.files || []).some((f) => f.present))
+      return { label: 'partly downloaded', cls: 'bg-amber-500/20 text-amber-300' };
+    return { label: 'not downloaded', cls: 'bg-slate-700/50 text-slate-300' };
+  }
+
+  function downloadCommand(m, v) {
+    const spec = v ? `${m.id}:${v.quant}` : m.id;
+    return isWindows ? `run.bat models ${spec}` : `./run.sh models ${spec}`;
+  }
+
+  function gb(bytes) {
+    return bytes ? `${(bytes / 1e9).toFixed(2)} GB` : '–';
+  }
+
+  async function copyText(key, text) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Clipboard API unavailable (plain http on another host): fall back to a hidden textarea.
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+      } catch {
+        // nothing more to try
+      }
+      ta.remove();
+    }
+    catalogCopied = key;
+    setTimeout(() => {
+      if (catalogCopied === key) catalogCopied = '';
+    }, 1500);
+  }
 
   // POST /v1/models/{id}/enable | /disable: take a model out of service (evicted to Tier 3,
   // hidden from /v1/models, requests answer 404) or put it back; not written to the config.
@@ -1522,6 +1636,12 @@
           >
             8. Request Logs
           </button>
+          <button
+            onclick={() => (activeTab = 'catalog')}
+            class="px-3.5 py-2 rounded-lg text-xs font-semibold transition {activeTab === 'catalog' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/25' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'}"
+          >
+            9. Model Catalog
+          </button>
         </div>
 
         <!-- TAB 1: TEXT & VISION CHAT -->
@@ -2178,6 +2298,203 @@
                 {/if}
               </div>
             {/if}
+          </div>
+
+        <!-- TAB 9: MODEL CATALOG (GET /v1/models/catalog) -->
+        {:else if activeTab === 'catalog'}
+          <div class="space-y-4 text-xs">
+            <div class="flex flex-wrap items-end gap-2">
+              <div>
+                <label class="block text-slate-400 mb-1" for="catalog-modality">Modality</label>
+                <select
+                  id="catalog-modality"
+                  bind:value={catalogModality}
+                  class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-white"
+                >
+                  <option value="">all</option>
+                  {#each catalogModalities as mod}
+                    <option value={mod}>{mod}</option>
+                  {/each}
+                </select>
+              </div>
+              <button
+                onclick={fetchCatalog}
+                disabled={catalogLoading}
+                class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold disabled:opacity-50"
+              >
+                {catalogLoading ? 'Loading…' : 'Refresh'}
+              </button>
+              {#if catalog}
+                <span class="text-slate-500 pb-2 ml-auto text-right">
+                  {catalog.data.length} models · catalog v{catalog.catalog_version} · models folder
+                  <span class="font-mono text-slate-400">{catalog.models_dir}</span>
+                </span>
+              {/if}
+            </div>
+
+            <div class="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-slate-400 leading-relaxed">
+              Models Hypnos has been tested with. The playground cannot change the server: to add one,
+              run its download command from the repository root (or the release folder), append its
+              config block to the server's config file, then <strong class="text-slate-200">restart the server</strong>.
+              {#if catalog?.tested_architectures?.length}
+                Tested GGUF architectures:
+                <span class="font-mono text-slate-300">{catalog.tested_architectures.join(', ')}</span>.
+              {/if}
+            </div>
+
+            {#if catalogMissing}
+              <div class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-3 text-slate-300">
+                This server has no model catalog (<span class="font-mono">models.catalog.toml</span> next to
+                the server was not found, or the server predates the catalog route).
+              </div>
+            {:else if catalogError}
+              <div class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-rose-200">
+                {catalogError}
+              </div>
+            {:else if !catalog}
+              <div class="text-slate-500">Loading the catalog…</div>
+            {/if}
+
+            {#each catalogGroups as [modality, entries] (modality)}
+              <div class="space-y-2">
+                <div class="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">{modality}</div>
+                {#each entries as m (m.id)}
+                  {@const v = selectedVariant(m)}
+                  {@const st = variantState(v)}
+                  {@const open = catalogOpen[m.id] ?? !m.configured}
+                  <div class="rounded-lg border {m.configured ? 'border-slate-800 bg-slate-950/40' : 'border-slate-700 bg-slate-950'} p-3 space-y-2">
+                    <div class="flex flex-wrap items-start gap-2">
+                      <div class="min-w-0 flex-1">
+                        <div class="flex flex-wrap items-baseline gap-x-2">
+                          <span class="text-sm font-semibold text-white">{m.name}</span>
+                          <span class="font-mono text-slate-400">{m.id}</span>
+                        </div>
+                        <div class="text-slate-500">
+                          {m.publisher} · license <span class="font-mono">{m.license}</span> · {m.engine}{m.architecture ? ` · ${m.architecture}` : ''}
+                        </div>
+                      </div>
+                      <div class="flex flex-wrap gap-1 justify-end">
+                        {#if m.configured}
+                          <span class="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-semibold">configured</span>
+                          {#if m.enabled === false}
+                            <span class="px-1.5 py-0.5 rounded bg-slate-700/60 text-slate-300">disabled</span>
+                          {:else if m.enabled}
+                            <span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">enabled</span>
+                          {/if}
+                        {/if}
+                        {#if m.lineup}
+                          <span class="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300">lineup</span>
+                        {/if}
+                        <span class="px-1.5 py-0.5 rounded {st.cls}">{st.label}</span>
+                      </div>
+                    </div>
+
+                    <div class="text-slate-300 leading-relaxed">{m.summary}</div>
+
+                    <div class="flex flex-wrap gap-1">
+                      {#each entryModalities(m) as mod}
+                        <span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">{mod}</span>
+                      {/each}
+                      {#each m.capabilities || [] as cap}
+                        <span class="px-1.5 py-0.5 rounded font-mono text-[10px] {cap === 'thinking' ? 'bg-orange-500/20 text-orange-300' : 'bg-violet-500/20 text-violet-300'}">{cap}</span>
+                      {/each}
+                    </div>
+
+                    {#if v?.problem}
+                      <div class="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1.5 text-rose-300">
+                        {v.problem}
+                      </div>
+                    {/if}
+
+                    <button
+                      onclick={() => (catalogOpen = { ...catalogOpen, [m.id]: !open })}
+                      class="text-indigo-300 hover:text-indigo-200 font-semibold"
+                    >
+                      {open ? '▾ Hide details' : '▸ Variants, download and config block'}
+                    </button>
+
+                    {#if open}
+                      <div class="space-y-3 border-t border-slate-800 pt-2">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <label class="text-slate-400" for="catalog-variant-{m.id}">Variant</label>
+                          <select
+                            id="catalog-variant-{m.id}"
+                            value={v?.quant}
+                            onchange={(e) => (catalogVariant = { ...catalogVariant, [m.id]: e.currentTarget.value })}
+                            class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-white font-mono"
+                          >
+                            {#each m.variants as opt (opt.quant)}
+                              <option value={opt.quant}>
+                                {opt.quant} · {gb(opt.size_bytes)}{opt.default ? ' · default' : ''}{opt.installed ? ' · installed' : ''}
+                              </option>
+                            {/each}
+                          </select>
+                          {#if v}
+                            <span class="text-slate-400">{gb(v.size_bytes)}</span>
+                            <span class="px-1.5 py-0.5 rounded {st.cls}">{st.label}</span>
+                          {/if}
+                        </div>
+                        {#if v?.note}
+                          <div class="text-slate-400 italic">{v.note}</div>
+                        {/if}
+
+                        {#if v}
+                          <div class="overflow-x-auto rounded border border-slate-800">
+                            <table class="w-full text-left font-mono text-[10px]">
+                              <tbody>
+                                {#each v.files as f}
+                                  <tr class="border-b border-slate-800/60 last:border-0">
+                                    <td class="px-2 py-1 text-slate-500">{f.role}</td>
+                                    <td class="px-2 py-1 text-slate-300 break-all">{f.local}{f.entry ? ` → ${f.entry}` : ''}</td>
+                                    <td class="px-2 py-1 text-slate-400 whitespace-nowrap">{gb(f.size)}</td>
+                                    <td class="px-2 py-1 text-slate-500">{f.platform}</td>
+                                    <td class="px-2 py-1 whitespace-nowrap {f.outdated ? 'text-amber-300' : f.present ? 'text-emerald-300' : 'text-slate-500'}">
+                                      {f.outdated ? 'outdated' : f.present ? 'present' : 'missing'}
+                                    </td>
+                                  </tr>
+                                {/each}
+                              </tbody>
+                            </table>
+                          </div>
+
+                          <div>
+                            <div class="flex items-center justify-between mb-1">
+                              <span class="text-slate-400">Download {isWindows ? '(Windows)' : ''}</span>
+                              <button
+                                onclick={() => copyText(`${m.id}:cmd`, downloadCommand(m, v))}
+                                class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200"
+                              >
+                                {catalogCopied === `${m.id}:cmd` ? 'Copied' : 'Copy'}
+                              </button>
+                            </div>
+                            <pre class="bg-slate-900 rounded-lg p-2 font-mono text-slate-200 overflow-x-auto">{downloadCommand(m, v)}</pre>
+                          </div>
+
+                          <div>
+                            <div class="flex items-center justify-between mb-1">
+                              <span class="text-slate-400">
+                                Config block {m.configured ? '(already in the config)' : '(append to the config, then restart the server)'}
+                              </span>
+                              <button
+                                onclick={() => copyText(`${m.id}:block`, v.config_block)}
+                                class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200"
+                              >
+                                {catalogCopied === `${m.id}:block` ? 'Copied' : 'Copy'}
+                              </button>
+                            </div>
+                            <pre class="bg-slate-900 rounded-lg p-2 font-mono text-[11px] text-slate-300 max-h-72 overflow-auto whitespace-pre">{v.config_block}</pre>
+                          </div>
+                        {/if}
+                      </div>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              {#if catalog}
+                <div class="text-slate-500">No catalog entry serves this modality.</div>
+              {/if}
+            {/each}
           </div>
 
         <!-- TAB 5: IMAGE GENERATION (moss-image) -->

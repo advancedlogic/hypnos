@@ -19,6 +19,26 @@ export function download(config, ids, onEvent) {
 
 export const cancel = () => invoke('models_cancel');
 
+/**
+ * The curated catalog's models the config has no block for (API-10): `[{ id, name, publisher,
+ * license, modality, additionalModalities, engine, capabilities, summary, lineup,
+ * variants: [{ quant, default, note, size, have, installed }] }]`.
+ */
+export const catalogEntries = (config) => invoke('models_catalog_entries', { config });
+
+/** The `[[models]]` block of a catalog variant, from `hypnos --catalog-block` of `binary`. */
+export const catalogBlock = (binary, id, quant) => invoke('models_catalog_block', { binary, id, quant });
+
+/**
+ * Downloads a catalog variant (events as `download`) and appends its block to the app's own
+ * config. Resolves true when added, false when stopped.
+ */
+export function addFromCatalog(config, binary, id, quant, onEvent) {
+  const channel = new Channel();
+  channel.onmessage = onEvent;
+  return invoke('models_catalog_add', { config, binary, id, quant, onEvent: channel });
+}
+
 /** Points the app's own config at `dir`, moving the old folder's files when `moveFiles`. */
 export function setDir(config, dir, moveFiles, onEvent) {
   const channel = new Channel();

@@ -501,7 +501,7 @@ pub fn is_managed<R: Runtime>(app: &AppHandle<R>, config: &Path) -> bool {
 }
 
 #[cfg(unix)]
-fn join_paths(first: &Path, var: &str) -> std::ffi::OsString {
+pub(crate) fn join_paths(first: &Path, var: &str) -> std::ffi::OsString {
     let mut paths = vec![first.to_path_buf(), first.join("deps")];
     if let Some(existing) = std::env::var_os(var) {
         paths.extend(std::env::split_paths(&existing));

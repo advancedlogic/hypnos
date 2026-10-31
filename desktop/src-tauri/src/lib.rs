@@ -1,4 +1,5 @@
 mod attachments;
+mod catalog;
 mod hypnos;
 mod images;
 mod local_server;
@@ -109,6 +110,9 @@ pub fn run() {
             models::models_download,
             models::models_cancel,
             models::models_set_dir,
+            catalog::models_catalog_entries,
+            catalog::models_catalog_block,
+            catalog::models_catalog_add,
         ])
         // Closing the window hides it into the tray unless the settings say to quit.
         .on_window_event(|window, event| {

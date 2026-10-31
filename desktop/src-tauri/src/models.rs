@@ -28,13 +28,13 @@ const HF: &str = "https://huggingface.co";
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 const USER_AGENT: &str = concat!("hypnos-desktop/", env!("CARGO_PKG_VERSION"));
 
-/// One line of `models.manifest`.
+/// One line of `models.manifest` (or one file of a catalog variant, `catalog.rs`).
 #[derive(Debug, Clone, PartialEq)]
-struct ManifestLine {
-    model: String,
-    repo: String,
-    remote: String,
-    local: String,
+pub(crate) struct ManifestLine {
+    pub(crate) model: String,
+    pub(crate) repo: String,
+    pub(crate) remote: String,
+    pub(crate) local: String,
 }
 
 /// The manifest's lines for this machine (`platform` = all, or this one), in file order.
@@ -217,7 +217,8 @@ fn resolve(lines: &[ManifestLine], listings: &BTreeMap<String, Listing>) -> Vec<
 /// Downloads in progress and the host listings of this session.
 #[derive(Default)]
 pub struct ModelFiles {
-    listings: Mutex<Option<BTreeMap<String, Listing>>>,
+    /// Per repository; a repository whose listing failed is asked again next time.
+    listings: Mutex<BTreeMap<String, Listing>>,
     cancel: Arc<AtomicBool>,
     busy: Arc<AtomicBool>,
 }
@@ -231,33 +232,41 @@ fn http() -> Result<reqwest::Client, String> {
         .map_err(|e| e.to_string())
 }
 
-/// The listings for the manifest's hosts, fetched once per session (and again after a failure).
+/// The listings for the hosts of `lines`, each fetched once per session (and again after a
+/// failure).
 async fn listings(
     state: &ModelFiles,
     lines: &[ManifestLine],
 ) -> (BTreeMap<String, Listing>, Vec<String>) {
     let mut cached = state.listings.lock().await;
-    if let Some(l) = cached.as_ref() {
-        return (l.clone(), Vec::new());
-    }
-    let Ok(client) = http() else {
-        return (BTreeMap::new(), vec!["no HTTP client".into()]);
-    };
     let repos: BTreeSet<&str> = lines.iter().map(|l| l.repo.as_str()).collect();
-    let fetched = futures::future::join_all(repos.iter().map(|r| listing(&client, r))).await;
-    let mut out = BTreeMap::new();
+    let missing: Vec<&str> = repos
+        .iter()
+        .copied()
+        .filter(|r| !cached.contains_key(*r))
+        .collect();
     let mut errors = Vec::new();
-    for (repo, result) in repos.into_iter().zip(fetched) {
-        match result {
-            Ok(l) => {
-                out.insert(repo.to_string(), l);
+    if !missing.is_empty() {
+        match http() {
+            Ok(client) => {
+                let fetched =
+                    futures::future::join_all(missing.iter().map(|r| listing(&client, r))).await;
+                for (repo, result) in missing.into_iter().zip(fetched) {
+                    match result {
+                        Ok(l) => {
+                            cached.insert(repo.to_string(), l);
+                        }
+                        Err(e) => errors.push(e),
+                    }
+                }
             }
-            Err(e) => errors.push(e),
+            Err(_) => errors.push("no HTTP client".into()),
         }
     }
-    if errors.is_empty() {
-        *cached = Some(out.clone());
-    }
+    let out = repos
+        .into_iter()
+        .filter_map(|r| cached.get(r).map(|l| (r.to_string(), l.clone())))
+        .collect();
     (out, errors)
 }
 
@@ -272,7 +281,7 @@ fn manifest_path() -> Option<PathBuf> {
     repo.is_file().then_some(repo)
 }
 
-fn read_doc(config: &Path) -> Result<toml_edit::DocumentMut, String> {
+pub(crate) fn read_doc(config: &Path) -> Result<toml_edit::DocumentMut, String> {
     std::fs::read_to_string(config)
         .map_err(|e| format!("could not read {}: {e}", config.display()))?
         .parse()
@@ -295,7 +304,7 @@ pub fn models_root(config: &Path, doc: &toml_edit::DocumentMut) -> PathBuf {
 }
 
 /// Free bytes on the volume that holds `path` (or its nearest existing parent).
-fn free_bytes(path: &Path) -> Option<u64> {
+pub(crate) fn free_bytes(path: &Path) -> Option<u64> {
     let mut p = path;
     while !p.exists() {
         p = p.parent()?;
@@ -318,7 +327,7 @@ fn free_bytes(path: &Path) -> Option<u64> {
     }
 }
 
-fn file_len(p: &Path) -> u64 {
+pub(crate) fn file_len(p: &Path) -> u64 {
     std::fs::metadata(p).map(|m| m.len()).unwrap_or(0)
 }
 
@@ -332,7 +341,7 @@ fn have(root: &Path, f: &RemoteFile) -> (u64, bool) {
     (file_len(&part_path(&dest)), false)
 }
 
-fn part_path(dest: &Path) -> PathBuf {
+pub(crate) fn part_path(dest: &Path) -> PathBuf {
     let mut name = dest.file_name().unwrap_or_default().to_os_string();
     name.push(".part");
     dest.with_file_name(name)
@@ -494,25 +503,9 @@ pub async fn models_download(
     ids: Vec<String>,
     on_event: Channel<DownloadEvent>,
 ) -> Result<(), String> {
-    if state.busy.swap(true, Ordering::SeqCst) {
-        return Err("a download is already running".into());
-    }
-    state.cancel.store(false, Ordering::SeqCst);
-    let result = download(&state, &config, &ids, &on_event).await;
-    state.busy.store(false, Ordering::SeqCst);
-    result
-}
-
-async fn download(
-    state: &ModelFiles,
-    config: &str,
-    ids: &[String],
-    on_event: &Channel<DownloadEvent>,
-) -> Result<(), String> {
+    let _guard = state.exclusive()?;
     let config = PathBuf::from(config);
     let root = models_root(&config, &read_doc(&config)?);
-    std::fs::create_dir_all(&root)
-        .map_err(|e| format!("could not create {}: {e}", root.display()))?;
     let manifest = manifest_path().ok_or("no models.manifest")?;
     let text = std::fs::read_to_string(&manifest).map_err(|e| e.to_string())?;
     let lines: Vec<ManifestLine> = parse_manifest(
@@ -522,7 +515,44 @@ async fn download(
     .into_iter()
     .filter(|l| ids.contains(&l.model))
     .collect();
-    let (listings, errors) = listings(state, &lines).await;
+    download_lines(&state, &root, &lines, &ids, &on_event)
+        .await
+        .map(|_| ())
+}
+
+/// Marks the one download (or folder move) that may run; cleared on drop.
+pub(crate) struct Exclusive(Arc<AtomicBool>);
+
+impl Drop for Exclusive {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+impl ModelFiles {
+    /// Starts the one download of the app, with a fresh cancel flag.
+    pub(crate) fn exclusive(&self) -> Result<Exclusive, String> {
+        if self.busy.swap(true, Ordering::SeqCst) {
+            return Err("a download is already running".into());
+        }
+        self.cancel.store(false, Ordering::SeqCst);
+        Ok(Exclusive(self.busy.clone()))
+    }
+}
+
+/// Downloads the missing files of `lines` into `root`. `Ok(false)`: cancelled, the `.part`
+/// files stay for a resume.
+pub(crate) async fn download_lines(
+    state: &ModelFiles,
+    root: &Path,
+    lines: &[ManifestLine],
+    ids: &[String],
+    on_event: &Channel<DownloadEvent>,
+) -> Result<bool, String> {
+    let root = root.to_path_buf();
+    std::fs::create_dir_all(&root)
+        .map_err(|e| format!("could not create {}: {e}", root.display()))?;
+    let (listings, errors) = listings(state, lines).await;
     if let Some(l) = lines
         .iter()
         .find(|l| l.remote.ends_with('/') && !listings.contains_key(&l.repo))
@@ -534,7 +564,7 @@ async fn download(
             errors.join("; ")
         ));
     }
-    let todo: Vec<RemoteFile> = resolve(&lines, &listings)
+    let todo: Vec<RemoteFile> = resolve(lines, &listings)
         .into_iter()
         .filter(|f| !have(&root, f).1)
         .collect();
@@ -564,14 +594,14 @@ async fn download(
             Fetched::Complete => {}
             Fetched::Cancelled => {
                 let _ = on_event.send(DownloadEvent::Cancelled);
-                return Ok(());
+                return Ok(false);
             }
         }
     }
     let _ = on_event.send(DownloadEvent::Done {
         models: ids.to_vec(),
     });
-    Ok(())
+    Ok(true)
 }
 
 enum Fetched {
@@ -802,7 +832,7 @@ fn move_tree(from: &Path, to: &Path, on_event: &Channel<MoveEvent>) -> Result<()
     Ok(())
 }
 
-fn tree_size(p: &Path) -> u64 {
+pub(crate) fn tree_size(p: &Path) -> u64 {
     if p.is_dir() {
         std::fs::read_dir(p)
             .map(|rd| {

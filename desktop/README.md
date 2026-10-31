@@ -114,6 +114,14 @@ app's commands.
   without touching which models are enabled. For another config the folder is its `models_dir`
   (or `<config folder>/models`) and is changed in the file. Entries no `[[models]]` block uses
   (`docling-gpu`) are hidden.
+  Below the lineup, **Catalog** lists the models of the curated `models.catalog.toml` (bundled
+  beside the manifest; read by the app, so it works while the server is stopped) that the config
+  has no block for: name, publisher, license, modalities, thinking / tools, a variant
+  (quantization) with its size and what is on disk. For the app's own config, Add downloads the
+  variant with the same downloader, appends its `[[models]]` block (rendered by the server
+  binary's `hypnos --catalog-block <id>:<quant>`) to the config, refusing an id it already has,
+  and restarts the local server. For another config, Config block shows the block with a Copy
+  button.
 
 - **Menu bar / tray icon**: the logo with a dot for the server's state (green ready, amber
   loading, red unreachable or key refused, grey connecting). A left click shows or hides the

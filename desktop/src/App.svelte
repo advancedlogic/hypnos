@@ -49,6 +49,8 @@
   let localStatus = $state(null);
   /** The Models dialog (DESK-17); `modelsFirstRun` adds the welcome line. */
   let modelsOpen = $state(false);
+  /** Which tab the Models dialog opens on: `lineup` or `catalog`. */
+  let modelsTab = $state('lineup');
   let modelsFirstRun = $state(false);
   const MODELS_PROMPTED_KEY = 'modelsPrompted';
 
@@ -141,6 +143,7 @@
       if (!cat.managed || cat.models.some((m) => m.installed)) return;
       await save(MODELS_PROMPTED_KEY, true);
       modelsFirstRun = true;
+      modelsTab = 'lineup';
       modelsOpen = true;
     } catch (e) {
       console.warn('models catalog', e);
@@ -333,6 +336,24 @@
           <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
         </svg>
       </button>
+      {#if localSettings?.config}
+        <button
+          class="flex items-center gap-1.5 text-xs rounded-md px-2 py-1 text-slate-400 hover:text-slate-100 hover:bg-slate-800"
+          onclick={() => {
+            modelsFirstRun = false;
+            modelsTab = 'catalog';
+            modelsOpen = true;
+          }}
+          title="Models: the lineup and the catalog of tested models to add"
+          aria-label="Models"
+        >
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
+            <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
+          </svg>
+          <span>Models</span>
+        </button>
+      {/if}
       {#if localSettings}
         <button
           class="relative p-1.5 rounded-md text-slate-400 hover:text-slate-100 hover:bg-slate-800"
@@ -408,6 +429,7 @@
     onmodels={() => {
       localOpen = false;
       modelsFirstRun = false;
+      modelsTab = 'lineup';
       modelsOpen = true;
     }}
     onclose={() => (localOpen = false)}
@@ -415,7 +437,7 @@
 {/if}
 
 {#if modelsOpen && localSettings?.config}
-  <Models config={localSettings.config} firstRun={modelsFirstRun} onchanged={restartLocal}
+  <Models config={localSettings.config} binary={localSettings.binary} firstRun={modelsFirstRun} tab={modelsTab} onchanged={restartLocal}
     onclose={() => (modelsOpen = false)} />
 {/if}
 
