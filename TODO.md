@@ -57,16 +57,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Backlog
 
-- [ ] 🟪 **API-12** `P1` Hardware and model advisor
-      "I have 24 GB of VRAM and 64 GB of RAM and need chat, voice and documents": recommend a
-      lineup from the catalog (API-10), with variants, context sizes, slots, memory policy
-      (`keep_warm_in_ram`, priorities, `moe_offload`) and the profile (MEM-7), and say whether the
-      latency targets are feasible (from the bench reports' measured numbers). Reuse the planner:
-      run `compute_optimal_placement` / the booking formula over candidate lineups instead of a
-      second model of memory. Deliver as `hypnos advise --vram 24G --ram 64G --needs chat,voice,
-      documents` (detected hardware by default), `POST /v1/advisor`, and a rendered config (or
-      `POST /v1/models` calls, API-11) the user can apply.
-
 - [ ] 🩵 **DESK-18** `P1` Guided setup: detect, recommend, install, demonstrate
       First run of the desktop app (and the playground) should need no knowledge of pinned
       memory, quantization or KV caches: detect the hardware, recommend a lineup (API-12),
@@ -171,6 +161,23 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🟪 **API-12** `P1` Hardware and model advisor
+      "I have 24 GB of VRAM and 64 GB of RAM and need chat, voice and documents": recommend a
+      lineup from the catalog (API-10), with variants, context sizes, slots, memory policy
+      (`keep_warm_in_ram`, priorities, `moe_offload`) and the profile (MEM-7), and say whether the
+      latency targets are feasible (from the bench reports' measured numbers). Reuse the planner:
+      run `compute_optimal_placement` / the booking formula over candidate lineups instead of a
+      second model of memory. Deliver as `hypnos advise --vram 24G --ram 64G --needs chat,voice,
+      documents` (detected hardware by default), `POST /v1/advisor`, and a rendered config (or
+      `POST /v1/models` calls, API-11) the user can apply.
+      Done 2026-10-31: `hypnos-memory/src/advisor.rs` (budgets as the server derives them, each
+      candidate placed with the scheduler's planner, catalog `[models.estimate]` for sizing
+      without files, an exhaustive search over entries x variants scoring model size per need and
+      interactive co-residency), `hypnos advise` and `POST /v1/advisor` (a lineup, tiers,
+      priorities, slots, warnings, rough load times, a config file), SDK `advise`. Latency is only
+      estimated from bandwidth (no per-machine benchmarks yet); the UIs come with DESK-18.
+      (commits c5b9309, 699186f)
 
 - [x] 🟪 **API-11** `P2` Add, remove and replace models at runtime (a dynamic model pool)
       Requests already route by model name (`acquire_model(id)` loads or evicts on demand); what
