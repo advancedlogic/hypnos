@@ -1,6 +1,6 @@
 <script>
   import { onMount, tick } from 'svelte';
-  import { open as openDialog } from '@tauri-apps/plugin-dialog';
+  import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
   import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { listen } from '@tauri-apps/api/event';
   import Markdown from './Markdown.svelte';
@@ -32,6 +32,9 @@
   let speakingId = $state(null);
   let speechError = $state(null);
   let speakTimer;
+  /** Ticks while an image is being made, for the elapsed time. */
+  let now = $state(Date.now());
+  let imageNotice = $state(null);
   const streaming = new Set();
 
   let chat = $derived(store.current);
@@ -123,6 +126,71 @@
       return localStorage.getItem(key) === 'true';
     } catch {
       return false;
+    }
+  }
+
+  let imaging = $derived(chat?.messages.some((m) => m.tool) ?? false);
+  $effect(() => {
+    if (!imaging) return;
+    const t = setInterval(() => (now = Date.now()), 1000);
+    return () => clearInterval(t);
+  });
+
+  /** Where the image model sits now, to say whether it has to load (and may unload others). */
+  let imageModel = $state(null);
+  $effect(() => {
+    if (!imaging) return;
+    api.route('image_generation').then(async (id) => {
+      const all = await api.models();
+      imageModel = all.find((m) => m.id === id) ?? null;
+    }).catch(() => (imageModel = null));
+  });
+
+  function imageProgress(tool) {
+    const secs = Math.max(0, Math.round((now - tool.startedAt) / 1000));
+    let where = '';
+    if (imageModel && imageModel.current_tier !== 'tier1_gpu_vram') {
+      where = ` · loading ${imageModel.id} from ${tierName(imageModel.current_tier)}, which may unload the chat model`;
+    } else if (imageModel) {
+      where = ` · ${imageModel.id}`;
+    }
+    return `Generating the image… ${secs} s${where}`;
+  }
+
+  function imageButton() {
+    const prompt = input.trim();
+    if (!prompt || !chat) return;
+    input = '';
+    tick().then(autosize);
+    store.generateImage(chat, prompt);
+  }
+
+  async function saveImage(image) {
+    const name = image.prompt.replace(/[^\w\s-]+/g, '').trim().split(/\s+/).slice(0, 6).join('-') || 'image';
+    const path = await saveDialog({ defaultPath: `${name}.jpg`, filters: [{ name: 'JPEG image', extensions: ['jpg', 'jpeg'] }] });
+    if (!path) return;
+    try {
+      await api.saveDataUrl(path, image.dataUrl);
+      imageNotice = `Saved to ${path}.`;
+    } catch (e) {
+      imageNotice = api.errorMessage(e);
+    }
+  }
+
+  async function copyImage(image) {
+    try {
+      const img = new Image();
+      img.src = image.dataUrl;
+      await img.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      imageNotice = 'Image copied.';
+    } catch (e) {
+      imageNotice = `Could not copy the image: ${e?.message ?? e}`;
     }
   }
 
@@ -438,9 +506,29 @@
             </div>
           {:else}
             <div class="group">
+              {#if message.image}
+                <figure class="mb-3 space-y-1.5">
+                  <img src={message.image.dataUrl} alt={message.image.prompt} class="max-w-md w-full rounded-xl border border-slate-800" />
+                  <figcaption class="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
+                    <span class="max-w-md truncate" title={message.image.prompt}>{message.image.prompt}</span>
+                    <span>{message.image.model} · {Math.round(message.image.seconds)} s</span>
+                    <button class="hover:text-slate-200" onclick={() => saveImage(message.image)}>Save</button>
+                    <button class="hover:text-slate-200" onclick={() => copyImage(message.image)}>Copy</button>
+                    <button class="hover:text-slate-200 disabled:opacity-40" onclick={() => store.regenerateImage(chat, message)} disabled={running || serverState !== 'ready'}>Regenerate</button>
+                  </figcaption>
+                </figure>
+                {#if imageNotice}<p class="-mt-2 mb-3 text-[11px] text-slate-400">{imageNotice}</p>{/if}
+              {/if}
+              {#if message.tool}
+                <div class="mb-2 flex items-center gap-2 text-sm text-slate-400">
+                  <span class="w-3.5 h-3.5 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin"></span>
+                  <span>{imageProgress(message.tool)}</span>
+                </div>
+                <p class="mb-2 text-[11px] text-slate-500 max-w-md">“{message.tool.prompt}”</p>
+              {/if}
               {#if message.content}
                 <Markdown text={message.content} />
-              {:else if message.pending}
+              {:else if message.pending && !message.tool}
                 <div class="flex items-center gap-2 text-sm text-slate-500">
                   <span class="flex gap-1">
                     <span class="w-1.5 h-1.5 rounded-full bg-slate-500 animate-bounce"></span>
@@ -537,6 +625,19 @@
         aria-label="Attach files"
       >
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.5 3.5 0 015 5l-8.6 8.6a2 2 0 01-2.8-2.8l7.9-7.9" /></svg>
+      </button>
+      <button
+        class="w-8 h-8 shrink-0 rounded-full text-slate-400 hover:text-slate-100 hover:bg-slate-800 flex items-center justify-center disabled:opacity-30"
+        onclick={imageButton}
+        disabled={!input.trim() || running || serverState !== 'ready'}
+        title="Generate an image from this text (or type /image …)"
+        aria-label="Generate an image"
+      >
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          <circle cx="9" cy="10" r="2" />
+          <path d="M21 16l-5-5-9 9" />
+        </svg>
       </button>
       <textarea
         onpaste={onPaste}

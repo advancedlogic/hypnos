@@ -78,17 +78,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
 
-- [ ] 🩵 **DESK-11** `P2` Image-generation tool in the chat
-      The server ignores `tools`, so the app runs the tool loop: the system prompt describes
-      `generate_image(prompt, size)` and the reply format for calling it; when the chat
-      model's answer is such a call, the app calls `POST /v1/images/generations` on the
-      `image_generation` model (MOSS-Image), shows the image inline with its prompt (save,
-      copy, regenerate), and feeds a short result back so the model can comment. An explicit
-      "Image" button (or `/image <prompt>`) skips the model. Show progress during the load
-      and the steps (the model may need a tier switch and evict the chat model: say so).
-      Generated images are saved with the chat. After DESK-6; API-9 would make the call
-      detection robust.
-
 - [ ] 🟪 **API-9** `P3` Tool calling on `/v1/chat/completions`
       Accept OpenAI `tools` / `tool_choice` and return `tool_calls` (and `finish_reason:
       tool_calls`), using llama.cpp's chat-template tool support for the models that have it;
@@ -110,6 +99,28 @@ _No cards yet._
 
 ## Done
 
+- [x] 🩵 **DESK-11** `P2` Image-generation tool in the chat
+      The server ignores `tools`, so the app runs the tool loop: the system prompt describes
+      `generate_image(prompt, size)` and the reply format for calling it; when the chat
+      model's answer is such a call, the app calls `POST /v1/images/generations` on the
+      `image_generation` model (MOSS-Image), shows the image inline with its prompt (save,
+      copy, regenerate), and feeds a short result back so the model can comment. An explicit
+      "Image" button (or `/image <prompt>`) skips the model. Show progress during the load
+      and the steps (the model may need a tier switch and evict the chat model: say so).
+      Generated images are saved with the chat. After DESK-6; API-9 would make the call
+      detection robust.
+      Done: `src-tauri/src/images.rs`: `TOOL_INSTRUCTION` (a ```generate_image block with
+      JSON prompt and size), `ToolGate` (passes an ordinary answer on within its first
+      characters, holds a tool call whole), lenient `parse_call`, `generate` (routed
+      `image_generation` model, PNG -> 1024 px JPEG data URL), `hypnos_generate_image`,
+      `save_data_url`. `hypnos_chat(tools)` adds the instruction only when a model
+      generates images, emits `toolCall` / `image`, then a comment round without the
+      instruction; earlier images go back to the model as their prompt. Chat: image with
+      prompt, Save / Copy (PNG to the clipboard) / Regenerate; progress with elapsed time and
+      the image model's tier; Image button and `/image`; a settings switch. Live test: the
+      chat model wrote an apple prompt, MOSS-Image made it in 134 s, comment followed, no
+      block leaked.
+
 - [x] 🩵 **DESK-10** `P2` Speaker button: read answers aloud
       (Text-to-speech; DESK-9 covers speech-to-text.) A speaker toggle in the chat header
       reads every new answer aloud as it streams: split into sentences, synthesize each with
@@ -126,7 +137,7 @@ _No cards yet._
       toggle in the header (only answers streamed in this window are read), Read aloud / Stop
       reading per answer, stop on send and chat switch; voice (Kokoro ids) and speed in the
       connection dialog. Live test synthesizes and decodes each sentence (speakers not used);
-      playback itself not yet heard.
+      playback itself not yet heard. (commit 8cb22ca)
 
 - [x] 🩵 **DESK-9** `P1` Microphone button: speak a message
       Mic button in the composer: press to record, press again (or release, hold mode) to

@@ -42,6 +42,13 @@ app's commands.
   sentence. "Read aloud" under any answer reads it on demand; sending a message, switching
   chats or "Stop reading" stops it. Code blocks are announced ("Code block.") rather than
   read, links are read as their text. Voice and speed are in the connection dialog.
+- **Images**: ask the chat model for a picture ("draw a lighthouse at dawn") and it writes a
+  prompt for the image model (MOSS-Image), which the app runs; the image appears in the answer
+  with the prompt, Save, Copy and Regenerate, followed by a one-line comment. The Image button
+  in the composer (or `/image <prompt>`) skips the chat model. A generation takes from tens of
+  seconds to a few minutes, longer when the image model must load first, which may unload the
+  chat model; the answer shows the elapsed time and where the model is loading from. The
+  connection dialog can turn the chat model's access to images off.
 - **Under each answer:** decode speed, time to first token, tokens, and the tier the model was
   loaded from when it was not on the GPU already.
 - **Stats panel** (the right side, toggled with the header button or Cmd/Ctrl+.): server version
@@ -150,6 +157,7 @@ desktop/
     ├── src/web.rs            # fetch a URL, convert it, save markdown or the original
     ├── src/mic.rs            # record with cpal on its own thread, then transcribe
     ├── src/tts.rs            # markdown to speech text, sentence queue, rodio playback
+    ├── src/images.rs         # the image tool: instruction, ToolGate, generation, save
     ├── Info.plist            # macOS: NSMicrophoneUsageDescription
     ├── src/local_server.rs   # find, start, stop and log a hypnos process (health via hypnos-client)
     ├── capabilities/         # what the window may call: core + store, no HTTP
@@ -164,7 +172,9 @@ one-page sample.pdf containing "pelican"> cargo test attachments -- --ignored` p
 attachments and asks a vision model about them; `cargo test web -- --ignored` (same URL, needs
 the network) reads example.com and a PDF and saves both; `cargo test mic -- --ignored` records
 1.5 s from the default microphone; `cargo test tts -- --ignored` synthesizes and decodes speech
-(without playing it); the local-server test starts one itself: `HYPNOS_TEST_BINARY=../../backend/target/release/hypnos HYPNOS_TEST_CONFIG=<config with
+(without playing it); `cargo test images::tests::the_chat -- --ignored` asks for a picture and
+runs the whole tool loop (it loads the image model, a minute or more); the local-server test
+starts one itself: `HYPNOS_TEST_BINARY=../../backend/target/release/hypnos HYPNOS_TEST_CONFIG=<config with
 one small model> cargo test -- --ignored` (it uses port 9997).
 
 To regenerate the icons after changing `src-tauri/icons/app-icon.png`:

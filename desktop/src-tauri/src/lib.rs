@@ -1,5 +1,6 @@
 mod attachments;
 mod hypnos;
+mod images;
 mod local_server;
 mod mic;
 mod tts;
@@ -80,6 +81,8 @@ pub fn run() {
             mic::mic_cancel,
             tts::speak,
             tts::speak_stop,
+            images::hypnos_generate_image,
+            images::save_data_url,
             local_server::local_server_detect,
             local_server::local_server_start,
             local_server::local_server_stop,

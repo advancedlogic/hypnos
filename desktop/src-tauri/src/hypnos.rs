@@ -12,10 +12,11 @@ use hypnos_client::{
 };
 
 use crate::attachments::Attachment;
+use crate::images::{generate, Generated, ToolGate, TOOL_INSTRUCTION};
 use serde::{Deserialize, Serialize};
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
-use tauri::State;
+use tauri::{AppHandle, Manager, Runtime, State};
 use tokio::sync::{Mutex, RwLock};
 
 use futures::StreamExt;
@@ -292,6 +293,9 @@ pub struct InMessage {
     pub content: String,
     #[serde(default)]
     pub attachments: Vec<Attachment>,
+    /// Set on an answer that was a generated image (DESK-11): the prompt it was made from.
+    #[serde(default)]
+    pub image_prompt: Option<String>,
 }
 
 impl InMessage {
@@ -307,6 +311,9 @@ impl InMessage {
     /// user's words, images (and video frames) as `image_url` parts when the model can see them.
     fn to_chat_message(&self, vision: bool) -> ChatMessage {
         let mut text = self.content.clone();
+        if let Some(prompt) = &self.image_prompt {
+            text = format!("[An image was generated from the prompt: \"{prompt}\"]\n\n{text}");
+        }
         let mut images = Vec::new();
         for a in &self.attachments {
             match a {
@@ -398,6 +405,10 @@ pub enum ChatEvent {
     Model { id: String, reason: String },
     /// A piece of the answer.
     Delta { text: String },
+    /// The chat model asked for an image; it is being generated.
+    ToolCall { prompt: String, size: String },
+    /// The generated image.
+    Image(Box<Generated>),
     /// The answer is complete.
     #[serde(rename_all = "camelCase")]
     Done {
@@ -416,12 +427,18 @@ pub struct ChatOutcome {
 /// Streams an answer over `on_event`. Resolves when the answer is complete, failed, or was
 /// cancelled with [`hypnos_chat_cancel`] (dropping the stream closes the connection, which is
 /// how the server is told to stop).
+///
+/// With `tools`, the chat model may ask for an image (see `images.rs`): the request never shows
+/// as text, the image is generated and sent as an `image` event, and the model then comments on
+/// it in a short second round.
 #[tauri::command]
-pub async fn hypnos_chat(
+pub async fn hypnos_chat<R: Runtime>(
+    app: AppHandle<R>,
     hypnos: State<'_, Hypnos>,
     request_id: String,
     model: String,
     messages: Vec<InMessage>,
+    tools: Option<bool>,
     on_event: Channel<ChatEvent>,
 ) -> CmdResult<ChatOutcome> {
     let client = hypnos.client().await?;
@@ -453,11 +470,18 @@ pub async fn hypnos_chat(
         model = vision;
     }
     let vision = can_see(&model);
-    let messages = messages.iter().map(|m| m.to_chat_message(vision)).collect();
-    let request = ChatRequest::new(model, messages);
+    let messages: Vec<ChatMessage> = messages.iter().map(|m| m.to_chat_message(vision)).collect();
+    let image_tool = tools.unwrap_or(false) && models.iter().any(|m| serves(m, "image_generation"));
     let (tx, rx) = tokio::sync::oneshot::channel();
     let task = tauri::async_runtime::spawn(async move {
-        let _ = tx.send(stream_answer(&client, &request, &on_event).await);
+        let result = if image_tool {
+            answer_with_image_tool(&app, &client, &model, messages, &on_event).await
+        } else {
+            stream_answer(&client, &ChatRequest::new(model, messages), &on_event)
+                .await
+                .map(|_| ())
+        };
+        let _ = tx.send(result);
     });
     hypnos.streams.lock().await.insert(request_id.clone(), task);
     let result = rx.await;
@@ -469,6 +493,7 @@ pub async fn hypnos_chat(
     }
 }
 
+/// Streams one answer and ends it with `Done`.
 async fn stream_answer(
     client: &Client,
     request: &ChatRequest,
@@ -484,12 +509,78 @@ async fn stream_answer(
             }
         }
     }
+    send_done(&stream, on_event);
+    Ok(())
+}
+
+fn send_done(stream: &hypnos_client::ChatStream, on_event: &Channel<ChatEvent>) {
     let _ = on_event.send(ChatEvent::Done {
         telemetry: stream.telemetry().cloned().map(Box::new),
         usage: stream.usage().cloned(),
         finish_reason: stream.finish_reason().map(str::to_string),
     });
-    Ok(())
+}
+
+/// The first round runs with the tool instruction and its start held back by a [`ToolGate`];
+/// a tool call becomes an image and a second, instruction-free round for the model's comment.
+async fn answer_with_image_tool<R: Runtime>(
+    app: &AppHandle<R>,
+    client: &Client,
+    model: &str,
+    messages: Vec<ChatMessage>,
+    on_event: &Channel<ChatEvent>,
+) -> CmdResult<()> {
+    let mut with_tool = messages.clone();
+    match with_tool.first_mut() {
+        Some(ChatMessage {
+            role,
+            content: Content::Text(system),
+        }) if role == "system" => {
+            system.push_str("\n\n");
+            system.push_str(TOOL_INSTRUCTION);
+        }
+        _ => with_tool.insert(0, ChatMessage::system(TOOL_INSTRUCTION)),
+    }
+    let mut stream = client
+        .chat_stream(&ChatRequest::new(model, with_tool))
+        .await?;
+    let mut gate = ToolGate::default();
+    {
+        let mut pieces = stream.text();
+        while let Some(piece) = pieces.next().await {
+            if let Some(text) = gate.feed(&piece?) {
+                if on_event.send(ChatEvent::Delta { text }).is_err() {
+                    return Ok(());
+                }
+            }
+        }
+    }
+    let call = match gate.finish() {
+        Ok(call) => call,
+        Err(held) => {
+            if !held.is_empty() {
+                let _ = on_event.send(ChatEvent::Delta { text: held });
+            }
+            send_done(&stream, on_event);
+            return Ok(());
+        }
+    };
+    let _ = on_event.send(ChatEvent::ToolCall {
+        prompt: call.prompt.clone(),
+        size: call.size.clone(),
+    });
+    let image = generate(&app.state::<Hypnos>(), &call.prompt, Some(&call.size)).await?;
+    let _ = on_event.send(ChatEvent::Image(Box::new(image)));
+
+    let mut follow_up = messages;
+    follow_up.push(ChatMessage::assistant(format!(
+        "[I generated an image from the prompt: \"{}\"]",
+        call.prompt
+    )));
+    follow_up.push(ChatMessage::user(
+        "[The image is now shown to the user. In one short sentence, tell them it is ready and what it shows; do not claim to see it and do not ask a question.]",
+    ));
+    stream_answer(client, &ChatRequest::new(model, follow_up), on_event).await
 }
 
 #[tauri::command]
@@ -590,6 +681,7 @@ mod tests {
                     height: 1,
                 },
             ],
+            image_prompt: None,
         };
         let seen = serde_json::to_value(msg.to_chat_message(true)).unwrap();
         let text = seen["content"][0]["text"].as_str().unwrap();
@@ -656,13 +748,16 @@ mod tests {
                 role: "user".into(),
                 content: s.into(),
                 attachments: vec![],
+                image_prompt: None,
             }]
         };
         let outcome = hypnos_chat(
+            app.handle().clone(),
             app.state(),
             "r1".into(),
             model.clone(),
             message("Reply with exactly: hello from rust"),
+            None,
             channel,
         )
         .await
@@ -679,10 +774,12 @@ mod tests {
         let (channel, text, done) = collect();
         let state = app.state::<Hypnos>();
         let chat = hypnos_chat(
+            app.handle().clone(),
             state.clone(),
             "r2".into(),
             model,
             message("Count from 1 to 500, one number per line."),
+            None,
             channel,
         );
         let cancel = async {
@@ -697,10 +794,12 @@ mod tests {
         // Errors come back as sentences.
         let (channel, _, _) = collect();
         let err = hypnos_chat(
+            app.handle().clone(),
             app.state(),
             "r3".into(),
             "no-such-model".into(),
             message("hi"),
+            None,
             channel,
         )
         .await

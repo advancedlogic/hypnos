@@ -39,6 +39,7 @@ export class ChatStore {
       for (const m of chat.messages) {
         if (!m.pending) continue;
         delete m.pending;
+        delete m.tool;
         m.stopped = true;
       }
     }
@@ -94,6 +95,8 @@ export class ChatStore {
   /** `attachments`: prepared by `attachFromPath` / `attachFromBytes` (they are saved with the chat). */
   async send(chat, text, attachments = []) {
     if ((!text.trim() && attachments.length === 0) || this.isRunning(chat.id)) return;
+    const command = text.match(/^\/image\s+([\s\S]+)/);
+    if (command && attachments.length === 0) return this.generateImage(chat, command[1].trim());
     if (chat.messages.length === 0) chat.title = titleFrom(text || attachments[0].name);
     chat.messages.push({ role: 'user', content: text, ...(attachments.length ? { attachments } : {}) });
     await this.#generate(chat);
@@ -108,7 +111,8 @@ export class ChatStore {
 
   stop(id) {
     const requestId = this.running[id];
-    if (requestId) api.cancelChat(requestId);
+    // A direct image request cannot be cancelled half way; a chat (with or without the tool) can.
+    if (requestId && requestId !== 'image') api.cancelChat(requestId);
   }
 
   async #generate(chat) {
@@ -122,12 +126,23 @@ export class ChatStore {
 
     const history = chat.messages
       .slice(0, -1)
-      .filter((m) => !m.error && (m.content || m.attachments?.length))
-      .map(({ role, content, attachments }) => ({ role, content, attachments: attachments ?? [] }));
+      .filter((m) => !m.error && (m.content || m.attachments?.length || m.image))
+      .map(({ role, content, attachments, image }) => ({
+        role,
+        content: content ?? '',
+        attachments: attachments ?? [],
+        image_prompt: image?.prompt ?? null,
+      }));
     if (chat.system.trim()) history.unshift({ role: 'system', content: chat.system });
 
     try {
       const { cancelled } = await api.chat(requestId, chat.model, history, {
+        tools: api.imageToolOn(),
+        onToolCall: ({ prompt, size }) => (answer.tool = { prompt, size, startedAt: Date.now() }),
+        onImage: (image) => {
+          answer.image = image;
+          delete answer.tool;
+        },
         onModel: (id, reason) => {
           answer.model = id;
           answer.note = `answered by ${id}: ${reason}`;
@@ -144,6 +159,43 @@ export class ChatStore {
       answer.error = api.errorMessage(e);
     } finally {
       delete answer.pending;
+      delete this.running[chat.id];
+      chat.updatedAt = Date.now();
+      this.#persist();
+    }
+  }
+
+  /** The Image button and `/image <prompt>`: an image straight from the image model. */
+  async generateImage(chat, prompt) {
+    if (!prompt || this.isRunning(chat.id)) return;
+    if (chat.messages.length === 0) chat.title = titleFrom(prompt);
+    chat.messages.push({ role: 'user', content: `/image ${prompt}` });
+    chat.messages.push({ role: 'assistant', content: '', pending: true, tool: { prompt, startedAt: Date.now() } });
+    await this.#makeImage(chat, chat.messages.at(-1), prompt);
+  }
+
+  /** Another image from the same prompt, in place. */
+  async regenerateImage(chat, answer) {
+    if (!answer.image || this.isRunning(chat.id)) return;
+    const { prompt, size } = answer.image;
+    answer.pending = true;
+    answer.tool = { prompt, size, startedAt: Date.now() };
+    delete answer.error;
+    await this.#makeImage(chat, answer, prompt, size);
+  }
+
+  async #makeImage(chat, answer, prompt, size) {
+    this.running[chat.id] = 'image';
+    this.#bumpToTop(chat);
+    try {
+      answer.image = await api.generateImage(prompt, size);
+      answer.model = answer.image.model;
+      if (answer.image.telemetry) this.lastTelemetry = { model: answer.image.model, telemetry: answer.image.telemetry };
+    } catch (e) {
+      answer.error = api.errorMessage(e);
+    } finally {
+      delete answer.pending;
+      delete answer.tool;
       delete this.running[chat.id];
       chat.updatedAt = Date.now();
       this.#persist();

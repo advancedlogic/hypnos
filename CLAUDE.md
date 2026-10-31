@@ -253,7 +253,10 @@ vision model when the new message has images. `web.rs` fetches URLs on the Rust 
 `save_text` / `url_download` write to a path from the save dialog. `mic.rs` records with `cpal`
 on a thread of its own (CoreAudio streams are not `Send`), emits `mic-level`, and transcribes on
 stop. `tts.rs` turns an answer into speakable sentences (`speech_text`, `sentences`), synthesizes
-them in order and plays them on a rodio player thread; `speak` takes the text so far per call. `[profile.release.build-override] strip = false` in its Cargo.toml works around stripped
+them in order and plays them on a rodio player thread; `speak` takes the text so far per call.
+`images.rs` is the app-side tool loop (the server ignores `tools`, API-9): `TOOL_INSTRUCTION` in
+the system prompt, a `ToolGate` that holds back an answer's start until it knows whether it is a
+```generate_image block, then the image, an `image` event and a short comment round. `[profile.release.build-override] strip = false` in its Cargo.toml works around stripped
 proc-macro dylibs that rustc cannot load on macOS 27 / Xcode 27.2 (BUG-5). The real-server tests are `#[ignore]`d (`HYPNOS_TEST_URL`;
 `HYPNOS_TEST_BINARY` / `HYPNOS_TEST_CONFIG`). `get_api_key` / `set_api_key` keep the API key in
 the OS keychain (`keyring`), keyed by origin; chats and the server URL live in `tauri-plugin-store`. `ChatStore`

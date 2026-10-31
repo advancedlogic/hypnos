@@ -14,6 +14,7 @@
   const prefs = api.voicePrefs();
   let voice = $state(prefs.voice);
   let speed = $state(prefs.speed);
+  let imageTool = $state(api.imageToolOn());
   // Kokoro voices (any id the server knows works; OpenAI names are mapped).
   const VOICES = ['af_heart', 'af_bella', 'af_nova', 'af_sarah', 'am_adam', 'am_michael', 'bf_emma', 'bm_george'];
 
@@ -75,6 +76,7 @@
     try {
       const picked = Object.fromEntries(Object.entries(chosen).filter(([, id]) => id));
       api.setVoicePrefs({ voice: voice.trim(), speed: Number(speed) });
+      api.setImageTool(imageTool);
       await onsave({ url: normalized, apiKey: apiKey.trim() }, picked);
     } catch (err) {
       result = { text: `Could not save: ${err?.message ?? err}`, tone: 'text-rose-300' };
@@ -149,6 +151,11 @@
         </div>
       </div>
     {/if}
+
+    <label class="flex items-center gap-2 pt-1 text-xs text-slate-400">
+      <input type="checkbox" bind:checked={imageTool} class="accent-indigo-500" />
+      Let the chat model create images (when the server has an image model)
+    </label>
 
     <div class="space-y-2 pt-1">
       <h3 class="text-xs text-slate-400">Reading aloud</h3>

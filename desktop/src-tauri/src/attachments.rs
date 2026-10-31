@@ -582,10 +582,19 @@ mod tests {
             role: "user".into(),
             content: "Answer with one word: what colour fills this image? Then say the secret word from the document.".into(),
             attachments: vec![image, doc],
+            image_prompt: None,
         };
-        hypnos_chat(app.state(), "a1".into(), model, vec![message], channel)
-            .await
-            .unwrap();
+        hypnos_chat(
+            app.handle().clone(),
+            app.state(),
+            "a1".into(),
+            model,
+            vec![message],
+            None,
+            channel,
+        )
+        .await
+        .unwrap();
         let answer = text.lock().unwrap().to_lowercase();
         assert!(answer.contains("red"), "{answer}");
         assert!(answer.contains("pelican"), "{answer}");
