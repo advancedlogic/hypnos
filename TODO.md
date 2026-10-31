@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 2  | 10  | 5   | 6   | 9    | 6   | 10    | 7   | 3    | 14   |
+| 2  | 11  | 5   | 6   | 9    | 6   | 10    | 7   | 3    | 14   |
 
 ---
 
@@ -77,6 +77,17 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       `@hypnos` included), add the tokens as repository secrets (`PYPI_TOKEN` or trusted
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
+
+- [ ] 🟪 **API-10** `P2` Hugging Face model inventory so users can bring their own models
+      A curated inventory of Hugging Face repos/files Hypnos can run, grouped by modality: text,
+      vision, speech-to-text, text-to-speech, image generation, embedding. Each entry names the
+      engine and format it needs (GGUF for llama.cpp incl. the mmproj for vision/audio-in, GGUF or
+      safetensors for sd.cpp, ONNX + voices for Kokoro), quantizations, size and the matching
+      `[[models]]` / `[models.arch]` block. Deliver as a machine-readable file next to
+      `models.manifest`, a `GET /v1/models/catalog` route, `./run.sh models <hf-repo>` download
+      with checksum, and a picker in the frontend / desktop settings that writes the config block.
+      Decide first: curated list vs. live HF search filtered by `gguf` tag + pipeline type, and
+      how unknown architectures are validated (`gguf_inspector.rs`) before they are offered.
 
 - [ ] 🟫 **MEM-5** `P2` Expert offload for MoE models: experts on the CPU, the rest on the GPU
       Design in docs/moe.md. Step 1, benchmark on the RTX 5090 laptop: the 26B full GPU, a layer
