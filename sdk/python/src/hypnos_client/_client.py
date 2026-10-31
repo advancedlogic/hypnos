@@ -47,6 +47,7 @@ from .types import (
     MoeOffloadSwitch,
     Picture,
     PictureList,
+    ReasoningEffort,
     TierMove,
     ToolChoice,
     ToolSpec,
@@ -243,17 +244,19 @@ class Client:
         seed: Optional[int] = None,
         num_ctx: Optional[int] = None,
         think: Optional[bool] = None,
+        reasoning_effort: Optional[ReasoningEffort] = None,
         tools: Optional[Sequence[Union[ToolSpec, Mapping[str, Any]]]] = None,
         tool_choice: Optional[Union[ToolChoice, Mapping[str, Any]]] = None,
         extra: Optional[Mapping[str, Any]] = None,
     ) -> ChatCompletion:
         """``POST /v1/chat/completions``. ``num_ctx`` and ``think`` are Hypnos extensions;
-        ``tools`` and ``tool_choice`` turn on tool calling (docs/api.md 7.5; helpers in
+        ``reasoning_effort`` sets the thinking level (it takes precedence over ``think``) and the
+        thoughts come back as ``message.reasoning_content``; ``tools`` and ``tool_choice`` turn on tool calling (docs/api.md 7.5; helpers in
         :mod:`hypnos_client.tools`); ``extra`` adds any other body field."""
         body = chat_body(
             model, list(messages), False, max_tokens=max_tokens, temperature=temperature,
             top_p=top_p, top_k=top_k, seed=seed, num_ctx=num_ctx, think=think,
-            tools=tools, tool_choice=tool_choice, extra=extra,
+            reasoning_effort=reasoning_effort, tools=tools, tool_choice=tool_choice, extra=extra,
         )  # fmt: skip
         return cast(
             ChatCompletion,
@@ -272,6 +275,7 @@ class Client:
         seed: Optional[int] = None,
         num_ctx: Optional[int] = None,
         think: Optional[bool] = None,
+        reasoning_effort: Optional[ReasoningEffort] = None,
         tools: Optional[Sequence[Union[ToolSpec, Mapping[str, Any]]]] = None,
         tool_choice: Optional[Union[ToolChoice, Mapping[str, Any]]] = None,
         extra: Optional[Mapping[str, Any]] = None,
@@ -280,7 +284,7 @@ class Client:
         body = chat_body(
             model, list(messages), True, max_tokens=max_tokens, temperature=temperature,
             top_p=top_p, top_k=top_k, seed=seed, num_ctx=num_ctx, think=think,
-            tools=tools, tool_choice=tool_choice, extra=extra,
+            reasoning_effort=reasoning_effort, tools=tools, tool_choice=tool_choice, extra=extra,
         )  # fmt: skip
         response, release = self._send(
             "POST", "/v1/chat/completions", model=model, json=body, accept="text/event-stream"

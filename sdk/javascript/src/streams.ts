@@ -149,11 +149,13 @@ abstract class BaseStream {
 
 /**
  * `POST /v1/chat/completions` with `stream: true`. Iterate it for chunks, or `text()` for the
- * content pieces; `textSoFar`, `toolCalls`, `usage`, `telemetry` and `finishReason` fill in as
- * they arrive.
+ * content pieces; `textSoFar`, `reasoningSoFar`, `toolCalls`, `usage`, `telemetry` and
+ * `finishReason` fill in as they arrive.
  */
 export class ChatStream extends BaseStream implements AsyncIterable<ChatCompletionChunk> {
   textSoFar = "";
+  /** The `delta.reasoning_content` pieces so far (the model's thoughts). */
+  reasoningSoFar = "";
   /** The tool calls so far, accumulated by `index` (`function.arguments` concatenated). */
   readonly toolCalls: ToolCall[] = [];
   usage?: Usage;
@@ -173,6 +175,7 @@ export class ChatStream extends BaseStream implements AsyncIterable<ChatCompleti
         this.created ??= chunk.created;
         for (const choice of chunk.choices ?? []) {
           this.textSoFar += choice.delta?.content ?? "";
+          this.reasoningSoFar += choice.delta?.reasoning_content ?? "";
           for (const delta of choice.delta?.tool_calls ?? []) {
             const index = delta.index ?? this.toolCalls.length;
             const call = (this.toolCalls[index] ??= {
@@ -216,6 +219,7 @@ export class ChatStream extends BaseStream implements AsyncIterable<ChatCompleti
       role: "assistant",
       content: this.textSoFar,
     };
+    if (this.reasoningSoFar) message.reasoning_content = this.reasoningSoFar;
     const toolCalls = this.toolCalls.filter((c) => c !== undefined);
     if (toolCalls.length) message.tool_calls = toolCalls;
     const completion: ChatCompletion = {

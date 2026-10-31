@@ -204,6 +204,7 @@ pub struct ChatStream {
     model: String,
     created: i64,
     text: String,
+    reasoning: String,
     tool_calls: Vec<ToolCall>,
     /// The `index` of each entry of `tool_calls`.
     tool_call_indexes: Vec<u32>,
@@ -226,6 +227,7 @@ impl ChatStream {
             model: String::new(),
             created: 0,
             text: String::new(),
+            reasoning: String::new(),
             tool_calls: Vec::new(),
             tool_call_indexes: Vec::new(),
             finish_reason: None,
@@ -240,6 +242,10 @@ impl ChatStream {
     }
     pub fn text_so_far(&self) -> &str {
         &self.text
+    }
+    /// The `delta.reasoning_content` pieces so far (the model's thoughts).
+    pub fn reasoning_so_far(&self) -> &str {
+        &self.reasoning
     }
     pub fn usage(&self) -> Option<&Usage> {
         self.usage.as_ref()
@@ -288,6 +294,7 @@ impl ChatStream {
                 message: ResponseMessage {
                     role: "assistant".into(),
                     content: self.text.clone(),
+                    reasoning_content: (!self.reasoning.is_empty()).then(|| self.reasoning.clone()),
                     tool_calls: (!self.tool_calls.is_empty()).then(|| self.tool_calls.clone()),
                 },
                 finish_reason: self.finish_reason.clone().unwrap_or_else(|| "stop".into()),
@@ -317,6 +324,9 @@ impl ChatStream {
         for choice in &chunk.choices {
             if let Some(piece) = &choice.delta.content {
                 self.text.push_str(piece);
+            }
+            if let Some(piece) = &choice.delta.reasoning_content {
+                self.reasoning.push_str(piece);
             }
             for delta in choice.delta.tool_calls.iter().flatten() {
                 accumulate_tool_call(&mut self.tool_calls, &mut self.tool_call_indexes, delta);

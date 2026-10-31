@@ -94,6 +94,12 @@ export type ToolChoice =
   | "required"
   | { type: "function"; function: { name: string } };
 
+/**
+ * Thinking level of a chat request (`reasoning_effort`, docs/api.md section 7): `"none"` turns
+ * thinking off, the others turn it on with a budget of thinking tokens (512, 2048, 6144).
+ */
+export type ReasoningEffort = "none" | "low" | "medium" | "high";
+
 /** A call the model asked for; `arguments` is a JSON object serialized as a string. */
 export interface ToolCall {
   id: string;
@@ -140,6 +146,8 @@ export type ChatMessage = SystemMessage | UserMessage | AssistantMessage | ToolM
 export interface CompletionMessage {
   role: string;
   content: string;
+  /** The model's thoughts before the answer, when thinking was on and the model thinks. */
+  reasoning_content?: string;
   /** Present only when the model called tools (`finish_reason` `tool_calls`). */
   tool_calls?: ToolCall[];
 }
@@ -168,7 +176,8 @@ export interface ChatCompletionChunk {
   model: string;
   choices: {
     index: number;
-    delta: { role?: string; content?: string; tool_calls?: ToolCallDelta[] };
+    /** `reasoning_content` pieces (the thoughts) all arrive before the first `content`. */
+    delta: { role?: string; content?: string; reasoning_content?: string; tool_calls?: ToolCallDelta[] };
     finish_reason: string | null;
   }[];
   usage?: Usage;

@@ -65,6 +65,19 @@ def test_chat_stream(client: Client) -> None:
     assert stream.final()["choices"][0]["message"]["content"] == "1 2 3 4 5"
 
 
+def test_chat_reasoning(client: Client) -> None:
+    hi = [{"role": "user", "content": "hi"}]
+    reply = client.chat(CHAT, hi, reasoning_effort="medium")
+    assert reply["choices"][0]["message"]["reasoning_content"] == "Mock thoughts (medium)."
+    with client.chat_stream(CHAT, hi, reasoning_effort="medium") as stream:
+        completion = stream.final()
+    assert stream.reasoning_so_far == "Mock thoughts (medium)."
+    assert completion["choices"][0]["message"]["reasoning_content"] == "Mock thoughts (medium)."
+    assert completion["choices"][0]["message"]["content"] == "echo: hi"
+    off = client.chat(CHAT, hi, reasoning_effort="none")
+    assert "reasoning_content" not in off["choices"][0]["message"]
+
+
 def test_chat_stream_final(client: Client) -> None:
     stream = client.chat_stream(CHAT, USER)
     completion = stream.final()

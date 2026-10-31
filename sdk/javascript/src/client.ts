@@ -28,6 +28,7 @@ import type {
   MoeOffloadSwitch,
   Picture,
   PictureList,
+  ReasoningEffort,
   Speech,
   TierMove,
   ToolChoice,
@@ -75,6 +76,11 @@ export interface ChatOptions extends CallOptions {
   num_ctx?: number;
   /** Hypnos extension: Gemma 4's thinking channel. */
   think?: boolean;
+  /**
+   * How much the model may think before answering (`"none"` turns thinking off); takes
+   * precedence over `think`. The thoughts come back as `message.reasoning_content`.
+   */
+  reasoning_effort?: ReasoningEffort;
   /** Functions the model may call (docs/api.md section 7.5). */
   tools?: ToolSpec[];
   /** `"auto"` (the server's default when `tools` is set), `"none"`, `"required"` or a named function. */
@@ -479,6 +485,7 @@ export class Client {
         seed: o.seed,
         num_ctx: o.num_ctx,
         think: o.think,
+        reasoning_effort: o.reasoning_effort,
         tools: o.tools,
         tool_choice: o.tool_choice,
         stream,

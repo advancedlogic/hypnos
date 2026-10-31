@@ -137,6 +137,10 @@ class ToolChoiceFunction(TypedDict):
 #: ``"none"``, ``"auto"``, ``"required"`` or ``{"type": "function", "function": {"name": ...}}``.
 ToolChoice = Union[Literal["none", "auto", "required"], ToolChoiceFunction]
 
+#: Thinking level of a chat request (``reasoning_effort``, docs/api.md section 7): ``"none"``
+#: turns thinking off, the others turn it on with a budget of thinking tokens (512, 2048, 6144).
+ReasoningEffort = Literal["none", "low", "medium", "high"]
+
 
 class ToolCallFunction(TypedDict):
     name: str
@@ -181,6 +185,8 @@ class ResponseMessage(TypedDict):
     role: str
     #: ``""`` when the model only called tools.
     content: str
+    #: The model's thoughts before the answer, when thinking was on and the model thinks.
+    reasoning_content: NotRequired[str]
     #: Present only when the model called tools (``finish_reason`` is ``"tool_calls"``).
     tool_calls: NotRequired[List[ToolCall]]
 
@@ -218,6 +224,8 @@ class ChunkToolCall(TypedDict):
 class ChunkDelta(TypedDict, total=False):
     role: str
     content: str
+    #: A piece of the model's thoughts; all of them arrive before the first ``content``.
+    reasoning_content: str
     tool_calls: List[ChunkToolCall]
 
 

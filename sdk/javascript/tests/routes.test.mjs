@@ -69,6 +69,19 @@ test("chat stream", async () => {
   assert.equal((await stream.final()).choices[0].message.content, "1 2 3 4 5");
 });
 
+test("chat reasoning", async () => {
+  const hi = [{ role: "user", content: "hi" }];
+  const reply = await client.chat(CHAT, hi, { reasoning_effort: "medium" });
+  assert.equal(reply.choices[0].message.reasoning_content, "Mock thoughts (medium).");
+  const stream = await client.chatStream(CHAT, hi, { reasoning_effort: "medium" });
+  const completion = await stream.final();
+  assert.equal(stream.reasoningSoFar, "Mock thoughts (medium).");
+  assert.equal(completion.choices[0].message.reasoning_content, "Mock thoughts (medium).");
+  assert.equal(completion.choices[0].message.content, "echo: hi");
+  const off = await client.chat(CHAT, hi, { reasoning_effort: "none" });
+  assert.equal(off.choices[0].message.reasoning_content, undefined);
+});
+
 test("chat stream final", async () => {
   const stream = await client.chatStream(CHAT, USER);
   const completion = await stream.final();

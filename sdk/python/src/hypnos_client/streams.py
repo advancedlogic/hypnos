@@ -35,6 +35,7 @@ class _ChatState:
         self.model: Optional[str] = None
         self.created: Optional[int] = None
         self.text = ""
+        self.reasoning = ""
         # Tool calls by `index`: id and name from the first fragment that has them, the
         # argument fragments concatenated (Hypnos sends each call whole, OpenAI in pieces).
         self.calls: Dict[int, Dict[str, Any]] = {}
@@ -54,6 +55,7 @@ class _ChatState:
         for choice in chunk.get("choices", []):
             delta = choice.get("delta", {})
             self.text += delta.get("content") or ""
+            self.reasoning += delta.get("reasoning_content") or ""
             for part in delta.get("tool_calls") or []:
                 self._add_call(part)
             if choice.get("finish_reason"):
@@ -86,6 +88,8 @@ class _ChatState:
 
     def completion(self) -> ChatCompletion:
         message: Dict[str, Any] = {"role": "assistant", "content": self.text}
+        if self.reasoning:
+            message["reasoning_content"] = self.reasoning
         if self.calls:
             message["tool_calls"] = self.tool_calls()
         result: Dict[str, Any] = {
@@ -179,9 +183,10 @@ class ChatStream(_SyncSSE):
     """``POST /v1/chat/completions`` with ``stream=True``.
 
     Iterate it for :class:`~hypnos_client.types.ChatCompletionChunk` dicts, or over
-    :meth:`text` for the content pieces only. ``text_so_far``, ``tool_calls``, ``usage``,
-    ``telemetry`` and ``finish_reason`` fill in as the chunks arrive; :meth:`final` includes the
-    tool calls in ``message.tool_calls``.
+    :meth:`text` for the content pieces only. ``text_so_far``, ``reasoning_so_far``,
+    ``tool_calls``, ``usage``, ``telemetry`` and ``finish_reason`` fill in as the chunks arrive;
+    :meth:`final` includes the thoughts in ``message.reasoning_content`` and the tool calls in
+    ``message.tool_calls``.
     """
 
     def __init__(self, response: httpx.Response, release: Release) -> None:
@@ -191,6 +196,11 @@ class ChatStream(_SyncSSE):
     @property
     def text_so_far(self) -> str:
         return self._state.text
+
+    @property
+    def reasoning_so_far(self) -> str:
+        """The ``delta.reasoning_content`` pieces so far (the model's thoughts)."""
+        return self._state.reasoning
 
     @property
     def usage(self) -> Optional[Usage]:
@@ -371,6 +381,11 @@ class AsyncChatStream(_AsyncSSE):
     @property
     def text_so_far(self) -> str:
         return self._state.text
+
+    @property
+    def reasoning_so_far(self) -> str:
+        """The ``delta.reasoning_content`` pieces so far (the model's thoughts)."""
+        return self._state.reasoning
 
     @property
     def usage(self) -> Optional[Usage]:

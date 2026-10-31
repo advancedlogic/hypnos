@@ -97,6 +97,25 @@ async fn chat_stream() {
 }
 
 #[tokio::test]
+async fn chat_reasoning() {
+    let server = MockServer::start();
+    let c = server.client();
+    let req = ChatRequest::new(CHAT, user("hi")).reasoning_effort(ReasoningEffort::Medium);
+    let completion = c.chat(&req).await.unwrap();
+    assert_eq!(
+        completion.choices[0].message.reasoning_content.as_deref(),
+        Some("Mock thoughts (medium).")
+    );
+    let mut stream = c.chat_stream(&req).await.unwrap();
+    let completion = stream.final_completion().await.unwrap();
+    assert_eq!(stream.reasoning_so_far(), "Mock thoughts (medium).");
+    assert_eq!(completion.text(), "echo: hi");
+    let off = ChatRequest::new(CHAT, user("hi")).reasoning_effort(ReasoningEffort::None);
+    let completion = c.chat(&off).await.unwrap();
+    assert_eq!(completion.choices[0].message.reasoning_content, None);
+}
+
+#[tokio::test]
 async fn chat_stream_final() {
     let server = MockServer::start();
     let mut stream = server

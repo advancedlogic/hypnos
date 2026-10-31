@@ -59,7 +59,8 @@ impl From<&[&str]> for Input {
 }
 
 /// `POST /v1/chat/completions`. `num_ctx` and `think` are Hypnos extensions; `extra` adds any
-/// other body field.
+/// other body field. `reasoning_effort` sets the thinking level (it takes precedence over
+/// `think`); the thoughts come back as `reasoning_content`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ChatRequest {
     pub model: String,
@@ -78,6 +79,8 @@ pub struct ChatRequest {
     pub num_ctx: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub think: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
     /// Functions the model may call (`docs/api.md` section 7.5).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<ToolSpec>>,
@@ -122,6 +125,11 @@ impl ChatRequest {
     }
     pub fn think(mut self, on: bool) -> Self {
         self.think = Some(on);
+        self
+    }
+    /// How much the model may think before answering; `None` turns thinking off.
+    pub fn reasoning_effort(mut self, effort: ReasoningEffort) -> Self {
+        self.reasoning_effort = Some(effort);
         self
     }
     /// The functions the model may call; send the same tools again with the results.

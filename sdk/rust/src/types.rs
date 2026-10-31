@@ -447,12 +447,25 @@ pub struct Usage {
     pub prompt_tokens_details: Option<PromptTokensDetails>,
 }
 
+/// Thinking level of a chat request (`reasoning_effort`, `docs/api.md` section 7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    None,
+    Low,
+    Medium,
+    High,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ResponseMessage {
     #[serde(default)]
     pub role: String,
     #[serde(default)]
     pub content: String,
+    /// The model's thoughts before the answer, when thinking was on and the model thinks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     /// The calls the model asked for (`finish_reason` `tool_calls`); absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
@@ -554,6 +567,7 @@ impl ChatCompletion {
 pub struct ChunkDelta {
     pub role: Option<String>,
     pub content: Option<String>,
+    pub reasoning_content: Option<String>,
     pub tool_calls: Option<Vec<ToolCallDelta>>,
 }
 
