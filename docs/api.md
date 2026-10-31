@@ -256,7 +256,11 @@ The default lineup (`hypnos.example.toml`):
 | `docling` | document conversion | `/v1/documents/convert` |
 | `gliner2.5-multi` | entity extraction | `/v1/entities` |
 
-A client should not hard-code ids; operators rename and replace models in the config.
+Other profiles change the lineup: `hypnos.lfm3.macos.example.toml` serves Liquid AI's LFM3 models
+(`lfm3:1.7b` text, `lfm3-vl:2b` vision and text, `lfm3-audio:2b` speech-to-text and text) in place
+of the two Gemma chat models, and `GET /v1/models/catalog` lists every model Hypnos has been tested
+with. A client should not hard-code ids: operators rename and replace models in the config, and
+add, replace or remove them while the server runs (below).
 
 ### `GET /v1/models/catalog`
 
@@ -345,6 +349,10 @@ is 400 `invalid_request_error` with the reasons. The model's files must already 
 
 `action` is `added`, `replaced` or `removed`; `persisted` is false when the overlay could not be
 written (the change is live until the next restart); `placement` is absent on a removal.
+
+An added or replacing model starts cold in Tier 3 whatever its `initial_tier` (that setting
+applies at startup); its first request loads it, and `POST /v1/memory/tier` (section 14) can
+stage it ahead. Disabling a model (below) keeps its block; removing it takes it out of the pool.
 
 ### `POST /v1/models/{id}/enable`, `POST /v1/models/{id}/disable`
 
@@ -571,6 +579,7 @@ unchanged. Text the model writes before a call arrives as `delta.content` as usu
 chunk has `finish_reason: "tool_calls"`.
 
 **Models.** Tool calling uses the model's native format: Gemma 4 (all the default chat models).
+LFM3 models have none in Hypnos (the catalog lists each entry's `capabilities`).
 A request with `tools` (and `tool_choice` other than `"none"`) for a model without one is refused
 with 400 `invalid_request_error`. `"required"` and a named function are enforced by starting the
 model's answer with a call, not by a grammar: the arguments follow the schema as well as the model
@@ -611,10 +620,10 @@ model); a client should read it from the first response rather than assume it.
 
 | Part | Required | Notes |
 | :--- | :--- | :--- |
-| `model` | yes | a model serving `speech_to_text` (`gemma4:e4b-q4`) |
+| `model` | yes | a model serving `speech_to_text` (`gemma4:e4b-q4`, `lfm3-audio:2b`) |
 | `file` | yes | the audio file; WAV (16-bit PCM) is the reliable format, up to `max_audio_bytes` |
-| `language` | no | hint, e.g. `en`, `it` |
-| `prompt` | no | text hint given to the model before the audio |
+| `language` | no | hint, an ISO 639-1 code such as `en`, `it` |
+| `prompt` | no | replaces the server's instruction to the model (below) |
 
 The multipart part names are the only ones read; `response_format`, `temperature` and
 `timestamp_granularities` are ignored (the answer is always JSON without timestamps).
@@ -626,6 +635,13 @@ It exists for completeness; use multipart.
 ```json
 { "text": "The quick brown fox …", "duration_secs": 4.21, "hypnos_telemetry": { "…": "" } }
 ```
+
+Each model family gets the instruction it was trained with: Gemma 4 the audio followed by
+"Transcribe this audio exactly. Output only the transcript." (plus "The speech is in '<language>'."
+with a `language`), LFM3-Audio the system prompt "Perform ASR in <language>." with the language
+named in English (`de` -> German; an unknown code is passed as given), or "Perform ASR." without
+one. A `prompt` replaces that instruction (Gemma) or system prompt (LFM3). Thinking is never used
+for a transcription.
 
 `language` is echoed when given. `duration_secs` is read from the WAV header when the file is a
 WAV. The telemetry's `engine.audio_secs` and `engine.rtf` (processing seconds per audio second)
@@ -986,6 +1002,18 @@ above the server's `request_timeout_secs` (900 s by default); a cold request pay
 **Startup.** Poll `GET /ready` with a short delay until it answers 200, or treat 503
 `model_not_available` with `Retry-After` as "wait and retry". `GET /v1/models` works before that
 and tells the client what it may ask for.
+
+**A changing model pool.** Models can be added, replaced and removed while the server runs
+(section 6). A replacement is invisible to clients (requests wait for it and keep the id); a
+removal turns the id into 404 `model_not_found`. A client that caches `GET /v1/models` should
+refresh it on a 404 rather than retry, and pick models by modality (`/v1/memory/status`
+`modalities`) rather than by fixed ids. Do not retry `POST`, `PUT` or `DELETE /v1/models`
+automatically: a 429 there means running requests outlasted `drain_secs`, and nothing changed.
+
+**Thinking.** `reasoning_effort` adds latency and tokens before the first answer token (the
+thoughts count in `completion_tokens`, and `max_tokens` must leave room for both). Show
+`reasoning_content` apart from the answer and never send it back in the history: only the
+answer belongs there.
 
 **Retries.** Retry, with backoff, on: 429 `model_busy` (no `Retry-After`; start at 250 ms),
 429 `rate_limit_error` (sleep `Retry-After`), 503 `model_not_available` (sleep `Retry-After`,

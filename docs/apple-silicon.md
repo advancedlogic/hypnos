@@ -431,6 +431,11 @@ draw one pool with resident and warm segments. Smallest change: add `topology` t
   already a variable at the top of the script.
 - README: a "macOS (Apple Silicon)" subsection under build prerequisites with the Homebrew line,
   the build command, the `iogpu.wired_limit_mb` note, and the memory-class table from section 2.
+- Smaller machines: `backend/hypnos.lfm3.macos.example.toml` swaps the two Gemma chat models
+  for Liquid AI's LFM3 (1.7B text, 2B vision, 2B audio, about 6.4 GB with projectors at Q8_0), so
+  everything but MOSS-Image fits in 16 GB. Tested on Metal (2026-10-31): chat with follow-up
+  turns and the thinking levels, an image description, Kokoro speech transcribed back by
+  LFM3-Audio. Further models can be added at runtime from the catalog (`POST /v1/models`).
 
 ### Phase 4: CI and tests
 

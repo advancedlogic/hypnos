@@ -72,6 +72,10 @@ replaced upstream) and `problem` when downloaded weights report another architec
 | 503 `model_not_available` right after start | `/ready` says 503 | Startup pre-staging is running (minutes with a large model); wait for `/ready` |
 | GPU hot or throttling | `gpu.throttled`, `hypnos_gpu_temperature_celsius`, `hypnos_gpu_throttled` | Cooling, power limits; Hypnos only reports it |
 | Document conversion slow | `hypnos_document_ms_per_page` | Table-heavy pages are CPU-bound (TableFormer); `device = "gpu"` helps layout- and OCR-heavy documents only (`docs/bench/docling-cuda-2026-10-30.md`) |
+| Answers start late or run into `finish_reason: "length"` with thinking on | `completion_tokens` far above the answer's length; `reasoning_content` in the response | Thinking spends tokens before the answer: a lower `reasoning_effort` (low 512, medium 2048, high 6144 thinking tokens) or `none`, and a `max_tokens` that leaves room for the answer on top of the budget (thoughts count in it) |
+| A model added at runtime is slow on its first request | `tier_switch_latency_ms` on that request | Added and replacing models start cold (their `initial_tier` applies at startup only): `POST /v1/memory/tier` stages one ahead, or keep it in the config file to have it pre-staged |
+| `POST /v1/models` answers 400 | the message lists the failed checks | Files missing (download them first: `./run.sh models <id>:<quant>`), a path outside `models_dir`, a GGUF of an untested architecture, or an id already in the pool (`PUT` replaces) |
+| A second chat turn on an LFM3 (or other hybrid) model prefills from scratch | `cached_tokens` low on the turn after a reply | Their convolution layers keep a recurrent state that cannot be trimmed back, so a turn reuses the cache only up to the end of the previous prompt (the same checkpoint as Gemma's sliding window); keep `prefix_cache = true` |
 | Prompts repeat the same prefix but prefill is paid every time | `hypnos_prefix_cache_misses_total`, `cached_tokens` in the telemetry | `prefix_cache = true` and enough `slots` that the conversation's slot is not reused by another client between turns |
 
 The limits in `[limits]` (`request_timeout_secs`, `max_body_bytes`, `max_prompt_chars`,
@@ -129,10 +133,11 @@ their usual exceptions.
 | :--- | :--- | :--- | :--- |
 | 400 | `invalid_request_error` | Bad parameter, empty messages, unsupported modality for the model, oversized input | Fix the request; the message names the field |
 | 401 | `invalid_request_error` / code `invalid_api_key` | Missing, malformed or wrong bearer key | Send `Authorization: Bearer <key>` |
-| 404 | `model_not_found` | No such model id in the config | `GET /v1/models` lists the ids |
+| 403 | `permission_denied` | Changing the model pool (`POST /v1/models`, `PUT` / `DELETE /v1/models/{id}`) with a key that is not an admin key | A plain `server.api_keys` entry, or `admin = true` on the `[[server.keys]]` entry |
+| 404 | `model_not_found` | No such model id in the pool (the config plus runtime changes) | `GET /v1/models` lists the ids |
 | 404 | `model_disabled` | The model is configured but switched off | `POST /v1/models/{id}/enable`, or `enabled = true` |
 | 404 | `not_found` | A stored document or log entry is gone | Pictures expire after `document_pictures_ttl_secs` |
-| 429 | `model_busy` | `limits.max_queue_per_model` requests already queued or running for the model | Back off and retry; more slots or a higher limit |
+| 429 | `model_busy` | `limits.max_queue_per_model` requests already queued or running for the model; or a pool change whose running requests outlasted `drain_secs` | Back off and retry; more slots or a higher limit; for a pool change, a longer `drain_secs` (nothing changed) |
 | 429 | `rate_limit_error` (`requests_per_minute`, `max_concurrent`, `tokens_per_day`) | The key's limit | `Retry-After` says when |
 | 499 | `cancelled` | The client went away | Nothing |
 | 503 | `model_not_available` | Startup pre-staging still running, or a config-level refusal | Wait for `/ready` |
@@ -179,6 +184,10 @@ quotas per user or organisation, billing, or finer rules put an API gateway in f
 - Run `hypnos --check-config hypnos.toml` with the new binary before switching traffic.
 - Model files are addressed by path in the config: a new release that changes the lineup needs
   `scripts/fetch-models` for the new files; old files can stay.
+- `models.catalog.toml` carries `catalog_version` (the server ignores a newer one and its catalog
+  route answers 404). The runtime overlay `<config name>.models.toml` is applied over the config
+  at startup and checked with it by `--check-config`; when rolling back, or to return to the
+  config alone, move it away. Back it up with the config: it holds the models added at runtime.
 
 ## 8. Running as a service
 

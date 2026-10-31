@@ -61,6 +61,12 @@ Two things B had to add that section 4 did not foresee:
   sliding-window state at the end of each prompt (`llama_state_seq_get_data_ext` with the
   partial-only flag, about 26 MB for the 26B) and restores it when the divergence is at or after
   the checkpoint, the same mechanism llama-server uses.
+  Hybrid and recurrent models (LFM3's short-convolution layers, Mamba) have the same limit for a
+  different reason: their recurrent state holds only the latest position, and llama.cpp refuses
+  to trim it back. `plan_cache` treats them like sliding-window models (`trim_limited`, from
+  `llama_model_is_hybrid` / `is_recurrent`): the partial-only checkpoint saves the recurrent state
+  (the full-attention KV stays and is trimmed in place), and without that path the second turn
+  of an LFM3 chat failed with "KV cache trim failed".
 - **Planning for the default window.** The scheduler used to size a residency for the request's
   own estimate, which would have rebuilt the context (and dropped every cache) each time a
   conversation grew. `acquire_model` now plans `max(needed, default_context_len)` whenever that

@@ -29,7 +29,7 @@ This is the common case in the default lineup: an image request evicts `gemma4:2
 | Feature | Where | Effect |
 | :--- | :--- | :--- |
 | Prefix reuse per slot | `engine.rs` (`select`, `kv_cache_seq_rm`) | a new turn prefills only past the longest common prefix; the slot with the longest match is chosen |
-| SWA checkpoint | `engine.rs` (`state_seq_get` with `PARTIAL_ONLY` at the end of the prompt) | when the new turn diverges inside the previous reply (re-tokenization differs), the sliding-window layers roll back to the checkpoint instead of a full prefill |
+| SWA checkpoint | `engine.rs` (`state_seq_get` with `PARTIAL_ONLY` at the end of the prompt) | when the new turn diverges inside the previous reply (re-tokenization differs), the sliding-window layers (and a hybrid model's recurrent state, LFM3) roll back to the checkpoint instead of a full prefill |
 | Media in the prefix | mtmd chunk ids in the slot keys | an image or clip already in the prefix is not encoded again |
 | Continuous batching | the worker's batch over all slots | concurrent requests share decode steps |
 

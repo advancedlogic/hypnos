@@ -51,11 +51,88 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 3  | 12  | 5   | 6   | 10   | 7   | 10    | 7   | 3    | 18   |
+| 3  | 13  | 5   | 8   | 11   | 7   | 10    | 7   | 5    | 19   |
 
 ---
 
 ## Backlog
+
+- [ ] 🟪 **API-12** `P1` Hardware and model advisor
+      "I have 24 GB of VRAM and 64 GB of RAM and need chat, voice and documents": recommend a
+      lineup from the catalog (API-10), with variants, context sizes, slots, memory policy
+      (`keep_warm_in_ram`, priorities, `moe_offload`) and the profile (MEM-7), and say whether the
+      latency targets are feasible (from the bench reports' measured numbers). Reuse the planner:
+      run `compute_optimal_placement` / the booking formula over candidate lineups instead of a
+      second model of memory. Deliver as `hypnos advise --vram 24G --ram 64G --needs chat,voice,
+      documents` (detected hardware by default), `POST /v1/advisor`, and a rendered config (or
+      `POST /v1/models` calls, API-11) the user can apply.
+
+- [ ] 🩵 **DESK-18** `P1` Guided setup: detect, recommend, install, demonstrate
+      First run of the desktop app (and the playground) should need no knowledge of pinned
+      memory, quantization or KV caches: detect the hardware, recommend a lineup (API-12),
+      download it (the Models dialog's downloader), add it live (API-11), then run a short
+      multimodal demo (ask about an image, speak the answer, transcribe it back) to prove it
+      works. Finish distribution: the Developer ID / notarization wiring of BUILD-9 still needs
+      the secrets and a release made with them. Test on real 16 GB and 32 GB Macs (startup,
+      the recommended lineup, swaps under memory pressure), not only with
+      `simulate_physical_memory_bytes`, and record the results in `docs/apple-silicon.md`.
+
+- [ ] 🟨 **TEST-3** `P1` Measure booked vs real memory per engine and fix the estimates
+      Memory budgets are planner estimates, not OS-enforced limits, and some are off: LFM3's KV
+      booking is about twice its use (hybrid layers booked as full attention), and the docling
+      files on disk drifted from the release. Measure booked vs real (device and process
+      footprint) per engine and per model under load: a `bench.sh` scenario and a `--measure`
+      mode that loads each configured model alone and records the peak. Report the drift in
+      `/v1/memory/status` and `/metrics` (`tier1_vram_unaccounted_bytes`, process footprint),
+      alert on it, and correct the estimators (per-layer KV for hybrid / SWA layouts from the
+      GGUF, workspace per engine) where they are wrong; record the numbers in `docs/bench/`.
+
+- [ ] 🟫 **MEM-7** `P2` Add workload profiles with latency objectives
+      Presets that fill in config values, not a new layer of behaviour. Named profiles that turn
+      the knobs into outcomes: `interactive_chat`, `voice_assistant`,
+      `document_pipeline`, `batch_processing` (`[server] profile = ...`, overridable per model).
+      Each sets model priorities and pre-staging, queue behaviour (depth, fairness), slot counts,
+      which swaps are acceptable (a voice assistant never evicts its STT/TTS models; batch accepts
+      swaps for throughput) and a latency objective (first token / first audio / pages per
+      minute) that MEM-6 and PERF-10 read. Explicit keys in `[[models]]` still win; `hypnos
+      --check-config` prints the effective settings. Document each profile in
+      `docs/operating.md` with the symptom it answers.
+
+- [ ] 🟫 **MEM-6** `P2` Make scheduling workload-aware, not only memory-aware
+      Residency and eviction today follow priority, recency and fit. Add what a decision costs
+      and what comes next: per model an estimated promotion cost (from measured
+      `tier_switch_phases`, by tier), the cost of restoring its cache (KV parking, MEM-4),
+      expected request rate (decayed counters per model) and latency sensitivity (from the
+      profile, MEM-7). Evict the model whose return is cheapest and least likely, not just the
+      lowest priority. Sequences (speech-to-text -> chat -> speech, the voice turn; a document
+      conversion followed by chat) are declared, not guessed: a client or the profile names the
+      next stage and the scheduler pre-stages its model (Tier 2, or Tier 1 when it fits) while the
+      current one runs (the pipeline lease of `docs/execution-efficiency-plan.md`, item E).
+      Learning sequences from the request log is left for later: it is hard to test and makes
+      the scheduler's choices hard to predict.
+      Acceptance: scheduler tests with mock costs; a voice-turn benchmark (bench.sh) shows the
+      second stage no longer paying a cold promotion.
+
+- [ ] 🟧 **PERF-10** `P2` Deadline-aware admission and predictable latency
+      A request that succeeds in 12 s when 1 s was expected is a failure in practice. Estimate the
+      wait at admission (queue depth x recent service time, plus a promotion if the model is cold)
+      and expose it (`x-hypnos-estimated-wait-ms`, `/v1/memory/status`); accept an optional
+      deadline (`x-hypnos-deadline-ms` or a body field) and refuse at once with 503 + `Retry-After`
+      when it cannot be met instead of queueing. Overload policies per profile (shed or queue);
+      degrading an answer (smaller `max_tokens`, no thinking) only when the request opts in, never
+      silently. Track p50 / p95 / p99 for whole workflows
+      (request id chains, the voice turn end to end), not only per engine, in `/metrics` and in
+      bench.sh reports. Prefer predictable latency over peak tokens per second.
+
+- [ ] 🟨 **TEST-4** `P2` Harden for operational reliability
+      Build on what exists (auth, quotas, TLS, metrics, request log, the TEST-2 fault tests):
+      a stress suite (many concurrent clients across modalities, long runs, memory never
+      growing), concurrent cancellation at every stage (queued, loading, prefill, decode,
+      streaming), out-of-memory recovery under real pressure, engine crash and supervisor
+      restart drills, upgrade compatibility (old configs and overlays, `config_version`
+      migrations, catalog versions), a security review (auth bypass, path handling in
+      `POST /v1/models`, remote URL fetches, request log redaction) and repeatable releases
+      (pinned toolchains, reproducible archives).
 
 - [ ] 🟩 **ENG-4** `P2` Add audio.cpp for text-to-speech and optional speech-to-text
       Vendor https://github.com/0xShug0/audio.cpp (pin + patches in `scripts/vendor.sh`) and link
@@ -91,7 +168,11 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## In Progress
 
-- [ ] 🟪 **API-11** `P2` Add, remove and replace models at runtime (a dynamic model pool)
+_No cards yet._
+
+## Done
+
+- [x] 🟪 **API-11** `P2` Add, remove and replace models at runtime (a dynamic model pool)
       Requests already route by model name (`acquire_model(id)` loads or evicts on demand); what
       is fixed is the set of models, read once from the config. Make it changeable while the
       server runs:
@@ -110,8 +191,13 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       - With API keys set, these routes need an admin key; paths stay inside `models_dir`.
       - `docs/api.md`, mock server, the three SDKs; the desktop Catalog's Add and the playground
         catalog tab use the live routes (no server restart).
+      Done 2026-10-31: `POST /v1/models`, `PUT` / `DELETE /v1/models/{id}` (`pool.rs`: startup
+      checks for a new block, a per-model gate in the scheduler so requests wait during a swap,
+      overlay `<config>.models.toml`, admin keys), SDK methods with a PermissionDenied error and
+      no automatic retries, live Add / Replace / Remove in the desktop Models dialog and the
+      playground. Aliases left out (a replacement keeps the id). (commits 7bc0e97, 6b8ab9b,
+      0f976a3)
 
-## Done
 
 - [x] 🟪 **API-10** `P2` Hugging Face model inventory so users can bring their own models
       A curated inventory of Hugging Face repos/files Hypnos can run, grouped by modality: text,
