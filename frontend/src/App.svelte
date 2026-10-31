@@ -405,6 +405,61 @@
     }
   }
 
+  // KV parking (MEM-4): keep a model's conversations in host memory across a swap.
+  // GET / POST /v1/memory/kv-park; the state also comes with /v1/memory/status as `kv_park`.
+  let kvPark = $derived(memoryStatus?.kv_park ?? null);
+  let kvParkCapGiB = $state(4);
+  let kvParkCapEdited = $state(false);
+  $effect(() => {
+    if (kvPark && !kvParkCapEdited) kvParkCapGiB = +(kvPark.max_bytes / 1024 ** 3).toFixed(1);
+  });
+
+  async function setKvPark(body) {
+    isLoading = true;
+    lastError = '';
+    try {
+      const res = await apiFetch(`/v1/memory/kv-park`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+      kvParkCapEdited = false;
+      await fetchMemoryStatus();
+    } catch (err) {
+      lastError = err.message;
+    } finally {
+      isLoading = false;
+    }
+  }
+
+  // MoE offload (MEM-5): POST /v1/models/{id}/moe-offload {"mode": "off" | "auto" | "on"}.
+  let moeNotice = $state({});
+
+  async function setMoeOffload(modelId, mode) {
+    isLoading = true;
+    lastError = '';
+    try {
+      const res = await apiFetch(`/v1/models/${encodeURIComponent(modelId)}/moe-offload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+      moeNotice = {
+        ...moeNotice,
+        [modelId]: data.applies === 'now' ? 'applies on the next request (unloaded from VRAM)' : 'applies at the next load (model busy)',
+      };
+      await fetchMemoryStatus();
+    } catch (err) {
+      lastError = err.message;
+    } finally {
+      isLoading = false;
+    }
+  }
+
   async function manualSetTier(modelId, targetTier) {
     isLoading = true;
     lastError = '';
@@ -1133,6 +1188,60 @@
           {/if}
         {/if}
 
+        <!-- KV parking (MEM-4): conversations kept across a swap -->
+        {#if kvPark}
+          <div class="space-y-1.5 pt-1 border-t border-slate-800">
+            <div class="flex items-center justify-between gap-2 pt-2">
+              <h3 class="text-xs font-medium text-slate-300" title="Keep a chat model's conversations (its slots' KV state) in host memory when it is evicted, and restore them when it comes back">
+                KV parking
+                <span class="text-slate-500 font-normal">· conversations kept across a swap</span>
+              </h3>
+              <label class="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={kvPark.enabled}
+                  disabled={isLoading}
+                  onchange={(e) => setKvPark({ enabled: e.currentTarget.checked })}
+                  class="accent-indigo-500"
+                />
+                {kvPark.enabled ? 'on' : 'off'}
+              </label>
+            </div>
+            <div class="flex items-center gap-2 text-[11px] text-slate-400">
+              <span>Cap</span>
+              <input
+                type="number"
+                min="0.1"
+                step="0.5"
+                bind:value={kvParkCapGiB}
+                oninput={() => (kvParkCapEdited = true)}
+                class="w-16 rounded bg-slate-950 border border-slate-700 px-1.5 py-0.5 font-mono text-slate-200"
+              />
+              <span>GiB</span>
+              <button
+                onclick={() => setKvPark({ max_bytes: Math.round(kvParkCapGiB * 1024 ** 3) })}
+                disabled={isLoading || !kvParkCapEdited}
+                class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 disabled:opacity-40"
+              >
+                Set
+              </button>
+              <span class="ml-auto font-mono">{formatBytes(kvPark.used_bytes)} / {formatBytes(kvPark.max_bytes)} used</span>
+            </div>
+            {#if kvPark.models.length > 0}
+              <ul class="space-y-0.5">
+                {#each kvPark.models as p (p.model)}
+                  <li class="text-[11px] text-slate-400 flex justify-between gap-2">
+                    <span><span class="text-slate-200 font-medium">{p.model}</span> · {p.slots} conversation{p.slots === 1 ? '' : 's'}, {p.tokens.toLocaleString()} tokens</span>
+                    <span class="font-mono shrink-0">{formatBytes(p.bytes)} · {timeAgo(Date.now() - p.parked_secs_ago * 1000)}</span>
+                  </li>
+                {/each}
+              </ul>
+            {:else if kvPark.enabled}
+              <p class="text-[11px] text-slate-500">Nothing parked: conversations are saved when a chat model is evicted.</p>
+            {/if}
+          </div>
+        {/if}
+
         <!-- Automatic evictions, newest first -->
         {#if recentEvictions.length > 0}
           <div class="space-y-1 pt-1 border-t border-slate-800">
@@ -1216,11 +1325,39 @@
                       <span class="text-sky-300 font-mono">{m.placement.allocated_context_len} ctx</span>
                     {/if}
                   </div>
+                  {#if m.placement.cpu_expert_layers > 0}
+                    <div class="text-[11px] text-fuchsia-300">
+                      Experts of {m.placement.cpu_expert_layers} layer{m.placement.cpu_expert_layers === 1 ? '' : 's'} on the CPU ({formatBytes(m.placement.pinned_ram_bytes)} in host memory)
+                    </div>
+                  {/if}
                   <div class="w-full h-2 rounded-full bg-slate-900 overflow-hidden flex border border-slate-800">
                     <div class="bg-emerald-500 h-full transition-all" style="width: {gpuPct}%"></div>
                     <div class="bg-amber-500 h-full transition-all" style="width: {ramPct}%"></div>
                   </div>
                 </div>
+
+                <!-- MoE offload (MEM-5): only for models with expert tensors -->
+                {#if m.expert_bytes > 0}
+                  <div class="flex flex-wrap items-center gap-2 text-[11px]">
+                    <span class="text-slate-400" title="Keep the expert tensors in host memory and run them on the CPU: far less VRAM, slower (prefill most). auto acts only when the model does not fit whole, on discrete GPUs">
+                      MoE offload ({formatBytes(m.expert_bytes)} of experts)
+                    </span>
+                    <div class="inline-flex rounded border border-slate-700 overflow-hidden">
+                      {#each ['off', 'auto', 'on'] as mode (mode)}
+                        <button
+                          onclick={() => setMoeOffload(m.id, mode)}
+                          disabled={isLoading || m.enabled === false || m.moe_offload === mode}
+                          class="px-2 py-0.5 {m.moe_offload === mode ? 'bg-fuchsia-500/25 text-fuchsia-200' : 'bg-slate-900 text-slate-400 hover:bg-slate-800'}"
+                        >
+                          {mode}
+                        </button>
+                      {/each}
+                    </div>
+                    {#if moeNotice[m.id]}
+                      <span class="text-slate-500">{moeNotice[m.id]}</span>
+                    {/if}
+                  </div>
+                {/if}
 
                 <!-- Manual Tier Control Actions -->
                 <div class="flex items-center justify-between pt-1 border-t border-slate-800/80 text-[11px]">
@@ -2258,6 +2395,14 @@
                   <span class="text-sky-300">
                     Switch: {entry.tier_switch_latency_ms.toFixed(2)}ms
                   </span>
+                  {#if entry.placement.cpu_expert_layers > 0}
+                    <span class="text-fuchsia-300">experts on CPU: {entry.placement.cpu_expert_layers} layers</span>
+                  {/if}
+                  {#if entry.tier_switch_phases?.kv_restored_tokens}
+                    <span class="text-emerald-300" title="Conversations restored from KV parking instead of prefilled again">
+                      Restored {entry.tier_switch_phases.kv_restored_tokens.toLocaleString()} tokens in {entry.tier_switch_phases.kv_restore_ms.toFixed(0)}ms
+                    </span>
+                  {/if}
                   {#if entry.evicted_models?.length > 0}
                     <span class="text-rose-300">
                       Evicted: {entry.evicted_models.join(', ')}

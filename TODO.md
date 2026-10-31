@@ -89,15 +89,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       Decide first: curated list vs. live HF search filtered by `gguf` tag + pipeline type, and
       how unknown architectures are validated (`gguf_inspector.rs`) before they are offered.
 
-- [ ] 🟦 **UI-2** `P2` Playground: switches for KV parking and MoE offload
-      In the memory panel: a KV parking toggle and cap (`GET` / `POST /v1/memory/kv-park`), with
-      what is parked per model (slots, tokens, bytes, age, from `kv_park` in
-      `/v1/memory/status`); and per model card a MoE offload selector `off` / `auto` / `on`
-      (`POST /v1/models/{id}/moe-offload`, shown only when `expert_bytes` > 0), with
-      `placement.cpu_expert_layers` and whether the change applied now or at the next load. Show
-      `kv_restored_tokens` / `kv_restore_ms` in the telemetry log when a load restored
-      conversations. After MEM-5.
-
 - [ ] 🩵 **DESK-14** `P2` Desktop: switches for KV parking and MoE offload
       The same two controls in the desktop app: a KV parking toggle and cap in the connection
       dialog (or the stats panel), the parked conversations in the stats panel, and a MoE offload
@@ -111,6 +102,21 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🟦 **UI-2** `P2` Playground: switches for KV parking and MoE offload
+      In the memory panel: a KV parking toggle and cap (`GET` / `POST /v1/memory/kv-park`), with
+      what is parked per model (slots, tokens, bytes, age, from `kv_park` in
+      `/v1/memory/status`); and per model card a MoE offload selector `off` / `auto` / `on`
+      (`POST /v1/models/{id}/moe-offload`, shown only when `expert_bytes` > 0), with
+      `placement.cpu_expert_layers` and whether the change applied now or at the next load. Show
+      `kv_restored_tokens` / `kv_restore_ms` in the telemetry log when a load restored
+      conversations. After MEM-5.
+      Done: memory panel "KV parking" box (toggle, cap in GiB with Set, used / cap, parked
+      conversations per model with tokens, bytes and age); model cards with expert tensors get a
+      MoE offload `off` / `auto` / `on` selector, the expert layers on the CPU and the
+      `applies` note; the telemetry log shows experts on the CPU and the restored tokens / restore
+      time. Hidden against servers without the features (no `kv_park`, `expert_bytes` 0). Builds;
+      not yet seen against a server built from af9f8dd.
 
 - [x] 🟫 **MEM-5** `P2` Expert offload for MoE models: experts on the CPU, the rest on the GPU
       Design in docs/moe.md. Step 1, benchmark on the RTX 5090 laptop: the 26B full GPU, a layer
