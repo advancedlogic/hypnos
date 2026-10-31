@@ -121,12 +121,21 @@ pub async fn list_catalog(
         .into());
     };
     let root = state.models_dir.clone();
-    let configured: Vec<(String, bool)> = state
+    // Id, enabled, and the weights file it runs (to name the configured variant).
+    let configured: Vec<(String, bool, PathBuf)> = state
         .scheduler
         .status()
         .models
         .into_iter()
-        .map(|m| (m.id, m.enabled))
+        .map(|m| {
+            let weights = state
+                .scheduler
+                .memory()
+                .get_model_state(&m.id)
+                .map(|(c, _)| c.weights_path)
+                .unwrap_or_default();
+            (m.id, m.enabled, weights)
+        })
         .collect();
     let apple_silicon = cfg!(all(target_os = "macos", target_arch = "aarch64"));
     // Reading GGUF headers touches the disk: off the async runtime.
@@ -169,13 +178,32 @@ pub async fn list_catalog(
                         }
                     })
                     .collect();
-                let config = configured.iter().find(|(id, _)| *id == e.id);
+                let config = configured.iter().find(|(id, _, _)| *id == e.id);
+                // The variant whose weights file the configured model runs.
+                let configured_quant = config.and_then(|(_, _, weights)| {
+                    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+                    e.variants.iter().find_map(|v| {
+                        let w = v
+                            .files
+                            .iter()
+                            .find(|f| f.role == hypnos_core::catalog::FileRole::Weights)?;
+                        let local = root.join(w.local.trim_end_matches('/'));
+                        let local = match &w.entry {
+                            Some(entry) => local.join(entry),
+                            None => local,
+                        };
+                        (canon(&local) == canon(weights)).then(|| v.quant.clone())
+                    })
+                });
                 let mut entry = serde_json::to_value(e).unwrap_or_default();
                 if let serde_json::Value::Object(map) = &mut entry {
                     map.remove("config");
                     map.insert("configured".into(), config.is_some().into());
-                    if let Some((_, enabled)) = config {
+                    if let Some((_, enabled, _)) = config {
                         map.insert("enabled".into(), (*enabled).into());
+                    }
+                    if let Some(q) = configured_quant {
+                        map.insert("configured_quant".into(), q.into());
                     }
                     map.insert(
                         "variants".into(),

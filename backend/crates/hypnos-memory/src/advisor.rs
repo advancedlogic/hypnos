@@ -120,6 +120,9 @@ pub struct AdvisorRequest {
 pub struct Budgets {
     pub tier1_bytes: u64,
     pub tier2_bytes: u64,
+    /// What a CPU model (docling, GLiNER) may use: RAM after the OS reserve. The server places
+    /// it in free RAM, pushing idle RAM-only models out, not inside the warm-memory budget.
+    pub host_bytes: u64,
     pub unified_memory: bool,
 }
 
@@ -130,6 +133,7 @@ pub fn budgets(req: &AdvisorRequest) -> Budgets {
         Budgets {
             tier1_bytes: working_set.saturating_sub(2 * GIB),
             tier2_bytes: uma_pinned_ram_budget(u64::MAX, req.ram_bytes, working_set),
+            host_bytes: req.ram_bytes.saturating_sub(OS_RESERVE_BYTES),
             unified_memory: true,
         }
     } else {
@@ -137,6 +141,7 @@ pub fn budgets(req: &AdvisorRequest) -> Budgets {
             tier1_bytes: req.vram_bytes.saturating_sub(512 * MIB),
             // The server warns above half of physical RAM: pinned memory is gone for the OS.
             tier2_bytes: (req.ram_bytes / 2).min(req.ram_bytes.saturating_sub(OS_RESERVE_BYTES)),
+            host_bytes: req.ram_bytes.saturating_sub(OS_RESERVE_BYTES),
             unified_memory: false,
         }
     }
@@ -236,7 +241,11 @@ fn size<'a>(
             None,
             1,
             b.tier1_bytes,
-            b.tier2_bytes,
+            if cfg.runs_on_cpu() {
+                b.host_bytes
+            } else {
+                b.tier2_bytes
+            },
             b.unified_memory,
         )
     };
@@ -723,6 +732,14 @@ mod tests {
             "{:?}",
             a.models.iter().map(|m| &m.id).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn cpu_models_use_free_ram_not_the_warm_budget() {
+        // A 16 GB Mac has 1.3 GiB of warm memory; docling (1.8 GiB) runs in free RAM.
+        let needs = [Need::Chat, Need::Vision, Need::Voice, Need::Documents];
+        let a = ask(0, 16, true, &needs).unwrap();
+        covers(&a, &needs);
     }
 
     #[test]

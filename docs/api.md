@@ -297,7 +297,7 @@ that modality (primary or additional).
 | `architecture` | for `engine: "ggml_llama"`, the GGUF's `general.architecture`; always one of `tested_architectures` |
 | `capabilities` | beyond the modalities: `thinking` (`reasoning_effort`, 7.1), `tools` (7.5) |
 | `lineup` | part of the default lineup (`models.manifest`) |
-| `configured`, `enabled` | the config has a `[[models]]` block with this id; `enabled` only when configured |
+| `configured`, `enabled`, `configured_quant` | the server's pool has a model with this id; `enabled` only when configured; `configured_quant` names the variant whose weights file it runs (absent when it runs a file of no variant) |
 | `variants[].size_bytes` | this machine's files (`files[].platform`: `all`, `macos-arm64`, `other`) |
 | `files[].role` | the config key the file fills: `weights`, `aux` (projector or VAE), `text_encoder`, `tokenizer`, `voices`; `data` = needed beside the weights, named by no key |
 | `files[].repo`, `remote` | a Hugging Face repository (download `https://huggingface.co/<repo>/resolve/main/<remote>`) or an `https://` base URL `remote` is appended to; a `remote` ending in `/` is a whole folder |

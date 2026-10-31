@@ -1003,6 +1003,9 @@ pub struct CatalogEntry {
     /// Present only when `configured`.
     #[serde(default)]
     pub enabled: Option<bool>,
+    /// The variant the configured model runs, when its weights are one of the catalog's.
+    #[serde(default)]
+    pub configured_quant: Option<String>,
     #[serde(default)]
     pub variants: Vec<CatalogVariant>,
     #[serde(flatten)]

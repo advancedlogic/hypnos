@@ -378,6 +378,8 @@ export interface CatalogEntry {
   configured: boolean;
   /** Only when `configured`. */
   enabled?: boolean;
+  /** The variant the configured model runs, when its weights are one of the catalog's. */
+  configured_quant?: string;
   variants: CatalogVariant[];
 }
 

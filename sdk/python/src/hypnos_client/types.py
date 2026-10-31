@@ -491,6 +491,8 @@ class CatalogEntry(TypedDict):
     configured: bool
     #: Only when ``configured``.
     enabled: NotRequired[bool]
+    #: The variant the configured model runs, when its weights are one of the catalog's.
+    configured_quant: NotRequired[str]
     variants: List[CatalogVariant]
 
 
