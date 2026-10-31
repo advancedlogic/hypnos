@@ -4,6 +4,7 @@ import { notifyIfAway } from './appPrefs.js';
 
 const CHATS_KEY = 'chats';
 const LAST_MODEL_KEY = 'lastModel';
+const THINKING_KEY = 'thinking';
 const TITLE_CHARS = 48;
 
 function newId() {
@@ -19,11 +20,15 @@ function titleFrom(text) {
  * The conversations, persisted as one list. A chat is
  * `{ id, title, model, system, messages, updatedAt }`; an assistant message carries the
  * response's `telemetry` and `usage`, or `error`, and `stopped` when the user cut it short.
+ * With thinking on it also keeps the model's thoughts (`reasoning`) and how long they took
+ * (`thoughtSeconds`, set when the answer starts); they are shown, never sent back.
  */
 export class ChatStore {
   chats = $state([]);
   currentId = $state(null);
   lastModel = $state(null);
+  /** Thinking level for new answers (`none`, `low`, `medium`, `high`). */
+  thinking = $state('none');
   /** The telemetry of the most recent response, for the stats panel. */
   lastTelemetry = $state(null);
   /** Chat id -> request id of the answer being generated. Not persisted. */
@@ -41,6 +46,7 @@ export class ChatStore {
         if (!m.pending) continue;
         delete m.pending;
         delete m.tool;
+        delete m.thinkingSince;
         m.stopped = true;
       }
     }
@@ -49,6 +55,7 @@ export class ChatStore {
     const last = this.chats.map((c) => c.messages.findLast((m) => m.telemetry)).find(Boolean);
     if (last) this.lastTelemetry = { model: last.model, telemetry: last.telemetry, usage: last.usage };
     this.lastModel = await load(LAST_MODEL_KEY, null);
+    this.thinking = await load(THINKING_KEY, 'none');
     this.currentId = this.chats[0]?.id ?? null;
   }
 
@@ -86,6 +93,11 @@ export class ChatStore {
     this.lastModel = model;
     save(LAST_MODEL_KEY, model);
     this.#persist();
+  }
+
+  setThinking(level) {
+    this.thinking = level;
+    save(THINKING_KEY, level);
   }
 
   setSystem(chat, system) {
@@ -144,6 +156,7 @@ export class ChatStore {
     chat.updatedAt = Date.now();
     this.#bumpToTop(chat);
 
+    // Only what was said goes back to the server: never an answer's `reasoning`.
     const history = chat.messages
       .slice(0, -1)
       .filter((m) => !m.error && (m.content || m.attachments?.length || m.image))
@@ -155,10 +168,28 @@ export class ChatStore {
       }));
     if (chat.system.trim()) history.unshift({ role: 'system', content: chat.system });
 
+    // The thoughts end where the answer (or a tool call) starts.
+    const endThinking = () => {
+      if (answer.thinkingSince === undefined) return;
+      answer.thoughtSeconds = (Date.now() - answer.thinkingSince) / 1000;
+      delete answer.thinkingSince;
+    };
+
     try {
       const { cancelled } = await api.chat(requestId, chat.model, history, {
         tools: api.imageToolOn(),
-        onToolCall: ({ prompt, size }) => (answer.tool = { prompt, size, startedAt: Date.now() }),
+        thinking: this.thinking,
+        onReasoning: (text) => {
+          if (!answer.reasoning) {
+            answer.reasoning = '';
+            answer.thinkingSince = Date.now();
+          }
+          answer.reasoning += text;
+        },
+        onToolCall: ({ prompt, size }) => {
+          endThinking();
+          answer.tool = { prompt, size, startedAt: Date.now() };
+        },
         onImage: (image) => {
           answer.image = image;
           delete answer.tool;
@@ -167,7 +198,10 @@ export class ChatStore {
           answer.model = id;
           answer.note = `answered by ${id}: ${reason}`;
         },
-        onDelta: (text) => (answer.content += text),
+        onDelta: (text) => {
+          endThinking();
+          answer.content += text;
+        },
         onDone: ({ telemetry, usage, requestId }) => {
           answer.telemetry = telemetry ?? undefined;
           answer.usage = usage ?? undefined;
@@ -180,6 +214,7 @@ export class ChatStore {
     } catch (e) {
       answer.error = api.errorMessage(e);
     } finally {
+      endThinking();
       delete answer.pending;
       delete this.running[chat.id];
       chat.updatedAt = Date.now();

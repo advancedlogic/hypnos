@@ -20,6 +20,13 @@ app's commands.
   current tier. Enter sends, Shift+Enter adds a line. Stop cuts an answer short (the server
   stops at the next token); the refresh icon under any request or answer asks that request again and drops the turns after it (with a confirmation when later turns go). Each chat keeps its own model and
   system prompt. Chats are saved on this machine.
+- **Thinking** (the chat header, next to the model; Off, Low, Medium, High, remembered): how
+  much a thinking model (Gemma 4, LFM3; others ignore it) may reason before it answers
+  (`reasoning_effort`, 512 / 2048 / 6144 thinking tokens, with `max_tokens` raised to leave
+  2048 for the answer). The thoughts stream into an orange panel above the answer ("Thinking…")
+  that folds to "Thought for N s" once the answer starts; click it to read them again. They are
+  saved with the chat but never sent back to the model. After an image tool call the short
+  comment round does not think.
 - **Attachments** (the paperclip, drag and drop onto the chat, or paste): each file is prepared
   when it is added and shows as a chip until it is ready. Images are scaled to 1024 px and sent
   to a model that sees (when the chat's model cannot, another one answers and the answer says

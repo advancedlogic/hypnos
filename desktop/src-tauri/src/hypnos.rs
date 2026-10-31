@@ -7,9 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hypnos_client::{
-    ChatMessage, ChatRequest, Client, Content, ContentPart, Error, KvParkStatus, LogList, LogQuery,
-    LogRecord, MemoryStatus, MemoryTier, ModelStatus, MoeOffload, MoeOffloadSwitch, Telemetry,
-    ToolChoice, Usage,
+    ChatMessage, ChatRequest, ChatStream, Client, Content, ContentPart, Error, KvParkStatus,
+    LogList, LogQuery, LogRecord, MemoryStatus, MemoryTier, ModelStatus, MoeOffload,
+    MoeOffloadSwitch, ReasoningEffort, Telemetry, ToolChoice, Usage,
 };
 
 use crate::attachments::Attachment;
@@ -407,6 +407,8 @@ impl InMessage {
 pub enum ChatEvent {
     /// Another model answers than the one asked for, and why (e.g. the message has images).
     Model { id: String, reason: String },
+    /// A piece of the model's thoughts (thinking on); they all come before the first `Delta`.
+    Reasoning { text: String },
     /// A piece of the answer.
     Delta { text: String },
     /// The chat model asked for an image; it is being generated.
@@ -437,7 +439,11 @@ pub struct ChatOutcome {
 /// With `tools`, the chat model may ask for an image (see `images.rs`): the request never shows
 /// as text, the image is generated and sent as an `image` event, and the model then comments on
 /// it in a short second round.
+///
+/// `reasoning_effort` is the thinking level (absent or `none` = off); the thoughts stream as
+/// `reasoning` events before the answer.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn hypnos_chat<R: Runtime>(
     app: AppHandle<R>,
     hypnos: State<'_, Hypnos>,
@@ -445,8 +451,10 @@ pub async fn hypnos_chat<R: Runtime>(
     model: String,
     messages: Vec<InMessage>,
     tools: Option<bool>,
+    reasoning_effort: Option<ReasoningEffort>,
     on_event: Channel<ChatEvent>,
 ) -> CmdResult<ChatOutcome> {
+    let thinking = Thinking(reasoning_effort.unwrap_or(ReasoningEffort::None));
     let client = hypnos.client().await?;
     let models = client.memory_status().await?.models;
     let can_see = |id: &str| models.iter().any(|m| m.id == id && serves(m, "vision"));
@@ -481,11 +489,10 @@ pub async fn hypnos_chat<R: Runtime>(
     let (tx, rx) = tokio::sync::oneshot::channel();
     let task = tauri::async_runtime::spawn(async move {
         let result = if image_tool {
-            answer_with_image_tool(&app, &client, &model, messages, &on_event).await
+            answer_with_image_tool(&app, &client, &model, messages, thinking, &on_event).await
         } else {
-            stream_answer(&client, &ChatRequest::new(model, messages), &on_event)
-                .await
-                .map(|_| ())
+            let request = thinking.apply(ChatRequest::new(model, messages));
+            stream_answer(&client, &request, &on_event).await
         };
         let _ = tx.send(result);
     });
@@ -499,6 +506,69 @@ pub async fn hypnos_chat<R: Runtime>(
     }
 }
 
+/// Room left for the answer when the model thinks: the thoughts count toward `max_tokens`.
+const ANSWER_TOKENS: u32 = 2048;
+
+/// The thinking level of a chat. The server budgets 512 / 2048 / 6144 thinking tokens for
+/// low / medium / high, so `max_tokens` becomes that budget plus [`ANSWER_TOKENS`] (2560 / 4096
+/// / 8192, the last one the server's default `max_tokens_cap`); off, the server's default
+/// `max_tokens` applies as before and the field is left out (the server's default is off).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Thinking(ReasoningEffort);
+
+impl Thinking {
+    const OFF: Self = Self(ReasoningEffort::None);
+
+    fn budget(self) -> u32 {
+        match self.0 {
+            ReasoningEffort::None => 0,
+            ReasoningEffort::Low => 512,
+            ReasoningEffort::Medium => 2048,
+            ReasoningEffort::High => 6144,
+        }
+    }
+
+    fn apply(self, request: ChatRequest) -> ChatRequest {
+        match self.budget() {
+            0 => request,
+            budget => request
+                .reasoning_effort(self.0)
+                .max_tokens(budget + ANSWER_TOKENS),
+        }
+    }
+}
+
+/// Reads a stream to its end: thoughts go out as `Reasoning` events, answer pieces through
+/// `text` (which says what to send as a `Delta`, if anything). False when the window is gone.
+async fn relay(
+    stream: &mut ChatStream,
+    on_event: &Channel<ChatEvent>,
+    mut text: impl FnMut(&str) -> Option<String>,
+) -> CmdResult<bool> {
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        let mut thought = String::new();
+        let mut piece = String::new();
+        for choice in &chunk.choices {
+            thought.push_str(choice.delta.reasoning_content.as_deref().unwrap_or(""));
+            piece.push_str(choice.delta.content.as_deref().unwrap_or(""));
+        }
+        if !thought.is_empty()
+            && on_event
+                .send(ChatEvent::Reasoning { text: thought })
+                .is_err()
+        {
+            return Ok(false);
+        }
+        if let Some(out) = (!piece.is_empty()).then(|| text(&piece)).flatten() {
+            if on_event.send(ChatEvent::Delta { text: out }).is_err() {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
 /// Streams one answer and ends it with `Done`.
 async fn stream_answer(
     client: &Client,
@@ -506,20 +576,13 @@ async fn stream_answer(
     on_event: &Channel<ChatEvent>,
 ) -> CmdResult<()> {
     let mut stream = client.chat_stream(request).await?;
-    {
-        let mut pieces = stream.text();
-        while let Some(piece) = pieces.next().await {
-            let text = piece?;
-            if on_event.send(ChatEvent::Delta { text }).is_err() {
-                return Ok(()); // the window is gone
-            }
-        }
+    if relay(&mut stream, on_event, |p| Some(p.to_string())).await? {
+        send_done(&stream, on_event);
     }
-    send_done(&stream, on_event);
     Ok(())
 }
 
-fn send_done(stream: &hypnos_client::ChatStream, on_event: &Channel<ChatEvent>) {
+fn send_done(stream: &ChatStream, on_event: &Channel<ChatEvent>) {
     let _ = on_event.send(ChatEvent::Done {
         telemetry: stream.telemetry().cloned().map(Box::new),
         usage: stream.usage().cloned(),
@@ -535,14 +598,15 @@ async fn answer_with_image_tool<R: Runtime>(
     client: &Client,
     model: &str,
     messages: Vec<ChatMessage>,
+    thinking: Thinking,
     on_event: &Channel<ChatEvent>,
 ) -> CmdResult<()> {
-    match answer_with_native_tool(app, client, model, messages.clone(), on_event).await {
+    match answer_with_native_tool(app, client, model, messages.clone(), thinking, on_event).await {
         Err(e)
             if e.kind == "bad_request"
                 && e.detail.as_deref().is_some_and(|d| d.contains("tool")) =>
         {
-            answer_with_prompt_tool(app, client, model, messages, on_event).await
+            answer_with_prompt_tool(app, client, model, messages, thinking, on_event).await
         }
         other => other,
     }
@@ -550,25 +614,26 @@ async fn answer_with_image_tool<R: Runtime>(
 
 /// `generate_image` as a real tool: the answer streams as usual, a call becomes an image and a
 /// `tool` result, and the model comments on it in a second round (tools hidden, so no new call).
+///
+/// The first round thinks at the chat's level (it decides whether to draw and what); the second
+/// one never does ([`Thinking::OFF`]): it only says in one sentence that the image is ready.
 async fn answer_with_native_tool<R: Runtime>(
     app: &AppHandle<R>,
     client: &Client,
     model: &str,
     messages: Vec<ChatMessage>,
+    thinking: Thinking,
     on_event: &Channel<ChatEvent>,
 ) -> CmdResult<()> {
     let tools = vec![image_tool_spec()];
-    let request = ChatRequest::new(model, messages.clone())
-        .tools(tools.clone())
-        .tool_choice(ToolChoice::Auto);
+    let request = thinking.apply(
+        ChatRequest::new(model, messages.clone())
+            .tools(tools.clone())
+            .tool_choice(ToolChoice::Auto),
+    );
     let mut stream = client.chat_stream(&request).await?;
-    {
-        let mut pieces = stream.text();
-        while let Some(piece) = pieces.next().await {
-            if on_event.send(ChatEvent::Delta { text: piece? }).is_err() {
-                return Ok(());
-            }
-        }
+    if !relay(&mut stream, on_event, |p| Some(p.to_string())).await? {
+        return Ok(());
     }
     let calls = stream.tool_calls().to_vec();
     let Some(call) = calls.iter().find(|c| c.function.name == IMAGE_TOOL) else {
@@ -598,20 +663,25 @@ async fn answer_with_native_tool<R: Runtime>(
         };
         follow_up.push(ChatMessage::tool(c.id.clone(), result));
     }
-    let request = ChatRequest::new(model, follow_up)
-        .tools(tools)
-        .tool_choice(ToolChoice::None);
+    let request = Thinking::OFF.apply(
+        ChatRequest::new(model, follow_up)
+            .tools(tools)
+            .tool_choice(ToolChoice::None),
+    );
     stream_answer(client, &request, on_event).await
 }
 
 /// The prompt convention for models without a native tool format: the first round runs with the
 /// tool instruction and its start held back by a [`ToolGate`]; a call becomes an image and a
-/// second, instruction-free round for the model's comment.
+/// second, instruction-free round for the model's comment. Thinking as in
+/// [`answer_with_native_tool`]: the first round at the chat's level (the thoughts arrive apart
+/// from the text the gate reads), the comment without.
 async fn answer_with_prompt_tool<R: Runtime>(
     app: &AppHandle<R>,
     client: &Client,
     model: &str,
     messages: Vec<ChatMessage>,
+    thinking: Thinking,
     on_event: &Channel<ChatEvent>,
 ) -> CmdResult<()> {
     let mut with_tool = messages.clone();
@@ -627,18 +697,11 @@ async fn answer_with_prompt_tool<R: Runtime>(
         _ => with_tool.insert(0, ChatMessage::system(TOOL_INSTRUCTION)),
     }
     let mut stream = client
-        .chat_stream(&ChatRequest::new(model, with_tool))
+        .chat_stream(&thinking.apply(ChatRequest::new(model, with_tool)))
         .await?;
     let mut gate = ToolGate::default();
-    {
-        let mut pieces = stream.text();
-        while let Some(piece) = pieces.next().await {
-            if let Some(text) = gate.feed(&piece?) {
-                if on_event.send(ChatEvent::Delta { text }).is_err() {
-                    return Ok(());
-                }
-            }
-        }
+    if !relay(&mut stream, on_event, |p| gate.feed(p)).await? {
+        return Ok(());
     }
     let call = match gate.finish() {
         Ok(call) => call,
@@ -665,7 +728,8 @@ async fn answer_with_prompt_tool<R: Runtime>(
     follow_up.push(ChatMessage::user(
         "[The image is now shown to the user. In one short sentence, tell them it is ready and what it shows; do not claim to see it and do not ask a question.]",
     ));
-    stream_answer(client, &ChatRequest::new(model, follow_up), on_event).await
+    let request = Thinking::OFF.apply(ChatRequest::new(model, follow_up));
+    stream_answer(client, &request, on_event).await
 }
 
 /// KV parking (MEM-4): whether conversations are kept across a model swap, and what is held.
@@ -812,6 +876,78 @@ mod tests {
     }
 
     #[test]
+    fn thinking_leaves_room_for_the_answer() {
+        let request = |t: Thinking| t.apply(ChatRequest::new("m", vec![]));
+        let off = request(Thinking::OFF);
+        assert_eq!((off.reasoning_effort, off.max_tokens), (None, None));
+        let low = request(Thinking(ReasoningEffort::Low));
+        assert_eq!(low.reasoning_effort, Some(ReasoningEffort::Low));
+        assert_eq!(low.max_tokens, Some(512 + ANSWER_TOKENS));
+        let high = request(Thinking(ReasoningEffort::High));
+        assert_eq!(high.max_tokens, Some(8192));
+        let wire = serde_json::to_value(request(Thinking(ReasoningEffort::Medium))).unwrap();
+        assert_eq!(wire["reasoning_effort"], "medium");
+        assert_eq!(wire["max_tokens"], 4096);
+    }
+
+    /// The thoughts of a thinking model (Gemma 4, LFM3) stream as `reasoning` events before the
+    /// answer: `HYPNOS_TEST_URL=... cargo test thinks_before_answering -- --ignored`.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn thinks_before_answering() {
+        use std::sync::Mutex as StdMutex;
+        use tauri::Manager;
+
+        let url = std::env::var("HYPNOS_TEST_URL").expect("HYPNOS_TEST_URL");
+        let app = tauri::test::mock_builder()
+            .manage(Hypnos::default())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        hypnos_connect(app.state(), url).await.unwrap();
+        let model = hypnos_route(app.state(), "text_generation".into(), None)
+            .await
+            .unwrap()
+            .expect("no chat model");
+        let events = Arc::new(StdMutex::new(Vec::<String>::new()));
+        let e = events.clone();
+        let channel = Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(s) = body {
+                let event: serde_json::Value = serde_json::from_str(&s).unwrap();
+                e.lock()
+                    .unwrap()
+                    .push(event["event"].as_str().unwrap().to_string());
+            }
+            Ok(())
+        });
+        let message = vec![InMessage {
+            role: "user".into(),
+            content: "What is 17 * 23? Answer with the number.".into(),
+            attachments: vec![],
+            image_prompt: None,
+        }];
+        hypnos_chat(
+            app.handle().clone(),
+            app.state(),
+            "think1".into(),
+            model,
+            message,
+            None,
+            Some(ReasoningEffort::Low),
+            channel,
+        )
+        .await
+        .unwrap();
+        let events = events.lock().unwrap();
+        let first_delta = events.iter().position(|e| e == "delta").expect("no answer");
+        let last_thought = events
+            .iter()
+            .rposition(|e| e == "reasoning")
+            .expect("no thoughts");
+        assert!(last_thought < first_delta, "{events:?}");
+        assert_eq!(events.last().map(String::as_str), Some("done"));
+    }
+
+    #[test]
     fn errors_read_as_sentences() {
         let e: ErrorPayload = Error::Connection("refused".into()).into();
         assert_eq!(e.kind, "connection");
@@ -889,6 +1025,7 @@ mod tests {
                 };
                 match event["event"].as_str() {
                     Some("delta") => t.lock().unwrap().push_str(event["text"].as_str().unwrap()),
+                    Some("reasoning") => {}
                     Some("done") => {
                         assert!(event["telemetry"]["engine"].is_object(), "{event}");
                         *d.lock().unwrap() = true;
@@ -916,6 +1053,7 @@ mod tests {
             model.clone(),
             message("Reply with exactly: hello from rust"),
             None,
+            None,
             channel,
         )
         .await
@@ -938,6 +1076,7 @@ mod tests {
             model,
             message("Count from 1 to 500, one number per line."),
             None,
+            None,
             channel,
         );
         let cancel = async {
@@ -957,6 +1096,7 @@ mod tests {
             "r3".into(),
             "no-such-model".into(),
             message("hi"),
+            None,
             None,
             channel,
         )
@@ -1008,6 +1148,7 @@ mod tests {
             "log1".into(),
             model.clone(),
             message,
+            None,
             None,
             channel,
         )

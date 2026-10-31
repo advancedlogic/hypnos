@@ -49,6 +49,24 @@
   // 1. Chat & Vision Playground State (gemma4:26b-q4 / gemma4:e4b-q4)
   // -------------------------------------------------------------------------
   let chatModel = $state('gemma4:26b-q4');
+  // Every enabled model that chats or sees, from /v1/memory/status (the default lineup until it loads).
+  const chatModels = $derived.by(() => {
+    const listed = (memoryStatus?.models || [])
+      .filter((m) => m.enabled !== false)
+      .map((m) => ({ id: m.id, mods: m.modalities || [m.modality] }))
+      .filter((m) => m.mods.includes('text_generation') || m.mods.includes('vision'))
+      .map((m) => ({ id: m.id, label: m.mods.includes('vision') ? 'Text + Vision' : 'Text' }));
+    return listed.length > 0
+      ? listed
+      : [
+          { id: 'gemma4:26b-q4', label: 'Text + Vision' },
+          { id: 'gemma4:e4b-q4', label: 'Edge Multimodal' },
+        ];
+  });
+  // Keep the selection valid when the server's lineup differs (e.g. the LFM3 profile).
+  $effect(() => {
+    if (!chatModels.some((m) => m.id === chatModel)) chatModel = chatModels[0].id;
+  });
   let chatPrompt = $state('Explain how Gemma 4 hybrid Sliding Window Attention reduces KV cache VRAM usage.');
   let includeVisionImage = $state(false);
   // 1x1 transparent PNG: lets the vision code path be exercised without a real picture.
@@ -63,6 +81,12 @@
   let chatMaxTokens = $state(128);
   let chatStream = $state(false);
   let chatMessages = $state([]);
+  // Thinking level -> `reasoning_effort`. Budgets mirror the server's thinking-token caps; the
+  // thoughts count toward max_tokens, so the request adds the budget on top of "Max New Tokens".
+  let chatThinking = $state('none');
+  const THINKING_BUDGETS = { none: 0, low: 512, medium: 2048, high: 6144 };
+  // The streaming reply in progress (null when idle), shown above the history.
+  let chatLive = $state(null);
 
   // -------------------------------------------------------------------------
   // 2. Audio STT Playground State (gemma4:e4b-q4)
@@ -560,9 +584,11 @@
     const payload = {
       model: chatModel,
       messages: [{ role: 'user', content: userContent }],
-      max_tokens: Number(chatMaxTokens),
+      max_tokens: Number(chatMaxTokens) + THINKING_BUDGETS[chatThinking],
       num_ctx: Number(chatContextLen),
       stream: chatStream,
+      // Off omits the field (same as "none"), so older servers keep working.
+      ...(chatThinking !== 'none' && { reasoning_effort: chatThinking }),
     };
 
     try {
@@ -580,19 +606,42 @@
       if (chatStream) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
-        let accumulated = '';
         let capturedTelemetry = null;
+        let buffer = '';
+        const startedAt = performance.now();
+        chatLive = {
+          prompt: chatPrompt,
+          hasImage: includeVisionImage,
+          image: sentImage,
+          reply: '',
+          reasoning: '',
+          thinkingMs: null,
+          model: chatModel,
+          telemetry: null,
+          showReasoning: false,
+        };
+        const live = chatLive;
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          const text = decoder.decode(value);
-          for (const line of text.split('\n')) {
+          // Keep a partial line for the next read: an SSE event can straddle two chunks.
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          for (const line of lines) {
             if (line.startsWith('data: ') && line !== 'data: [DONE]') {
               try {
                 const chunk = JSON.parse(line.slice(6));
-                if (chunk.choices?.[0]?.delta?.content) {
-                  accumulated += chunk.choices[0].delta.content;
+                const delta = chunk.choices?.[0]?.delta;
+                if (delta?.reasoning_content) {
+                  live.reasoning += delta.reasoning_content;
+                }
+                if (delta?.content) {
+                  if (live.reasoning && live.thinkingMs === null) {
+                    live.thinkingMs = performance.now() - startedAt;
+                  }
+                  live.reply += delta.content;
                 }
                 if (chunk.hypnos_telemetry) {
                   capturedTelemetry = chunk.hypnos_telemetry;
@@ -601,18 +650,12 @@
             }
           }
         }
+        if (live.reasoning && live.thinkingMs === null) {
+          live.thinkingMs = performance.now() - startedAt;
+        }
 
-        chatMessages = [
-          {
-            prompt: chatPrompt,
-            hasImage: includeVisionImage,
-            image: sentImage,
-            reply: accumulated,
-            model: chatModel,
-            telemetry: capturedTelemetry,
-          },
-          ...chatMessages,
-        ];
+        chatMessages = [{ ...live, telemetry: capturedTelemetry }, ...chatMessages];
+        chatLive = null;
         recordTelemetry(
           chatModel,
           includeVisionImage ? 'vision' : 'text_generation',
@@ -627,6 +670,9 @@
             hasImage: includeVisionImage,
             image: sentImage,
             reply,
+            reasoning: data.choices?.[0]?.message?.reasoning_content || '',
+            thinkingMs: null,
+            showReasoning: false,
             model: chatModel,
             telemetry: data.hypnos_telemetry,
           },
@@ -642,8 +688,15 @@
     } catch (err) {
       lastError = err.message;
     } finally {
+      chatLive = null;
       isLoading = false;
     }
+  }
+
+  function thoughtSummary(msg) {
+    const words = msg.reasoning.trim().split(/\s+/).filter(Boolean).length;
+    const secs = msg.thinkingMs != null ? ` for ${(msg.thinkingMs / 1000).toFixed(1)}s` : '';
+    return `Thought${secs} · ${words} word${words === 1 ? '' : 's'}`;
   }
 
   // ---- WAV encoding helpers for microphone capture --------------------------------------
@@ -1482,8 +1535,9 @@
                   bind:value={chatModel}
                   class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
                 >
-                  <option value="gemma4:26b-q4">gemma4:26b-q4 (Text + Vision)</option>
-                  <option value="gemma4:e4b-q4">gemma4:e4b-q4 (Edge Multimodal)</option>
+                  {#each chatModels as m (m.id)}
+                    <option value={m.id}>{m.id} ({m.label})</option>
+                  {/each}
                 </select>
               </div>
 
@@ -1522,6 +1576,25 @@
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" bind:checked={chatStream} class="rounded accent-indigo-500" />
                 <span>Stream SSE Response</span>
+              </label>
+
+              <label class="flex items-center gap-2" for="chat-thinking">
+                <span>Thinking</span>
+                <select
+                  id="chat-thinking"
+                  bind:value={chatThinking}
+                  class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-xs text-white"
+                >
+                  <option value="none">Off</option>
+                  <option value="low">Low (512)</option>
+                  <option value="medium">Medium (2048)</option>
+                  <option value="high">High (6144)</option>
+                </select>
+                {#if chatThinking !== 'none'}
+                  <span class="text-[11px] text-slate-500">
+                    max_tokens sent: {Number(chatMaxTokens) + THINKING_BUDGETS[chatThinking]}
+                  </span>
+                {/if}
               </label>
             </div>
 
@@ -1605,6 +1678,49 @@
             </button>
           </form>
 
+          {#snippet chatThoughts(msg, live)}
+            {#if msg.reasoning}
+              {@const thinking = live && !msg.reply}
+              {@const open = thinking || msg.showReasoning}
+              <div class="rounded border border-orange-500/40 bg-orange-950/30 text-orange-200">
+                <button
+                  type="button"
+                  disabled={thinking}
+                  onclick={() => (msg.showReasoning = !msg.showReasoning)}
+                  aria-expanded={open}
+                  class="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-[11px] font-semibold text-orange-300 hover:text-orange-200 disabled:cursor-default"
+                >
+                  <span class="inline-block w-3 transition-transform {open ? 'rotate-90' : ''}">▸</span>
+                  {#if thinking}
+                    <span class="animate-pulse">Thinking…</span>
+                  {:else}
+                    {thoughtSummary(msg)}
+                  {/if}
+                </button>
+                {#if open}
+                  <div class="px-2.5 pb-2.5 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-orange-100/90 max-h-60 overflow-y-auto">
+                    {msg.reasoning}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          {/snippet}
+
+          {#if chatLive}
+            <div class="rounded-lg border border-indigo-800/60 bg-slate-950 p-3 space-y-2 text-xs">
+              <div class="text-slate-400">
+                <strong class="text-indigo-300">{chatLive.model}</strong> • streaming…
+              </div>
+              <div class="text-slate-300"><strong>User:</strong> {chatLive.prompt}</div>
+              {@render chatThoughts(chatLive, true)}
+              {#if chatLive.reply}
+                <div class="text-emerald-200 font-mono bg-slate-900/90 p-2.5 rounded border border-slate-800 whitespace-pre-wrap">
+                  {chatLive.reply}
+                </div>
+              {/if}
+            </div>
+          {/if}
+
           {#if chatMessages.length > 0}
             <div class="space-y-3 pt-2 border-t border-slate-800 max-h-80 overflow-y-auto">
               {#each chatMessages as msg}
@@ -1630,6 +1746,7 @@
                       class="max-h-32 rounded border border-slate-700 object-contain bg-slate-950"
                     />
                   {/if}
+                  {@render chatThoughts(msg, false)}
                   <div class="text-emerald-200 font-mono bg-slate-900/90 p-2.5 rounded border border-slate-800">
                     {msg.reply}
                   </div>

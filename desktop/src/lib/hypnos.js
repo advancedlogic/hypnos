@@ -26,23 +26,33 @@ export const setRoutes = (routes) => invoke('hypnos_set_routes', { routes });
 /** The model that would serve `modality` now, preferring `preferred` when it can. */
 export const route = (modality, preferred) => invoke('hypnos_route', { modality, preferred: preferred ?? null });
 
+/** Thinking levels for `chat` (`reasoning_effort`); `none` is off. */
+export const THINKING_LEVELS = [
+  { value: 'none', label: 'Off' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+];
+
 /**
  * Streams an answer: `onModel(id, reason)` when another model answers (images for a model that
- * cannot see them), `onDelta(text)` per piece, `onDone({ telemetry, usage, finishReason })` at
+ * cannot see them), `onReasoning(text)` per piece of the model's thoughts (with `thinking` other
+ * than `none`, before the answer), `onDelta(text)` per piece, `onDone({ telemetry, usage, finishReason })` at
  * the end. With `tools`, the model may ask for an image: `onToolCall({ prompt, size })`, then
  * `onImage({ dataUrl, prompt, size, model, seconds })`, then its comment as deltas. Resolves to
  * `{ cancelled }`; `cancelChat(requestId)` stops it.
  */
-export function chat(requestId, model, messages, { onModel, onDelta, onDone, onToolCall, onImage, tools = false }) {
+export function chat(requestId, model, messages, { onModel, onReasoning, onDelta, onDone, onToolCall, onImage, tools = false, thinking = 'none' }) {
   const onEvent = new Channel();
   onEvent.onmessage = (e) => {
     if (e.event === 'model') onModel?.(e.id, e.reason);
     else if (e.event === 'toolCall') onToolCall?.(e);
     else if (e.event === 'image') onImage?.(e);
+    else if (e.event === 'reasoning') onReasoning?.(e.text);
     else if (e.event === 'delta') onDelta(e.text);
     else if (e.event === 'done') onDone(e);
   };
-  return invoke('hypnos_chat', { requestId, model, messages, tools, onEvent });
+  return invoke('hypnos_chat', { requestId, model, messages, tools, reasoningEffort: thinking, onEvent });
 }
 
 export const cancelChat = (requestId) => invoke('hypnos_chat_cancel', { requestId });

@@ -194,6 +194,25 @@
     }
   }
 
+  /** Answer id -> thoughts panel opened by the user (it is open by itself only while thinking). */
+  let thoughtsOpen = $state({});
+
+  function thoughtsHeader(message) {
+    const s = message.thoughtSeconds;
+    if (s === undefined) return 'Thoughts';
+    return `Thought for ${s < 10 ? s.toFixed(1) : Math.round(s)} s`;
+  }
+
+  /** Keeps a scrolled box at its bottom while `value` grows (the thoughts as they stream). */
+  function followBottom(node, value) {
+    node.scrollTop = node.scrollHeight;
+    return {
+      update() {
+        if (node.scrollHeight - node.scrollTop - node.clientHeight < 40) node.scrollTop = node.scrollHeight;
+      },
+    };
+  }
+
   // `at` tells a regenerated answer from the one it replaced at the same index.
   function answerId(i) {
     return `${chat.id}:${i}:${chat.messages[i]?.at ?? ''}`;
@@ -370,6 +389,7 @@
   $effect(() => {
     const last = chat?.messages.at(-1);
     last?.content;
+    last?.reasoning;
     chat?.messages.length;
     if (stickToBottom && scroller) tick().then(() => scroller.scrollTo({ top: scroller.scrollHeight }));
   });
@@ -447,6 +467,19 @@
       {#if chat.model && modelTier(chat.model)}
         <span class="text-[11px] text-slate-500">{tierName(modelTier(chat.model))}</span>
       {/if}
+      <select
+        class="bg-transparent text-xs rounded-md px-2 py-1 hover:bg-slate-800 focus:outline-none focus:ring-1 focus:ring-orange-500/70
+          {store.thinking !== 'none' ? 'text-orange-300' : 'text-slate-400'}"
+        value={store.thinking}
+        onchange={(e) => store.setThinking(e.currentTarget.value)}
+        disabled={running}
+        title="Thinking: how much the model may reason before it answers (Gemma 4 and LFM3 models; others ignore it)"
+        aria-label="Thinking level"
+      >
+        {#each api.THINKING_LEVELS as level (level.value)}
+          <option value={level.value}>Thinking: {level.label}</option>
+        {/each}
+      </select>
       <button
         class="ml-auto p-1.5 rounded-md hover:bg-slate-800 {autoRead ? 'text-indigo-300' : 'text-slate-400'}"
         onclick={toggleAutoRead}
@@ -528,6 +561,34 @@
             </div>
           {:else}
             <div class="group">
+              {#if message.reasoning}
+                {@const live = message.thinkingSince !== undefined}
+                {@const open = live || thoughtsOpen[answerId(i)]}
+                <div class="mb-3 rounded-xl border border-orange-500/30 bg-orange-500/10 text-orange-200">
+                  <button
+                    class="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-orange-300 hover:text-orange-200 disabled:cursor-default"
+                    onclick={() => (thoughtsOpen[answerId(i)] = !thoughtsOpen[answerId(i)])}
+                    disabled={live}
+                    aria-expanded={open}
+                  >
+                    {#if live}
+                      <span class="w-2 h-2 rounded-full bg-orange-400 animate-pulse"></span>
+                      <span>Thinking…</span>
+                    {:else}
+                      <svg class="w-3 h-3 transition-transform {open ? 'rotate-90' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 6l6 6-6 6" />
+                      </svg>
+                      <span>{thoughtsHeader(message)}</span>
+                    {/if}
+                  </button>
+                  {#if open}
+                    <div
+                      class="max-h-72 overflow-y-auto px-3 pb-2 text-xs leading-relaxed text-orange-200/80 whitespace-pre-wrap break-words"
+                      use:followBottom={message.reasoning}
+                    >{message.reasoning.trim()}</div>
+                  {/if}
+                </div>
+              {/if}
               {#if message.image}
                 <figure class="mb-3 space-y-1.5">
                   <img src={message.image.dataUrl} alt={message.image.prompt} class="max-w-md w-full rounded-xl border border-slate-800" />
@@ -550,7 +611,7 @@
               {/if}
               {#if message.content}
                 <Markdown text={message.content} />
-              {:else if message.pending && !message.tool}
+              {:else if message.pending && !message.tool && !message.reasoning}
                 <div class="flex items-center gap-2 text-sm text-slate-500">
                   <span class="flex gap-1">
                     <span class="w-1.5 h-1.5 rounded-full bg-slate-500 animate-bounce"></span>

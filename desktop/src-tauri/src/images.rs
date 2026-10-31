@@ -292,6 +292,7 @@ mod tests {
             model,
             vec![message],
             Some(true),
+            None,
             channel,
         )
         .await
