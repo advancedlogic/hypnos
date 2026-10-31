@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 2  | 10  | 5   | 4   | 8    | 6   | 10    | 7   | 3    | 12   |
+| 2  | 10  | 5   | 4   | 8    | 6   | 10    | 7   | 3    | 13   |
 
 ---
 
@@ -83,6 +83,18 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       tool_calls`), using llama.cpp's chat-template tool support for the models that have it;
       stream the calls as deltas. Lets DESK-11 (and any OpenAI client) use real tool calls
       instead of a prompt convention. docs/api.md, the mock server and the three SDKs follow.
+
+- [ ] 🩵 **DESK-12** `P2` Menu bar / system tray icon
+      The Hypnos logo in the macOS menu bar, the Windows notification area and the Linux
+      AppIndicator area (Tauri `tray-icon`), coloured by server state: green ready, amber while
+      models load, red when unreachable or the API key is refused. Menu: Open Hypnos, the
+      server status and version, Start / Stop local server (DESK-5), Connection settings, Quit.
+      A left click shows or hides the main window (option: a small panel under the icon placed
+      with `tauri-plugin-positioner`, with a quick chat or the stats). Closing the window keeps
+      the app in the tray, with a setting to quit instead; on macOS an option to hide the Dock
+      icon (`accessory` activation policy). Optional: a system notification when a long answer
+      or an image finishes while the window is hidden. Linux needs libayatana-appindicator
+      (already in the CI and release deps).
 
 ## In Progress
 
