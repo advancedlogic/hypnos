@@ -69,3 +69,12 @@ export const saveText = (path, text) => invoke('save_text', { path, text });
 
 /** Downloads the original file of a URL again into a path chosen in the save dialog. */
 export const downloadUrl = (url, path) => invoke('url_download', { url, path });
+
+/** Starts recording from the default microphone (src-tauri/src/mic.rs). */
+export const micStart = () => invoke('mic_start');
+
+/** Stops and transcribes: `{ text, seconds, model }`. */
+export const micStop = (chatModel) => invoke('mic_stop', { chatModel: chatModel ?? null });
+
+/** Stops and discards the recording. */
+export const micCancel = () => invoke('mic_cancel');

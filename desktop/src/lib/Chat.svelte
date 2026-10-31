@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import { getCurrentWebview } from '@tauri-apps/api/webview';
+  import { listen } from '@tauri-apps/api/event';
   import Markdown from './Markdown.svelte';
   import Attachments from './Attachments.svelte';
   import * as api from './hypnos.js';
@@ -19,6 +20,13 @@
   /** Files being prepared or ready for the next message: `{ id, name, status, attachment?, error? }`. */
   let pending = $state([]);
   let dragging = $state(false);
+  /** Microphone (DESK-9): `idle`, `recording` or `transcribing`. */
+  let mic = $state('idle');
+  let micLevel = $state(0);
+  let micSeconds = $state(0);
+  let micError = $state(null);
+  let micAutoSend = $state(readFlag('hypnos.desktop.micAutoSend'));
+  let micPressedAt = 0;
 
   let chat = $derived(store.current);
   let running = $derived(chat ? store.isRunning(chat.id) : false);
@@ -104,11 +112,94 @@
     attach(label, () => api.readUrl(url), item);
   }
 
+  function readFlag(key) {
+    try {
+      return localStorage.getItem(key) === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  function setAutoSend(on) {
+    micAutoSend = on;
+    try {
+      localStorage.setItem('hypnos.desktop.micAutoSend', String(on));
+    } catch {}
+  }
+
+  async function micStartRecording() {
+    micError = null;
+    micLevel = 0;
+    micSeconds = 0;
+    try {
+      await api.micStart();
+      mic = 'recording';
+    } catch (e) {
+      micError = api.errorMessage(e);
+    }
+  }
+
+  async function micFinish() {
+    if (mic !== 'recording') return;
+    mic = 'transcribing';
+    try {
+      const { text } = await api.micStop(chat?.model);
+      if (text) {
+        input = input.trim() ? `${input.trimEnd()} ${text}` : text;
+        await tick();
+        autosize();
+        if (micAutoSend) submit();
+        else textarea?.focus();
+      } else {
+        micError = 'Nothing was heard.';
+      }
+    } catch (e) {
+      micError = api.errorMessage(e);
+    } finally {
+      mic = 'idle';
+    }
+  }
+
+  async function micDiscard() {
+    if (mic !== 'recording') return;
+    mic = 'idle';
+    await api.micCancel();
+  }
+
+  // Click to start and click to stop, or hold and release (push to talk).
+  function onMicDown(e) {
+    e.preventDefault();
+    if (mic === 'idle') {
+      micPressedAt = Date.now();
+      micStartRecording();
+    } else if (mic === 'recording') {
+      micPressedAt = 0;
+      micFinish();
+    }
+  }
+
+  function onMicUp() {
+    if (mic === 'recording' && micPressedAt && Date.now() - micPressedAt > 400) micFinish();
+    micPressedAt = 0;
+  }
+
+  function micClock(seconds) {
+    const s = Math.floor(seconds);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
+
   function removePending(i) {
     pending.splice(i, 1);
   }
 
   onMount(() => {
+    const offLevel = listen('mic-level', (e) => {
+      micLevel = Math.min(1, e.payload.rms * 6);
+      micSeconds = e.payload.seconds;
+    });
+    const offLimit = listen('mic-limit', () => micFinish());
+    const onEscape = (e) => e.key === 'Escape' && mic === 'recording' && micDiscard();
+    window.addEventListener('keydown', onEscape);
     let unlisten;
     getCurrentWebview()
       .onDragDropEvent((event) => {
@@ -121,7 +212,13 @@
         }
       })
       .then((u) => (unlisten = u));
-    return () => unlisten?.();
+    return () => {
+      unlisten?.();
+      offLevel.then((u) => u());
+      offLimit.then((u) => u());
+      window.removeEventListener('keydown', onEscape);
+      if (mic === 'recording') api.micCancel();
+    };
   });
 
   // A chat without a model (or with one that left the server) takes the first available.
@@ -312,6 +409,29 @@
     {#if pending.length}
       <div class="max-w-3xl mx-auto mb-2"><Attachments items={pending} onremove={removePending} /></div>
     {/if}
+    {#if mic !== 'idle' || micError}
+      <div class="max-w-3xl mx-auto mb-2 flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs">
+        {#if mic === 'recording'}
+          <span class="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse"></span>
+          <span class="font-mono text-slate-300">{micClock(micSeconds)}</span>
+          <span class="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+            <span class="block h-full bg-rose-400 transition-[width] duration-100" style="width: {Math.round(micLevel * 100)}%"></span>
+          </span>
+          <label class="flex items-center gap-1.5 text-slate-400">
+            <input type="checkbox" checked={micAutoSend} onchange={(e) => setAutoSend(e.currentTarget.checked)} class="accent-indigo-500" />
+            send when done
+          </label>
+          <button class="text-slate-400 hover:text-slate-100" onclick={micDiscard} title="Discard (Esc)">Cancel</button>
+          <button class="text-rose-300 hover:text-rose-200" onclick={micFinish}>Done</button>
+        {:else if mic === 'transcribing'}
+          <span class="w-3 h-3 rounded-full border-2 border-slate-500 border-t-transparent animate-spin"></span>
+          <span class="text-slate-400">Transcribing…</span>
+        {:else}
+          <span class="flex-1 text-rose-300">{micError}</span>
+          <button class="text-slate-500 hover:text-slate-200" onclick={() => (micError = null)} aria-label="Dismiss">×</button>
+        {/if}
+      </div>
+    {/if}
     {#if links.length}
       <div class="max-w-3xl mx-auto mb-2 flex flex-wrap gap-2">
         {#each links as url (url)}
@@ -344,6 +464,21 @@
         class="flex-1 bg-transparent resize-none text-sm py-1.5 focus:outline-none placeholder:text-slate-500"
         placeholder={chat?.model ? `Message ${chat.model}` : 'Send a message'}
       ></textarea>
+      <button
+        class="w-8 h-8 shrink-0 rounded-full flex items-center justify-center disabled:opacity-30
+          {mic === 'recording' ? 'bg-rose-500 text-white' : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'}"
+        onpointerdown={onMicDown}
+        onpointerup={onMicUp}
+        disabled={mic === 'transcribing' || serverState !== 'ready'}
+        title={mic === 'recording' ? 'Stop and transcribe' : 'Speak (click, or hold to talk)'}
+        aria-label={mic === 'recording' ? 'Stop recording' : 'Record a voice message'}
+        aria-pressed={mic === 'recording'}
+      >
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="9" y="3" width="6" height="11" rx="3" />
+          <path d="M5 11a7 7 0 0014 0M12 18v3" />
+        </svg>
+      </button>
       {#if running}
         <button
           class="w-8 h-8 shrink-0 rounded-full bg-slate-200 text-slate-900 flex items-center justify-center hover:bg-white"

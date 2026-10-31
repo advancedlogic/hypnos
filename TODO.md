@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 2  | 10  | 5   | 4   | 8    | 5   | 10    | 7   | 3    | 12   |
+| 2  | 10  | 5   | 4   | 8    | 6   | 10    | 7   | 3    | 12   |
 
 ---
 
@@ -77,15 +77,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       `@hypnos` included), add the tokens as repository secrets (`PYPI_TOKEN` or trusted
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
-
-- [ ] 🩵 **DESK-9** `P1` Microphone button: speak a message
-      Mic button in the composer: press to record, press again (or release, hold mode) to
-      stop. Record in Rust with `cpal` (16 kHz mono WAV; more reliable than getUserMedia across
-      WKWebView, WebView2 and WebKitGTK), with a level meter and a timer; then
-      `POST /v1/audio/transcriptions` on the model ModelRouter picks for `speech_to_text`, the
-      text lands in the composer for review (option: send right away). macOS needs
-      `NSMicrophoneUsageDescription` in the bundle's Info.plist; a denied permission shows how
-      to enable it. After DESK-6.
 
 - [ ] 🩵 **DESK-10** `P2` Speaker button: read answers aloud
       (Text-to-speech; DESK-9 covers speech-to-text.) A speaker toggle in the chat header
@@ -113,11 +104,36 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       stream the calls as deltas. Lets DESK-11 (and any OpenAI client) use real tool calls
       instead of a prompt convention. docs/api.md, the mock server and the three SDKs follow.
 
+- [ ] 🟥 **BUG-5** `P2` Release builds on macOS 27 / Xcode 27.2 cannot load stripped proc macros
+      With Homebrew's rustc 1.98 and Xcode 27.2, `cargo build --release` fails with E0463
+      "can't find crate for `rustversion`" (and `futures_macro`, `zerocopy_derive`): the
+      release profile's default `strip = "debuginfo"` runs Xcode's `strip` on proc-macro
+      dylibs and rustc can no longer read them; debug builds are fine. The desktop crate sets
+      `[profile.release.build-override] strip = false` (DESK-9). Check whether the backend
+      release build hits it too (it is pinned to the rustup toolchain; this machine has only
+      Homebrew's), apply the same override there if so, and report it upstream.
+
 ## In Progress
 
 _No cards yet._
 
 ## Done
+
+- [x] 🩵 **DESK-9** `P1` Microphone button: speak a message
+      Mic button in the composer: press to record, press again (or release, hold mode) to
+      stop. Record in Rust with `cpal` (16 kHz mono WAV; more reliable than getUserMedia across
+      WKWebView, WebView2 and WebKitGTK), with a level meter and a timer; then
+      `POST /v1/audio/transcriptions` on the model ModelRouter picks for `speech_to_text`, the
+      text lands in the composer for review (option: send right away). macOS needs
+      `NSMicrophoneUsageDescription` in the bundle's Info.plist; a denied permission shows how
+      to enable it. After DESK-6.
+      Done: `src-tauri/src/mic.rs`: `mic_start` (default input device, a recording thread
+      that owns the cpal stream, mono mixdown for f32/i16/u16/i32, `mic-level` events every
+      100 ms, 5-minute cap), `mic_stop` (16 kHz WAV, transcription on the routed
+      `speech_to_text` model), `mic_cancel`. Composer: mic button (click to toggle, hold to
+      talk), strip with timer, level meter, Cancel/Done, Esc, and "send when done"
+      (localStorage). `Info.plist` carries `NSMicrophoneUsageDescription` (checked in the
+      built bundle). Ignored test records 1.5 s from the real microphone. Found BUG-5 on the way.
 
 - [x] 🩵 **DESK-8** `P2` Extract a URL's content into the chat, and download it
       URLs in the composer (or a "Read URL" action) are fetched by the Rust side (reqwest,
@@ -132,7 +148,7 @@ _No cards yet._
       attachment sent as `<web_page url title>`; `save_text` and `url_download` write to a
       save-dialog path. Composer: a "Read <link>" chip per URL typed; the chip's panel has
       Copy, Download .md, Download <original>. Documents get Copy and Download .md too. Live
-      test passes (example.com, a PDF, both saves, a 404 as a sentence).
+      test passes (example.com, a PDF, both saves, a 404 as a sentence). (commit 70b75e1)
 
 - [x] 🩵 **DESK-7** `P1` Attach images, documents, audio and video to a message
       Paperclip button + drag and drop + paste; chips with name, size and a remove button above

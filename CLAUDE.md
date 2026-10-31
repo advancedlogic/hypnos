@@ -250,7 +250,10 @@ video -> soundtrack transcript, frames sampled in the webview through the asset 
 allowed per file); `hypnos_chat` turns them into text and `image_url` parts and switches to a
 vision model when the new message has images. `web.rs` fetches URLs on the Rust side
 (`reqwest`, http(s), 50 MiB, 30 s) and converts them with docling into a `web` attachment;
-`save_text` / `url_download` write to a path from the save dialog. The real-server tests are `#[ignore]`d (`HYPNOS_TEST_URL`;
+`save_text` / `url_download` write to a path from the save dialog. `mic.rs` records with `cpal`
+on a thread of its own (CoreAudio streams are not `Send`), emits `mic-level`, and transcribes on
+stop. `[profile.release.build-override] strip = false` in its Cargo.toml works around stripped
+proc-macro dylibs that rustc cannot load on macOS 27 / Xcode 27.2 (BUG-5). The real-server tests are `#[ignore]`d (`HYPNOS_TEST_URL`;
 `HYPNOS_TEST_BINARY` / `HYPNOS_TEST_CONFIG`). `get_api_key` / `set_api_key` keep the API key in
 the OS keychain (`keyring`), keyed by origin; chats and the server URL live in `tauri-plugin-store`. `ChatStore`
 (`src/lib/chats.svelte.js`) owns chats and streaming; `StatsPanel.svelte` polls

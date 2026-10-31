@@ -29,6 +29,7 @@ base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "tiff"] }
 symphonia = { version = "0.5", features = ["all"] }
 tauri-plugin-dialog = "2"
+cpal = "0.18"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 [dev-dependencies]
@@ -37,3 +38,9 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Proc macros and build scripts are not stripped: on macOS 27 with Xcode 27.2, the release
+# profile's default `strip = "debuginfo"` leaves proc-macro dylibs rustc cannot load (E0463
+# "can't find crate"). The app binary itself is still stripped.
+[profile.release.build-override]
+strip = false
