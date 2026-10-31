@@ -131,8 +131,13 @@ fi
             ;;
         macos-arm64-metal)
             echo "  - Apple Silicon Mac, macOS 14 or newer. Uses Metal and unified memory."
+            if [ "${MACOS_NOTARIZED:-}" = 1 ]; then
+            echo "  - The binaries are signed with a Developer ID and notarized; the first launch checks"
+            echo "    the notarization online."
+            else
             echo "  - The binaries are not notarized: after downloading with a browser, run"
             echo "    xattr -dr com.apple.quarantine .   in this folder once."
+            fi
             ;;
     esac
     echo

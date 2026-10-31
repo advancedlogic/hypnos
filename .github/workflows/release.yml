@@ -108,6 +108,40 @@ jobs:
         shell: pwsh
         run: cargo build --release -p hypnos-server ${{ matrix.cargo }}
 
+      # Developer ID signature + notarization of hypnos and libstable-diffusion.dylib with the
+      # desktop job's Apple secrets (docs/signing.md, section 3). Without APPLE_CERTIFICATE the
+      # binaries keep the linker's ad-hoc signature; without APPLE_ID they are signed only.
+      - name: Sign and notarize (macOS)
+        id: macsign
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "No APPLE_CERTIFICATE / APPLE_SIGNING_IDENTITY secret: ad-hoc signature."; exit 0
+          fi
+          kc="$RUNNER_TEMP/signing.keychain-db"; kcpw="$(uuidgen)"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$kcpw" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kcpw" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$kc"
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpw" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          notarize=()
+          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            notarize=(--notarize)
+            echo "notarized=1" >> "$GITHUB_OUTPUT"
+          fi
+          SIGN_KEYCHAIN="$kc" ./backend/scripts/sign-macos.sh ${notarize[@]+"${notarize[@]}"}
+
       - uses: actions/download-artifact@v4
         with:
           name: frontend-dist
@@ -115,6 +149,8 @@ jobs:
 
       - name: Package
         shell: bash
+        env:
+          MACOS_NOTARIZED: ${{ steps.macsign.outputs.notarized }}
         run: |
           version="${GITHUB_REF_NAME}"
           [[ "$GITHUB_REF" == refs/tags/* ]] || version="$(git describe --tags --always)"
@@ -307,9 +343,9 @@ jobs:
           WIN_SIGNED: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
         run: |
           cd dist
-          mac="The macOS app is not notarized: open it once with System Settings > Privacy & Security > Open Anyway."
+          mac="The macOS app and server are not notarized: open the app once with System Settings > Privacy & Security > Open Anyway, and run xattr -dr com.apple.quarantine . in the server folder."
           win="The Windows installers are not signed: choose More info > Run anyway."
-          [ "$MAC_SIGNED" = true ] && mac="The macOS app is signed and notarized."
+          [ "$MAC_SIGNED" = true ] && mac="The macOS app and server are signed and notarized."
           [ "$WIN_SIGNED" = true ] && win="The Windows installers are signed."
           SIGNING_NOTE="$mac $win"
           files=(*.tar.gz *.zip hypnos-desktop-*)

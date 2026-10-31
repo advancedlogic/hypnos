@@ -80,9 +80,12 @@ Build notes:
   Clippy runs on a pinned Rust (1.98.0 in the lint job; the builds use current stable): bump it
   on purpose, with the fixes the new lints ask for.
 - `.github/workflows/release.yml` builds the CUDA (Linux, Windows) and Metal archives and the
-  desktop installers (.dmg, .msi/.exe, .deb/.AppImage; ad-hoc signed on macOS, unsigned on
-  Windows) on a `v*` tag and publishes them as a GitHub release; a manual run only builds them as
-  artifacts.
+  desktop installers (.dmg, .msi/.exe, .deb/.AppImage) on a `v*` tag and publishes them as a
+  GitHub release; a manual run only builds them as artifacts. With the `APPLE_*` secrets the
+  macOS app and server (`scripts/sign-macos.sh`) get a Developer ID signature and notarization,
+  without them an ad-hoc signature; Windows signs with `WINDOWS_CERTIFICATE`. `docs/signing.md`
+  is the signing guide; the app's hardened-runtime entitlements are in
+  `desktop/src-tauri/Entitlements.plist`.
 - `backend/backend.http` has ready-made requests for the VS Code REST Client extension.
 
 ## Architecture

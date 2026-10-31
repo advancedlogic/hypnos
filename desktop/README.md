@@ -129,7 +129,9 @@ variables > Actions):
 Without the Apple secrets the macOS app keeps an ad-hoc signature; without the Windows ones the
 installers are unsigned. A Developer ID signature turns on the hardened runtime, which blocks the
 microphone unless the app carries `com.apple.security.device.audio-input`:
-`src-tauri/Entitlements.plist` holds it (add any new entitlement there).
+`src-tauri/Entitlements.plist` holds it (add any new entitlement there). The full walkthrough
+(certificate, local and CI signing, notarization, verification, the server binary) is
+[docs/signing.md](../docs/signing.md).
 
 ## Building from source
 
