@@ -120,7 +120,7 @@ During that window:
 
 | Route | Behaviour while staging |
 | :--- | :--- |
-| `GET /health` | 200 `{"status":"ok","service":"hypnos","version":"0.2.0","uptime_secs":12}` |
+| `GET /health` | 200 `{"status":"ok","service":"hypnos","version":"0.3.0","uptime_secs":12}` |
 | `GET /ready` | 503 `{"ready":false,"reason":"startup tier initialization in progress"}`; 200 `{"ready":true}` afterwards |
 | `GET /v1/models`, `GET /v1/memory/status`, `/v1/logs*`, stored pictures | open |
 | Every inference and placement route | 503 with `Retry-After: 5` and the body below |

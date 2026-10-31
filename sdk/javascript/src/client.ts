@@ -35,7 +35,7 @@ import type {
   Transcription,
 } from "./types.js";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 export const DEFAULT_BASE_URL = "http://127.0.0.1:9999";
 
 /** A file to upload: bytes, a Blob/File, or (Node only) a path on disk. */
