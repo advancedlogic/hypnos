@@ -141,7 +141,7 @@ Prerequisites, besides Node.js 18+ and Rust (rustup stable):
 
 ```bash
 # from the repository root
-./run.sh build desktop     # npm install + tauri build --no-bundle
+./run.sh build desktop     # npm install + tauri build --no-bundle (an .app bundle on macOS)
 ./run.sh start desktop     # open the built app (stop / status / logs desktop work too)
 
 # development, with hot reload of the web side

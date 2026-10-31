@@ -386,7 +386,7 @@ run.bat [build|start|stop|restart|status]      [backend|frontend|desktop|all]
 | `... status`                | show what is running, on which PID, and whether the backend is built |
 | `./run.sh logs [target]`    | follow `.run/backend.log` / `.run/frontend.log`               |
 | `... models [model id]`     | download the model files into `backend/models/` (all, or one model) |
-| `... build desktop`         | `npm install` + `tauri build --no-bundle` of the [desktop app](#desktop-app) |
+| `... build desktop`         | `npm install` + `tauri build --no-bundle` (an `.app` bundle on macOS) of the [desktop app](#desktop-app) |
 | `... start desktop`         | open the built desktop app (`stop`, `status`, `logs desktop` too); `all` never includes it |
 
 `restart` does not rebuild: run `build` after changing Rust code, then `restart backend`.

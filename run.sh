@@ -20,7 +20,7 @@
 #
 #  Backend : Rust server on http://localhost:9999  (compiled hypnos binary)
 #  Frontend: Vite dev server on http://localhost:5173 (npm run dev)
-#  Desktop : Tauri app window (desktop/src-tauri/target/<profile>/hypnos-desktop); only when
+#  Desktop : Tauri app window (desktop/src-tauri/target/<profile>/hypnos-desktop, inside Hypnos.app on macOS); only when
 #            named, since it needs the Tauri prerequisites and opens a window
 #  Output goes to .run/*.log. On Linux/macOS each service runs in its own process group
 #  (pid in .run/*.pid); on Windows (Git Bash) the listening port is the source of truth.
@@ -68,8 +68,14 @@ BACKEND_BIN="$BACKEND_TARGET_DIR/hypnos"
 # The desktop app follows the same profile: `tauri build` (release) or `tauri build --debug`.
 DESKTOP_BIN="$ROOT_DIR/desktop/src-tauri/target/$HYPNOS_PROFILE/hypnos-desktop"
 [ "$IS_WINDOWS" = 1 ] && DESKTOP_BIN="$DESKTOP_BIN.exe"
-DESKTOP_BUILD_FLAGS=()
-[ "$HYPNOS_PROFILE" = debug ] && DESKTOP_BUILD_FLAGS=(--debug)
+DESKTOP_BUILD_FLAGS=(--no-bundle)
+[ "$HYPNOS_PROFILE" = debug ] && DESKTOP_BUILD_FLAGS+=(--debug)
+# On macOS the app runs from its .app bundle: a bare binary gets the generic Dock icon and no
+# Info.plist (the microphone prompt).
+if [ "$(uname -s)" = Darwin ]; then
+    DESKTOP_BUILD_FLAGS=(--bundles app ${DESKTOP_BUILD_FLAGS[@]:1})
+    DESKTOP_BIN="$ROOT_DIR/desktop/src-tauri/target/$HYPNOS_PROFILE/bundle/macos/Hypnos.app/Contents/MacOS/hypnos-desktop"
+fi
 
 # Prefer the rustup-managed toolchain: the native engines need rustc >= 1.92 and a standalone
 # Rust install may come first on PATH.
@@ -292,11 +298,11 @@ build_frontend() {
     echo "[Hypnos] frontend dependencies ready."
 }
 
-# build_desktop: npm install + `tauri build --no-bundle` (the app binary; the installers are
+# build_desktop: npm install + `tauri build --no-bundle` (the app binary; `--bundles app` on macOS; the installers are
 # made by release.yml). Tauri compiles the Rust side with the cargo first on PATH (rustup's).
 build_desktop() {
     echo "[Hypnos] Building the desktop app ($HYPNOS_PROFILE profile) -> $DESKTOP_BIN"
-    (cd "$ROOT_DIR/desktop" && npm install && npx tauri build --no-bundle ${DESKTOP_BUILD_FLAGS[@]+"${DESKTOP_BUILD_FLAGS[@]}"})
+    (cd "$ROOT_DIR/desktop" && npm install && npx tauri build "${DESKTOP_BUILD_FLAGS[@]}")
     local rc=$?
     if [ "$rc" != 0 ]; then
         echo "[Hypnos] desktop build FAILED (exit code $rc)."

@@ -48,7 +48,7 @@ cd backend && cargo build --workspace --no-default-features
 cd backend && cargo build --release -p hypnos-server --no-default-features --features metal
 
 # Desktop app (Tauri 2; not part of `all`; needs the Tauri prerequisites, see desktop/README.md)
-./run.sh build desktop                 # npm install + tauri build --no-bundle
+./run.sh build desktop                 # npm install + tauri build --no-bundle (an .app bundle on macOS)
 ./run.sh [start|stop|status|logs] desktop
 cd desktop && npx tauri dev            # development: Vite on 1420 + app window, hot reload
 cd desktop/src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
