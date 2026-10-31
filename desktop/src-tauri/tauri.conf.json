@@ -39,6 +39,7 @@
     ],
     "macOS": {
       "signingIdentity": "-",
+      "entitlements": "Entitlements.plist",
       "minimumSystemVersion": "14.0"
     },
     "shortDescription": "Chat and live stats for a Hypnos server",

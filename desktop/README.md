@@ -127,7 +127,9 @@ variables > Actions):
 | `WINDOWS_CERTIFICATE_PASSWORD` | its password |
 
 Without the Apple secrets the macOS app keeps an ad-hoc signature; without the Windows ones the
-installers are unsigned.
+installers are unsigned. A Developer ID signature turns on the hardened runtime, which blocks the
+microphone unless the app carries `com.apple.security.device.audio-input`:
+`src-tauri/Entitlements.plist` holds it (add any new entitlement there).
 
 ## Building from source
 
