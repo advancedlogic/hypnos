@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 2  | 9   | 5   | 4   | 8    | 5   | 10    | 7   | 3    | 6    |
+| 2  | 10  | 5   | 4   | 8    | 5   | 10    | 7   | 3    | 12   |
 
 ---
 
@@ -83,6 +83,9 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       chosen config, show its log (`/v1/logs`), stop it on quit. Decide first whether the
       desktop app stays a pure client or ships the server (archive size, GPU builds per
       platform). After DESK-4.
+      Decided 2026-10-30: it does not bundle the server (GPU builds per platform, 30+ MB of
+      engines, model downloads); it finds an installed `hypnos` (a path chosen in the
+      settings, this repo's `backend/target/release`, or PATH) and manages that process.
 
 - [ ] ⬛ **BUILD-9** `P3` Sign and notarize the desktop installers
       The release's desktop installers are ad-hoc signed on macOS and unsigned on Windows
@@ -90,6 +93,75 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       + notarization (`APPLE_CERTIFICATE`, `APPLE_ID`, `APPLE_TEAM_ID`, app-specific password)
       and a Windows code-signing certificate as repository secrets and wire them into the
       `desktop` job of release.yml (Tauri reads them from the environment).
+
+- [ ] 🩵 **DESK-6** `P1` Route every server call through the Rust SDK in `src-tauri`
+      Add `hypnos-client` (`sdk/rust`, path dependency) to the Tauri crate and expose Tauri
+      commands for each call the app makes: health/ready, models, memory status, chat (stream
+      over a `tauri::ipc::Channel`, cancel by id), transcription, speech, images, document
+      conversion. The webview stops talking HTTP: drop the JS SDK alias and
+      `tauri-plugin-http` (the Rust client has no CORS or scope problem; `allow_server` goes),
+      keep the connection (URL + keychain key) in Rust state. Add a `ModelRouter` that picks
+      the model for each job from `/v1/memory/status` `modalities` (never hard-coded ids):
+      the chat's model when it serves the modality, else the first enabled model that does,
+      overridable per modality in the settings. Errors map to the same sentences as
+      `errors.js`. Base for DESK-7..11.
+
+- [ ] 🩵 **DESK-7** `P1` Attach images, documents, audio and video to a message
+      Paperclip button + drag and drop + paste; chips with name, size and a remove button above
+      the composer. Routing (in Rust, DESK-6): images -> `image_url` data URL parts (needs a
+      `vision` model, else ModelRouter switches or the UI says why); PDF, DOCX, PPTX, XLSX,
+      HTML, MD -> `POST /v1/documents/convert` (docling), the markdown goes into the message
+      as a quoted context block (truncated with a note when it exceeds the context window);
+      audio -> `input_audio` (WAV, converted when needed) when the chat model serves
+      `speech_to_text`, else `/v1/audio/transcriptions` and the transcript as text; video ->
+      a few frames sampled in the webview (video + canvas, no ffmpeg) as images plus its
+      audio track decoded to WAV and transcribed. Limits from docs/api.md
+      (`max_image_bytes`, `max_audio_bytes`, `max_document_bytes`) checked before upload.
+      Attachments are saved with the chat (images as thumbnails, documents as their text).
+      After DESK-6.
+
+- [ ] 🩵 **DESK-8** `P2` Extract a URL's content into the chat, and download it
+      URLs in the composer (or a "Read URL" action) are fetched by the Rust side (reqwest,
+      size and time limits, http(s) only) and converted to markdown with docling (HTML, PDF,
+      office files); the result is added to the message context like a document attachment
+      (DESK-7) with its title and source. Each extracted item gets "Download" (save as .md,
+      or the original file, through the dialog plugin) and "Copy". Rust-side fetching works
+      even when the server sets `allow_remote_image_urls = false`. After DESK-7.
+
+- [ ] 🩵 **DESK-9** `P1` Microphone button: speak a message
+      Mic button in the composer: press to record, press again (or release, hold mode) to
+      stop. Record in Rust with `cpal` (16 kHz mono WAV; more reliable than getUserMedia across
+      WKWebView, WebView2 and WebKitGTK), with a level meter and a timer; then
+      `POST /v1/audio/transcriptions` on the model ModelRouter picks for `speech_to_text`, the
+      text lands in the composer for review (option: send right away). macOS needs
+      `NSMicrophoneUsageDescription` in the bundle's Info.plist; a denied permission shows how
+      to enable it. After DESK-6.
+
+- [ ] 🩵 **DESK-10** `P2` Speaker button: read answers aloud
+      (Text-to-speech; DESK-9 covers speech-to-text.) A speaker toggle in the chat header
+      reads every new answer aloud as it streams: split into sentences, synthesize each with
+      `POST /v1/audio/speech` on the `text_to_speech` model (Kokoro), play them in order in
+      Rust (`rodio`) so playback starts after the first sentence. A play/stop button on each
+      answer reads it on demand; voice and speed in the settings; markdown and code blocks
+      are stripped or announced, not read symbol by symbol. Stop and new messages cancel
+      playback. After DESK-6.
+
+- [ ] 🩵 **DESK-11** `P2` Image-generation tool in the chat
+      The server ignores `tools`, so the app runs the tool loop: the system prompt describes
+      `generate_image(prompt, size)` and the reply format for calling it; when the chat
+      model's answer is such a call, the app calls `POST /v1/images/generations` on the
+      `image_generation` model (MOSS-Image), shows the image inline with its prompt (save,
+      copy, regenerate), and feeds a short result back so the model can comment. An explicit
+      "Image" button (or `/image <prompt>`) skips the model. Show progress during the load
+      and the steps (the model may need a tier switch and evict the chat model: say so).
+      Generated images are saved with the chat. After DESK-6; API-9 would make the call
+      detection robust.
+
+- [ ] 🟪 **API-9** `P3` Tool calling on `/v1/chat/completions`
+      Accept OpenAI `tools` / `tool_choice` and return `tool_calls` (and `finish_reason:
+      tool_calls`), using llama.cpp's chat-template tool support for the models that have it;
+      stream the calls as deltas. Lets DESK-11 (and any OpenAI client) use real tool calls
+      instead of a prompt convention. docs/api.md, the mock server and the three SDKs follow.
 
 ## In Progress
 
@@ -103,7 +175,7 @@ _No cards yet._
       Done: `desktop/README.md` (usage, shortcuts, installing, building per OS, how it reaches
       a remote server, layout); README: desktop rows in the run-script table, a "Desktop app"
       section, the installers under Prebuilt binaries, the repository tree; CLAUDE.md: the
-      commands, the CI/release notes and a "Desktop app" architecture section.
+      commands, the CI/release notes and a "Desktop app" architecture section. (commit 8c488f5)
 
 - [x] ⬛ **BUILD-8** `P2` Build the desktop app from the run scripts and CI
       `./run.sh build desktop` / `run.bat build desktop` (npm install + `tauri build`) and
