@@ -50,6 +50,10 @@ class AuthenticationError(APIError):
     """401: missing or unknown API key."""
 
 
+class PermissionDeniedError(APIError):
+    """403 ``permission_denied``: changing the model pool with a key that is not an admin key."""
+
+
 class NotFoundError(APIError):
     """404 ``model_not_found``, ``model_disabled`` or ``not_found``."""
 
@@ -87,6 +91,8 @@ def error_class(status: int, type: Optional[str]) -> type[APIError]:
         return BadRequestError
     if status == 401:
         return AuthenticationError
+    if status == 403:
+        return PermissionDeniedError
     if status == 404:
         return NotFoundError
     if status == 429:

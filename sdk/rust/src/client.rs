@@ -677,7 +677,16 @@ impl Client {
         model: Option<&str>,
         build: impl Fn() -> RequestBuilder,
     ) -> Result<T> {
-        let (response, _permit) = self.send(model, true, build).await?;
+        self.json_with(model, true, build).await
+    }
+
+    async fn json_with<T: DeserializeOwned>(
+        &self,
+        model: Option<&str>,
+        retry: bool,
+        build: impl Fn() -> RequestBuilder,
+    ) -> Result<T> {
+        let (response, _permit) = self.send(model, retry, build).await?;
         let bytes = response
             .bytes()
             .await
@@ -754,6 +763,54 @@ impl Client {
             let req = self.request(Method::GET, "/v1/models/catalog");
             match modality {
                 Some(m) => req.query(&[("modality", m)]),
+                None => req,
+            }
+        })
+        .await
+    }
+
+    /// `POST /v1/models`: adds a model to the running pool. Its files must already be on disk.
+    /// [`Error::BadRequest`] when a check fails or the id is taken, [`Error::PermissionDenied`]
+    /// without an admin key. Never retried automatically (the change may have been applied when
+    /// the connection broke).
+    pub async fn add_model(&self, source: &ModelSource) -> Result<ModelPoolChange> {
+        let body =
+            serde_json::to_value(source).map_err(|e| Error::InvalidArgument(e.to_string()))?;
+        self.json_with(None, false, self.post_json("/v1/models", &body))
+            .await
+    }
+
+    /// `PUT /v1/models/{id}`: replaces `model` under the same id; running requests finish on
+    /// the old one. [`Error::ModelBusy`] when they outlast `drain_secs` (server default 120; the
+    /// old model stays), [`Error::NotFound`] for an unknown id. Never retried automatically.
+    pub async fn replace_model(
+        &self,
+        model: &str,
+        source: &ModelSource,
+        drain_secs: Option<u64>,
+    ) -> Result<ModelPoolChange> {
+        let path = format!("/v1/models/{model}");
+        let mut body =
+            serde_json::to_value(source).map_err(|e| Error::InvalidArgument(e.to_string()))?;
+        if let Some(secs) = drain_secs {
+            body["drain_secs"] = json!(secs);
+        }
+        self.json_with(None, false, || self.request(Method::PUT, &path).json(&body))
+            .await
+    }
+
+    /// `DELETE /v1/models/{id}`: removes `model` once its running requests finish
+    /// ([`Error::ModelBusy`] past `drain_secs`). Never retried automatically.
+    pub async fn remove_model(
+        &self,
+        model: &str,
+        drain_secs: Option<u64>,
+    ) -> Result<ModelPoolChange> {
+        let path = format!("/v1/models/{model}");
+        self.json_with(None, false, || {
+            let req = self.request(Method::DELETE, &path);
+            match drain_secs {
+                Some(secs) => req.query(&[("drain_secs", secs)]),
                 None => req,
             }
         })

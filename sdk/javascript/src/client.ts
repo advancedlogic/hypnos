@@ -25,6 +25,7 @@ import type {
   Modality,
   ModelCatalog,
   ModelList,
+  ModelPoolChange,
   ModelSwitch,
   MoeOffload,
   MoeOffloadSwitch,
@@ -134,6 +135,26 @@ export interface DocumentOptions extends CallOptions {
 export interface CatalogQuery extends CallOptions {
   /** Only the entries serving this modality (primary or additional). */
   modality?: Modality;
+}
+
+/**
+ * Where a model added or replaced in the running pool comes from: exactly one of `catalog`
+ * (`"<id>[:<quant>]"`, an entry of `GET /v1/models/catalog`) and `config` (one `[[models]]` TOML
+ * block, paths relative to `models_dir`).
+ */
+export interface ModelSource extends CallOptions {
+  catalog?: string;
+  config?: string;
+}
+
+export interface ReplaceModelOptions extends ModelSource {
+  /** Seconds to wait for the running requests (server default 120); past it `ModelBusyError`. */
+  drainSecs?: number;
+}
+
+export interface RemoveModelOptions extends CallOptions {
+  /** Seconds to wait for the running requests (server default 120); past it `ModelBusyError`. */
+  drainSecs?: number;
 }
 
 export interface LogQuery extends CallOptions {
@@ -467,6 +488,51 @@ export class Client {
   modelsCatalog(query: CatalogQuery = {}): Promise<ModelCatalog> {
     const { signal, ...q } = query;
     return this.json("GET", "/v1/models/catalog", { query: q, signal });
+  }
+
+  private static modelSource(source: ModelSource): { catalog: string } | { config: string } {
+    const { catalog, config } = source;
+    if ((catalog === undefined) === (config === undefined)) {
+      throw new TypeError("pass exactly one of `catalog` and `config`");
+    }
+    return catalog !== undefined ? { catalog } : { config: config as string };
+  }
+
+  /**
+   * `POST /v1/models`: adds a model to the running pool from the catalog or a `[[models]]` block.
+   * Its files must already be on disk. `BadRequestError` when a check fails or the id is taken,
+   * `PermissionDeniedError` without an admin key. Never retried automatically (the change may
+   * have been applied when the connection broke).
+   */
+  async addModel(source: ModelSource): Promise<ModelPoolChange> {
+    const json = Client.modelSource(source);
+    return this.json("POST", "/v1/models", { json, retry: false, signal: source.signal });
+  }
+
+  /**
+   * `PUT /v1/models/{id}`: replaces `model` under the same id; running requests finish on the old
+   * one. `ModelBusyError` when they outlast `drainSecs` (the old model stays), `NotFoundError`
+   * for an unknown id. Never retried automatically.
+   */
+  async replaceModel(model: string, options: ReplaceModelOptions): Promise<ModelPoolChange> {
+    const json = { ...Client.modelSource(options), ...dropUndefined({ drain_secs: options.drainSecs }) };
+    return this.json("PUT", `/v1/models/${encodeURIComponent(model)}`, {
+      json,
+      retry: false,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * `DELETE /v1/models/{id}`: removes `model` once its running requests finish (`ModelBusyError`
+   * past `drainSecs`). Never retried automatically.
+   */
+  removeModel(model: string, options: RemoveModelOptions = {}): Promise<ModelPoolChange> {
+    return this.json("DELETE", `/v1/models/${encodeURIComponent(model)}`, {
+      query: { drain_secs: options.drainSecs },
+      retry: false,
+      signal: options.signal,
+    });
   }
 
   /** `POST /v1/models/{id}/enable`. */

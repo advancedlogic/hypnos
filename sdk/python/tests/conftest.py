@@ -88,7 +88,10 @@ def server() -> Iterator[MockServer]:
 
 @pytest.fixture(scope="session")
 def keyed_server() -> Iterator[MockServer]:
-    s = MockServer(["--api-key", "secret", "--limited-key", "limited:1"])
+    # `limited` (1 request a minute) is for the rate limit test, `member` is any non-admin key.
+    s = MockServer(
+        ["--api-key", "secret", "--limited-key", "limited:1", "--limited-key", "member:1000"]
+    )
     yield s
     s.stop()
 

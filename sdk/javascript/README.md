@@ -34,6 +34,7 @@ console.log(reply.hypnos_telemetry?.tier_switch_latency_ms);
 | `entities` | `POST /v1/entities` |
 | `models`, `enableModel`, `disableModel` | `/v1/models`, `/v1/models/{id}/enable\|disable` |
 | `modelsCatalog` | `/v1/models/catalog` (optional `modality`) |
+| `addModel`, `replaceModel`, `removeModel` | `POST /v1/models`, `PUT` / `DELETE /v1/models/{id}` (`{ catalog }` or `{ config }`, optional `drainSecs`; admin key) |
 | `setMoeOffload` | `POST /v1/models/{id}/moe-offload` |
 | `memoryStatus`, `setTier` | `/v1/memory/status`, `/v1/memory/tier` |
 | `kvPark`, `setKvPark` | `GET`/`POST /v1/memory/kv-park` |
@@ -108,14 +109,16 @@ concatenated, as OpenAI clients do), and `stream.final()` returns them in the me
 
 Every error extends `HypnosError`; HTTP errors are `APIError`s with `status`, `type`, `code`,
 `requestId` and `retryAfter` (seconds): `BadRequestError` (400, 413), `AuthenticationError`
-(401), `NotFoundError` (404), `ModelBusyError` and `RateLimitError` (429),
+(401), `PermissionDeniedError` (403), `NotFoundError` (404), `ModelBusyError` and `RateLimitError` (429),
 `ServiceUnavailableError` (503), `InsufficientMemoryError` (507), `APITimeoutError` (408, 504),
 `ServerError` (500), `StreamError` (a failed stream) and `APIConnectionError`.
 
 The default `RetryPolicy` follows the API's recommendations: 429 `model_busy` from 250 ms
 doubling, 429 `rate_limit_error` and 503 after `Retry-After`, 507 from 2 s doubling, 504 and
-connection errors from 1 s, a 500 once; never 400, 401 or 404, and never a stream that already
-produced output. `new Client({ retry: new RetryPolicy({ maxRetries: 8 }) })` or
+connection errors from 1 s, a 500 once; never 400, 401, 403 or 404, never a stream that already
+produced output, and never the model pool changes (`addModel`, `replaceModel`, `removeModel`: a
+lost connection may have applied the change, and their 429 means the drain already timed out).
+`new Client({ retry: new RetryPolicy({ maxRetries: 8 }) })` or
 `retry: NO_RETRY` changes it. `timeoutMs` (default 900 000) bounds the wait for the response
 headers; a cold request pays a model load.
 

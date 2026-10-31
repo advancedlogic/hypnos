@@ -34,6 +34,7 @@ with Client() as hypnos:        # http://127.0.0.1:9999, or $HYPNOS_BASE_URL / $
 | `entities` | `POST /v1/entities` |
 | `models`, `enable_model`, `disable_model` | `/v1/models`, `/v1/models/{id}/enable\|disable` |
 | `models_catalog` | `/v1/models/catalog` (optional `modality`) |
+| `add_model`, `replace_model`, `remove_model` | `POST /v1/models`, `PUT` / `DELETE /v1/models/{id}` (`catalog=` or `config=`, optional `drain_secs`; admin key) |
 | `set_moe_offload` | `POST /v1/models/{id}/moe-offload` |
 | `memory_status`, `set_tier` | `/v1/memory/status`, `/v1/memory/tier` |
 | `kv_park`, `set_kv_park` | `GET`/`POST /v1/memory/kv-park` |
@@ -92,14 +93,16 @@ function that is not in `tools` raises `BadRequestError`.
 
 Every error is a subclass of `HypnosError`; HTTP errors are `APIError`s with `status`, `type`,
 `code`, `request_id` and `retry_after`: `BadRequestError` (400, 413), `AuthenticationError`
-(401), `NotFoundError` (404), `ModelBusyError` and `RateLimitError` (429),
+(401), `PermissionDeniedError` (403), `NotFoundError` (404), `ModelBusyError` and `RateLimitError` (429),
 `ServiceUnavailableError` (503), `InsufficientMemoryError` (507), `APITimeoutError` (408, 504),
 `ServerError` (500), `StreamError` (a failed stream) and `APIConnectionError`.
 
 The default `RetryPolicy` follows the API's recommendations: 429 `model_busy` from 250 ms
 doubling, 429 `rate_limit_error` and 503 after `Retry-After`, 507 from 2 s doubling, 504 and
-connection errors from 1 s, a 500 once; never 400, 401 or 404, and never a stream that already
-produced output. `Client(retry=RetryPolicy(max_retries=8))` or `retry=NO_RETRY` changes it.
+connection errors from 1 s, a 500 once; never 400, 401, 403 or 404, never a stream that already
+produced output, and never the model pool changes (`add_model`, `replace_model`, `remove_model`:
+a lost connection may have applied the change, and their 429 means the drain already timed
+out). `Client(retry=RetryPolicy(max_retries=8))` or `retry=NO_RETRY` changes it.
 
 ## Concurrency
 

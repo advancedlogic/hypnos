@@ -176,6 +176,28 @@ async fn api_keys() {
 }
 
 #[tokio::test]
+async fn model_pool_needs_an_admin_key() {
+    let server = MockServer::with_args(&["--api-key", "secret", "--limited-key", "member:1000"]);
+    let c = Client::builder()
+        .base_url(&server.url)
+        .api_key("member")
+        .build()
+        .unwrap();
+    let err = c
+        .add_model(&ModelSource::catalog("lfm3:1.7b"))
+        .await
+        .unwrap_err();
+    let Error::PermissionDenied(e) = &err else {
+        panic!("{err:?}")
+    };
+    assert_eq!(e.status, 403);
+    assert_eq!(e.kind.as_deref(), Some("permission_denied"));
+    let err = c.remove_model(CHAT, None).await.unwrap_err();
+    assert!(matches!(err, Error::PermissionDenied(_)), "{err:?}");
+    assert!(!c.models().await.unwrap().data.is_empty());
+}
+
+#[tokio::test]
 async fn rate_limit() {
     let server = MockServer::keyed();
     let c = Client::builder()

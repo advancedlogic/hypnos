@@ -20,6 +20,7 @@ from hypnos_client import (
     InsufficientMemoryError,
     ModelBusyError,
     NotFoundError,
+    PermissionDeniedError,
     RateLimitError,
     ServerError,
     ServiceUnavailableError,
@@ -106,6 +107,16 @@ def test_api_keys(keyed_server) -> None:
         assert err.value.code == "invalid_api_key"
         assert anonymous.health()["status"] == "ok"
     with Client(keyed_server.url, api_key="secret") as c:
+        assert c.models()["data"]
+
+
+def test_model_pool_needs_admin_key(keyed_server) -> None:
+    with Client(keyed_server.url, api_key="member") as c:
+        with pytest.raises(PermissionDeniedError) as err:
+            c.add_model(catalog="lfm3:1.7b")
+        assert err.value.status == 403 and err.value.type == "permission_denied"
+        with pytest.raises(PermissionDeniedError):
+            c.remove_model("gemma4:26b-q4")
         assert c.models()["data"]
 
 

@@ -14,6 +14,9 @@ export type {
   FileInput,
   ImageOptions,
   LogQuery,
+  ModelSource,
+  RemoveModelOptions,
+  ReplaceModelOptions,
   SpeechOptions,
   TranscribeOptions,
 } from "./client.js";

@@ -1034,6 +1034,48 @@ pub struct ModelSwitch {
     pub placement: Placement,
 }
 
+/// Where a model added to or replaced in the running pool comes from
+/// (`POST /v1/models`, `PUT /v1/models/{id}`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelSource {
+    /// An entry of `GET /v1/models/catalog`: `<id>` (its default variant) or `<id>:<quant>`.
+    Catalog(String),
+    /// One `[[models]]` TOML block as in the config file, paths relative to `models_dir`.
+    Config(String),
+}
+
+impl ModelSource {
+    pub fn catalog(id: impl Into<String>) -> Self {
+        Self::Catalog(id.into())
+    }
+
+    pub fn config(block: impl Into<String>) -> Self {
+        Self::Config(block.into())
+    }
+}
+
+/// `added`, `replaced` or `removed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelPoolAction {
+    Added,
+    Replaced,
+    Removed,
+}
+
+/// `POST /v1/models`, `PUT` / `DELETE /v1/models/{id}`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelPoolChange {
+    pub model: String,
+    pub action: ModelPoolAction,
+    /// False when the overlay next to the config could not be written (live until a restart).
+    pub persisted: bool,
+    /// `None` on a removal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placement: Option<Placement>,
+}
+
 /// `POST /v1/models/{id}/moe-offload`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MoeOffloadSwitch {

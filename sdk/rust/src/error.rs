@@ -42,6 +42,8 @@ pub enum Error {
     BadRequest(Box<ApiError>),
     /// 401: missing or unknown API key.
     Authentication(Box<ApiError>),
+    /// 403 `permission_denied`: changing the model pool with a key that is not an admin key.
+    PermissionDenied(Box<ApiError>),
     /// 404 `model_not_found`, `model_disabled` or `not_found`.
     NotFound(Box<ApiError>),
     /// 429 `model_busy`.
@@ -76,6 +78,7 @@ impl Error {
         match self {
             Self::BadRequest(e)
             | Self::Authentication(e)
+            | Self::PermissionDenied(e)
             | Self::NotFound(e)
             | Self::ModelBusy(e)
             | Self::RateLimit(e)
@@ -106,6 +109,7 @@ impl Error {
         match e.status {
             400 | 413 => Self::BadRequest(e),
             401 => Self::Authentication(e),
+            403 => Self::PermissionDenied(e),
             404 => Self::NotFound(e),
             429 if e.kind.as_deref() == Some("rate_limit_error") => Self::RateLimit(e),
             429 => Self::ModelBusy(e),

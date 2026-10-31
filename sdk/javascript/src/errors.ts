@@ -46,6 +46,8 @@ export class APIError extends HypnosError {
 export class BadRequestError extends APIError {}
 /** 401: missing or unknown API key. */
 export class AuthenticationError extends APIError {}
+/** 403 `permission_denied`: changing the model pool with a key that is not an admin key. */
+export class PermissionDeniedError extends APIError {}
 /** 404 `model_not_found`, `model_disabled` or `not_found`. */
 export class NotFoundError extends APIError {}
 /** 429 `model_busy`: the model's queue is full, or a placement change met a leased model. */
@@ -66,6 +68,7 @@ export class StreamError extends APIError {}
 export function errorClass(status: number, type?: string): typeof APIError {
   if (status === 400 || status === 413) return BadRequestError;
   if (status === 401) return AuthenticationError;
+  if (status === 403) return PermissionDeniedError;
   if (status === 404) return NotFoundError;
   if (status === 429) return type === "rate_limit_error" ? RateLimitError : ModelBusyError;
   if (status === 503) return ServiceUnavailableError;

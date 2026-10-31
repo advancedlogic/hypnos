@@ -419,6 +419,20 @@ class ModelSwitch(TypedDict):
     placement: Placement
 
 
+ModelPoolAction = Literal["added", "replaced", "removed"]
+
+
+class ModelPoolChange(TypedDict):
+    """``POST /v1/models``, ``PUT`` / ``DELETE /v1/models/{id}``."""
+
+    model: str
+    action: ModelPoolAction
+    #: False when the overlay next to the config could not be written (live until a restart).
+    persisted: bool
+    #: Absent on a removal.
+    placement: NotRequired[Placement]
+
+
 class MoeOffloadSwitch(TypedDict):
     """``POST /v1/models/{id}/moe-offload``."""
 

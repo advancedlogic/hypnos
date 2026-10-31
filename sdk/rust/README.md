@@ -45,6 +45,7 @@ Clones share the connection pool and the bound.
 | `entities` | `POST /v1/entities` |
 | `models`, `enable_model`, `disable_model` | `/v1/models`, `/v1/models/{id}/enable\|disable` |
 | `models_catalog` | `/v1/models/catalog` (optional `modality`) |
+| `add_model`, `replace_model`, `remove_model` | `POST /v1/models`, `PUT` / `DELETE /v1/models/{id}` (`ModelSource::Catalog` or `ModelSource::Config`, optional `drain_secs`; admin key) |
 | `set_moe_offload` | `POST /v1/models/{id}/moe-offload` |
 | `memory_status`, `set_tier` | `/v1/memory/status`, `/v1/memory/tier` |
 | `kv_park`, `set_kv_park` | `GET`/`POST /v1/memory/kv-park` |
@@ -123,15 +124,17 @@ if reply.finish_reason() == "tool_calls" {
 ## Errors and retries
 
 `Error` has one variant per error type: `BadRequest` (400, 413), `Authentication` (401),
-`NotFound` (404), `ModelBusy` and `RateLimit` (429), `ServiceUnavailable` (503),
+`PermissionDenied` (403), `NotFound` (404), `ModelBusy` and `RateLimit` (429), `ServiceUnavailable` (503),
 `InsufficientMemory` (507), `Timeout` (408, 504), `Server` (500), `Stream` (a failed stream),
 `Connection`, plus `Decode`, `InvalidArgument` and `NotReady`. The server's details
 (`status`, `kind`, `code`, `request_id`, `retry_after`) are in `error.api()`.
 
 The default `RetryPolicy` follows the API's recommendations: 429 `model_busy` from 250 ms
 doubling, 429 `rate_limit_error` and 503 after `Retry-After`, 507 from 2 s doubling, 504 and
-connection errors from 1 s, a 500 once; never 400, 401 or 404, and never a stream that already
-produced output. `RetryPolicy::none()` turns it off.
+connection errors from 1 s, a 500 once; never 400, 401, 403 or 404, never a stream that already
+produced output, and never the model pool changes (`add_model`, `replace_model`, `remove_model`:
+a lost connection may have applied the change, and their 429 means the drain already timed
+out). `RetryPolicy::none()` turns it off.
 
 ## Concurrency
 

@@ -474,6 +474,70 @@ async fn enable_and_disable() {
 }
 
 #[tokio::test]
+async fn model_pool() {
+    let server = MockServer::start();
+    let c = server.client();
+    let pooled = "lfm3:1.7b";
+    let added = c.add_model(&ModelSource::catalog(pooled)).await.unwrap();
+    assert_eq!(added.model, pooled);
+    assert_eq!(added.action, ModelPoolAction::Added);
+    assert!(added.placement.is_some());
+    let ids: Vec<String> = c
+        .models()
+        .await
+        .unwrap()
+        .data
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
+    assert!(ids.iter().any(|i| i == pooled));
+    let reply = c
+        .chat(&ChatRequest::new(pooled, user("hello there")))
+        .await
+        .unwrap();
+    assert_eq!(reply.text(), "echo: hello there");
+    let err = c
+        .add_model(&ModelSource::catalog(pooled))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::BadRequest(_)), "{err:?}");
+    let replaced = c
+        .replace_model(pooled, &ModelSource::catalog("lfm3:1.7b:Q4_K_M"), Some(5))
+        .await
+        .unwrap();
+    assert_eq!(replaced.model, pooled);
+    assert_eq!(replaced.action, ModelPoolAction::Replaced);
+    let removed = c.remove_model(pooled, Some(5)).await.unwrap();
+    assert_eq!(removed.model, pooled);
+    assert_eq!(removed.action, ModelPoolAction::Removed);
+    assert!(removed.placement.is_none());
+    let err = c
+        .chat(&ChatRequest::new(pooled, user("hi")))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotFound(_)), "{err:?}");
+    let err = c.remove_model(pooled, None).await.unwrap_err();
+    assert!(matches!(err, Error::NotFound(_)), "{err:?}");
+    let err = c
+        .replace_model(pooled, &ModelSource::catalog(pooled), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::NotFound(_)), "{err:?}");
+}
+
+#[test]
+fn model_source_wire_shape() {
+    assert_eq!(
+        serde_json::to_value(ModelSource::catalog("lfm3:1.7b")).unwrap(),
+        serde_json::json!({ "catalog": "lfm3:1.7b" })
+    );
+    assert_eq!(
+        serde_json::to_value(ModelSource::config("[[models]]")).unwrap(),
+        serde_json::json!({ "config": "[[models]]" })
+    );
+}
+
+#[tokio::test]
 async fn logs() {
     let server = MockServer::start();
     let c = server.client();

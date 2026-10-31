@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from hypnos_client import APIError, Client, NotFoundError, StreamError
+from hypnos_client import APIError, BadRequestError, Client, NotFoundError, StreamError
 
 CHAT = "gemma4:26b-q4"
 STT = "gemma4:e4b-q4"
@@ -270,6 +270,39 @@ def test_enable_and_disable(client: Client) -> None:
     assert err.value.type == "model_disabled"
     assert client.enable_model(IMAGE)["enabled"] is True
     assert client.images(IMAGE, "x")["data"]
+
+
+def test_model_pool(client: Client) -> None:
+    pooled = "lfm3:1.7b"
+    try:
+        added = client.add_model(catalog=pooled)
+        assert added["model"] == pooled and added["action"] == "added"
+        assert isinstance(added["persisted"], bool) and "placement" in added
+        assert pooled in {m["id"] for m in client.models()["data"]}
+        reply = client.chat(pooled, USER, max_tokens=10)
+        assert reply["choices"][0]["message"]["content"] == "echo: hello there"
+        with pytest.raises(BadRequestError):
+            client.add_model(catalog=pooled)
+        replaced = client.replace_model(pooled, catalog="lfm3:1.7b:Q4_K_M", drain_secs=5)
+        assert replaced["model"] == pooled and replaced["action"] == "replaced"
+        removed = client.remove_model(pooled, drain_secs=5)
+        assert removed == {**removed, "model": pooled, "action": "removed"}
+        assert "placement" not in removed
+        with pytest.raises(NotFoundError):
+            client.chat(pooled, USER)
+        with pytest.raises(NotFoundError):
+            client.remove_model(pooled)
+        with pytest.raises(NotFoundError):
+            client.replace_model(pooled, catalog=pooled)
+    finally:
+        try:
+            client.remove_model(pooled)
+        except NotFoundError:
+            pass
+    with pytest.raises(ValueError):
+        client.add_model()
+    with pytest.raises(ValueError):
+        client.add_model(catalog=pooled, config="[[models]]")
 
 
 def test_moe_offload(client: Client) -> None:

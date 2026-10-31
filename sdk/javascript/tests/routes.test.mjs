@@ -320,6 +320,38 @@ test("enable and disable", async () => {
   assert.ok((await client.images(IMAGE, "x")).data.length);
 });
 
+test("model pool: add, replace, remove", async () => {
+  const pooled = "lfm3:1.7b";
+  const isNotFound = (err) => err instanceof NotFoundError;
+  try {
+    const added = await client.addModel({ catalog: pooled });
+    assert.equal(added.model, pooled);
+    assert.equal(added.action, "added");
+    assert.equal(typeof added.persisted, "boolean");
+    assert.ok(added.placement);
+    assert.ok((await client.models()).data.some((m) => m.id === pooled));
+    const reply = await client.chat(pooled, USER, { max_tokens: 10 });
+    assert.equal(reply.choices[0].message.content, "echo: hello there");
+    await assert.rejects(client.addModel({ catalog: pooled }), (err) => err instanceof BadRequestError);
+    const replaced = await client.replaceModel(pooled, { catalog: "lfm3:1.7b:Q4_K_M", drainSecs: 5 });
+    assert.equal(replaced.model, pooled);
+    assert.equal(replaced.action, "replaced");
+    const removed = await client.removeModel(pooled, { drainSecs: 5 });
+    assert.equal(removed.model, pooled);
+    assert.equal(removed.action, "removed");
+    assert.equal(removed.placement, undefined);
+    await assert.rejects(client.chat(pooled, USER), isNotFound);
+    await assert.rejects(client.removeModel(pooled), isNotFound);
+    await assert.rejects(client.replaceModel(pooled, { catalog: pooled }), isNotFound);
+  } finally {
+    await client.removeModel(pooled).catch((err) => {
+      if (!isNotFound(err)) throw err;
+    });
+  }
+  await assert.rejects(client.addModel({}), TypeError);
+  await assert.rejects(client.addModel({ catalog: pooled, config: "[[models]]" }), TypeError);
+});
+
 test("moe offload", async () => {
   try {
     const on = await client.setMoeOffload(CHAT, "on");

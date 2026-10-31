@@ -44,6 +44,7 @@ from .types import (
     Modality,
     ModelCatalog,
     ModelList,
+    ModelPoolChange,
     ModelSwitch,
     MoeOffload,
     MoeOffloadSwitch,
@@ -220,6 +221,56 @@ class Client:
         (primary or additional). :class:`NotFoundError` when the server has no catalog file."""
         params = {"modality": modality}
         return cast(ModelCatalog, self._json("GET", "/v1/models/catalog", params=params))
+
+    @staticmethod
+    def _model_source(catalog: Optional[str], config: Optional[str]) -> Dict[str, Any]:
+        if (catalog is None) == (config is None):
+            raise ValueError("pass exactly one of `catalog` or `config`")
+        return {"catalog": catalog} if catalog is not None else {"config": config}
+
+    def add_model(
+        self, catalog: Optional[str] = None, config: Optional[str] = None
+    ) -> ModelPoolChange:
+        """``POST /v1/models``: adds a model to the running pool, from the catalog
+        (``"<id>[:<quant>]"``) or from one ``[[models]]`` TOML block (``config``); exactly one.
+
+        Its files must already be on disk. :class:`BadRequestError` when a check fails or the id
+        is taken, :class:`PermissionDeniedError` without an admin key. Never retried
+        automatically (the change may have been applied when the connection broke).
+        """
+        body = self._model_source(catalog, config)
+        return cast(
+            ModelPoolChange, self._json("POST", "/v1/models", json=body, retry=False)
+        )
+
+    def replace_model(
+        self,
+        model: str,
+        catalog: Optional[str] = None,
+        config: Optional[str] = None,
+        *,
+        drain_secs: Optional[int] = None,
+    ) -> ModelPoolChange:
+        """``PUT /v1/models/{id}``: replaces ``model`` under the same id; running requests finish
+        on the old one. :class:`ModelBusyError` when they outlast ``drain_secs`` (server default
+        120; the old model stays), :class:`NotFoundError` for an unknown id. Never retried
+        automatically."""
+        body = {**self._model_source(catalog, config), **drop_none({"drain_secs": drain_secs})}
+        return cast(
+            ModelPoolChange,
+            self._json("PUT", f"/v1/models/{model}", json=body, retry=False),
+        )
+
+    def remove_model(
+        self, model: str, *, drain_secs: Optional[int] = None
+    ) -> ModelPoolChange:
+        """``DELETE /v1/models/{id}``: removes ``model`` once its running requests finish
+        (:class:`ModelBusyError` past ``drain_secs``). Never retried automatically."""
+        params = {"drain_secs": drain_secs}
+        return cast(
+            ModelPoolChange,
+            self._json("DELETE", f"/v1/models/{model}", params=params, retry=False),
+        )
 
     def enable_model(self, model: str) -> ModelSwitch:
         """``POST /v1/models/{id}/enable``."""

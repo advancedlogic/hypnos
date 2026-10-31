@@ -13,6 +13,7 @@ import {
   ModelBusyError,
   NO_RETRY,
   NotFoundError,
+  PermissionDeniedError,
   RateLimitError,
   ServerError,
   ServiceUnavailableError,
@@ -26,7 +27,10 @@ let client;
 
 before(async () => {
   server = await MockServer.start();
-  keyed = await MockServer.start(["--api-key", "secret", "--limited-key", "limited:1"]);
+  // `limited` (1 request a minute) is for the rate limit test, `member` is any non-admin key.
+  keyed = await MockServer.start([
+    "--api-key", "secret", "--limited-key", "limited:1", "--limited-key", "member:1000",
+  ]);
   client = server.client();
 });
 after(() => {
@@ -118,6 +122,18 @@ test("api keys", async () => {
   });
   assert.equal((await anonymous.health()).status, "ok");
   const c = new Client({ baseUrl: keyed.url, apiKey: "secret" });
+  assert.ok((await c.models()).data.length);
+});
+
+test("changing the model pool needs an admin key", async () => {
+  const c = new Client({ baseUrl: keyed.url, apiKey: "member" });
+  await assert.rejects(c.addModel({ catalog: "lfm3:1.7b" }), (err) => {
+    assert.ok(err instanceof PermissionDeniedError);
+    assert.equal(err.status, 403);
+    assert.equal(err.type, "permission_denied");
+    return true;
+  });
+  await assert.rejects(c.removeModel(CHAT), (err) => err instanceof PermissionDeniedError);
   assert.ok((await c.models()).data.length);
 });
 

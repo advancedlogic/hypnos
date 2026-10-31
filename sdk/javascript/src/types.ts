@@ -313,6 +313,16 @@ export interface ModelSwitch {
   placement: Placement;
 }
 
+/** `POST /v1/models`, `PUT` / `DELETE /v1/models/{id}`. */
+export interface ModelPoolChange {
+  model: string;
+  action: "added" | "replaced" | "removed";
+  /** False when the overlay next to the config could not be written (live until a restart). */
+  persisted: boolean;
+  /** Absent on a removal. */
+  placement?: Placement;
+}
+
 export interface MoeOffloadSwitch {
   model: string;
   moe_offload: MoeOffload;
