@@ -23,7 +23,7 @@
   "keywords": ["hypnos", "llm", "inference", "openai", "client"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test --test-concurrency=1 tests/"
+    "test": "npm run build && node --test --test-concurrency=1 \"tests/*.test.mjs\""
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
