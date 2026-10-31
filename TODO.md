@@ -89,19 +89,25 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       Decide first: curated list vs. live HF search filtered by `gguf` tag + pipeline type, and
       how unknown architectures are validated (`gguf_inspector.rs`) before they are offered.
 
-- [ ] 🩵 **DESK-14** `P2` Desktop: switches for KV parking and MoE offload
+## In Progress
+
+_No cards yet._
+
+## Done
+
+- [x] 🩵 **DESK-14** `P2` Desktop: switches for KV parking and MoE offload
       The same two controls in the desktop app: a KV parking toggle and cap in the connection
       dialog (or the stats panel), the parked conversations in the stats panel, and a MoE offload
       selector per model in the stats panel's model list (MoE models only), all through the Rust
       SDK (`kv_park` / `set_kv_park`, and the MoE call MEM-5 adds). The stats panel's "Last
       response" shows the restored tokens and restore time when a swap brought conversations
       back. After MEM-5.
-
-## In Progress
-
-_No cards yet._
-
-## Done
+      Done: Rust commands `hypnos_kv_park`, `hypnos_set_kv_park`, `hypnos_set_moe_offload` on the
+      SDK; the stats panel gets a KV parking section (toggle, cap with Set, parked conversations)
+      and, on models with `expert_bytes`, a MoE `off` / `auto` / `on` selector with the CPU expert
+      layers and the `applies` note; "Last response" shows restored tokens / restore time and the
+      expert layers on the CPU. Ignored live test switches both on a server built from af9f8dd and
+      restores them. Not yet seen in the window.
 
 - [x] 🟦 **UI-2** `P2` Playground: switches for KV parking and MoE offload
       In the memory panel: a KV parking toggle and cap (`GET` / `POST /v1/memory/kv-park`), with
@@ -117,6 +123,7 @@ _No cards yet._
       `applies` note; the telemetry log shows experts on the CPU and the restored tokens / restore
       time. Hidden against servers without the features (no `kv_park`, `expert_bytes` 0). Builds;
       not yet seen against a server built from af9f8dd.
+      (commit 299d72d)
 
 - [x] 🟫 **MEM-5** `P2` Expert offload for MoE models: experts on the CPU, the rest on the GPU
       Design in docs/moe.md. Step 1, benchmark on the RTX 5090 laptop: the 26B full GPU, a layer

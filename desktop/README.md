@@ -59,6 +59,10 @@ app's commands.
   requests, partial GPU placements, requests served and idle time; the last answer's full
   telemetry including the load phases; the latest evictions with their reason. It refreshes
   every 1.5 s while open and the window is visible.
+  It also switches two server features: KV parking (conversations kept across a model swap:
+  toggle, cap, what is parked; the "Last response" shows restored tokens) and, on
+  Mixture-of-Experts models, MoE offload `off` / `auto` / `on` (experts in host memory, run on the
+  CPU: less VRAM, slower), with how many layers' experts are on the CPU.
 - **Connection** (click the status in the header, or Cmd/Ctrl+,): server URL and, if the server
   sets `server.api_keys`, an API key. The key is kept in the system keychain (macOS Keychain,
   Windows Credential Manager, Secret Service on Linux), one per server. Below them, the model for

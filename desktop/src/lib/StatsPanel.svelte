@@ -35,6 +35,39 @@
   let t3Bytes = $derived(byTier.tier3_nvme_ssd.reduce((sum, m) => sum + m.total_weight_bytes, 0));
   let evictions = $derived((memory?.recent_evictions ?? []).slice(0, 5));
   let processCap = $derived(memory?.process_memory_cap_bytes ?? null);
+  let kvPark = $derived(memory?.kv_park ?? null);
+  let capGiB = $state(null);
+  let busy = $state(false);
+  let actionError = $state(null);
+  let moeNote = $state({});
+
+  // The cap field follows the server until it is edited.
+  $effect(() => {
+    if (kvPark && capGiB === null) capGiB = +(kvPark.max_bytes / 1024 ** 3).toFixed(1);
+  });
+
+  async function act(fn) {
+    busy = true;
+    actionError = null;
+    try {
+      await fn();
+      memory = await api.memoryStatus();
+    } catch (e) {
+      actionError = api.errorMessage(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  const setParking = (enabled) => act(() => api.setKvPark({ enabled }));
+  const setCap = () => act(async () => {
+    await api.setKvPark({ maxBytes: Math.round(capGiB * 1024 ** 3) });
+    capGiB = null;
+  });
+  const setMoe = (model, mode) => act(async () => {
+    const r = await api.setMoeOffload(model, mode);
+    moeNote = { ...moeNote, [model]: r.applies === 'now' ? 'applies on the next request' : 'applies at the next load (busy)' };
+  });
 
   function pct(used, total) {
     return total > 0 ? Math.min(100, (used / total) * 100) : 0;
@@ -185,6 +218,35 @@
       {/if}
     </section>
 
+    {#if kvPark}
+      <section class="space-y-2">
+        <h2 class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2" title="Keep a chat model's conversations in host memory when it is evicted, and restore them when it comes back">
+          KV parking
+          <label class="ml-auto flex items-center gap-1.5 normal-case font-normal text-slate-400">
+            <input type="checkbox" checked={kvPark.enabled} disabled={busy} onchange={(e) => setParking(e.currentTarget.checked)} class="accent-indigo-500" />
+            {kvPark.enabled ? 'on' : 'off'}
+          </label>
+        </h2>
+        <div class="flex items-center gap-2 text-[11px] text-slate-400">
+          <span>Cap</span>
+          <input type="number" min="0.1" step="0.5" bind:value={capGiB} class="w-14 rounded bg-slate-950 border border-slate-700 px-1 py-0.5 font-mono text-slate-200" />
+          <span>GiB</span>
+          <button class="px-1.5 py-0.5 rounded border border-slate-700 hover:bg-slate-800 disabled:opacity-40" disabled={busy || capGiB == null} onclick={setCap}>Set</button>
+          <span class="ml-auto font-mono">{formatBytes(kvPark.used_bytes)} used</span>
+        </div>
+        {#each kvPark.models as p (p.model)}
+          <div class="flex justify-between gap-2 text-[11px] text-slate-400">
+            <span class="truncate"><span class="text-slate-200">{p.model}</span> · {p.slots} conv., {p.tokens.toLocaleString()} tok</span>
+            <span class="font-mono shrink-0">{formatBytes(p.bytes)} · {duration(p.parked_secs_ago)} ago</span>
+          </div>
+        {/each}
+      </section>
+    {/if}
+
+    {#if actionError}
+      <p class="text-[11px] text-rose-300">{actionError}</p>
+    {/if}
+
     <section class="space-y-2">
       <h2 class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Models</h2>
       {#each TIERS as tier (tier)}
@@ -206,6 +268,24 @@
                     {#if placementNote(m)}<span class="text-amber-300">{placementNote(m)}</span>{/if}
                     <span class="ml-auto" title="requests served · idle">{m.total_requests_served} req · idle {duration(m.idle_seconds)}</span>
                   </div>
+                  {#if m.expert_bytes > 0}
+                    <div class="mt-1 flex items-center gap-2 text-[11px] text-slate-500">
+                      <span title="Mixture-of-Experts offload: experts in host memory, run on the CPU (less VRAM, slower)">MoE</span>
+                      <span class="inline-flex rounded border border-slate-700 overflow-hidden">
+                        {#each ['off', 'auto', 'on'] as mode (mode)}
+                          <button
+                            class="px-1.5 py-px {m.moe_offload === mode ? 'bg-fuchsia-500/25 text-fuchsia-200' : 'hover:bg-slate-800'}"
+                            disabled={busy || m.moe_offload === mode}
+                            onclick={() => setMoe(m.id, mode)}
+                          >{mode}</button>
+                        {/each}
+                      </span>
+                      {#if m.placement?.cpu_expert_layers > 0}
+                        <span class="text-fuchsia-300">{m.placement.cpu_expert_layers} layers on CPU</span>
+                      {/if}
+                      {#if moeNote[m.id]}<span>{moeNote[m.id]}</span>{/if}
+                    </div>
+                  {/if}
                 </li>
               {/each}
             </ul>
@@ -233,6 +313,12 @@
         {@render row('Inference', formatMs(t.inference_latency_ms))}
         {@render row('Model was in', tierName(t.previous_tier))}
         {@render row('Tier switch', formatMs(t.tier_switch_latency_ms))}
+        {#if t.tier_switch_phases?.kv_restored_tokens}
+          {@render row('Restored from parking', `${t.tier_switch_phases.kv_restored_tokens.toLocaleString()} tok in ${formatMs(t.tier_switch_phases.kv_restore_ms)}`)}
+        {/if}
+        {#if t.placement?.cpu_expert_layers > 0}
+          {@render row('Experts on the CPU', `${t.placement.cpu_expert_layers} layers`)}
+        {/if}
         {#if t.tier_switch_phases}
           {@const p = t.tier_switch_phases}
           <div class="pl-3 space-y-1 border-l border-slate-800">

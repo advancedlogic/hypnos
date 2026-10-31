@@ -139,3 +139,10 @@ export const log = (id) => invoke('hypnos_log', { id });
 export const setLogLevel = (level) => invoke('hypnos_set_log_level', { level });
 
 export const clearLogs = () => invoke('hypnos_clear_logs');
+
+/** KV parking (MEM-4): `{ enabled, max_bytes, used_bytes, models }`; also `kv_park` in the memory status. */
+export const setKvPark = ({ enabled, maxBytes } = {}) =>
+  invoke('hypnos_set_kv_park', { enabled: enabled ?? null, maxBytes: maxBytes ?? null });
+
+/** MoE expert offload (MEM-5): `mode` is `off`, `auto` or `on`; answers `{ applies: 'now' | 'next_load', placement }`. */
+export const setMoeOffload = (model, mode) => invoke('hypnos_set_moe_offload', { model, mode });

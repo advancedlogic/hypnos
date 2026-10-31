@@ -7,8 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hypnos_client::{
-    ChatMessage, ChatRequest, Client, Content, ContentPart, Error, LogList, LogQuery, LogRecord,
-    MemoryStatus, MemoryTier, ModelStatus, Telemetry, ToolChoice, Usage,
+    ChatMessage, ChatRequest, Client, Content, ContentPart, Error, KvParkStatus, LogList, LogQuery,
+    LogRecord, MemoryStatus, MemoryTier, ModelStatus, MoeOffload, MoeOffloadSwitch, Telemetry,
+    ToolChoice, Usage,
 };
 
 use crate::attachments::Attachment;
@@ -667,6 +668,36 @@ async fn answer_with_prompt_tool<R: Runtime>(
     stream_answer(client, &ChatRequest::new(model, follow_up), on_event).await
 }
 
+/// KV parking (MEM-4): whether conversations are kept across a model swap, and what is held.
+#[tauri::command]
+pub async fn hypnos_kv_park(hypnos: State<'_, Hypnos>) -> CmdResult<KvParkStatus> {
+    Ok(hypnos.client().await?.kv_park().await?)
+}
+
+/// Turns KV parking on or off and / or sets its cap (bytes) on the server.
+#[tauri::command]
+pub async fn hypnos_set_kv_park(
+    hypnos: State<'_, Hypnos>,
+    enabled: Option<bool>,
+    max_bytes: Option<u64>,
+) -> CmdResult<KvParkStatus> {
+    Ok(hypnos
+        .client()
+        .await?
+        .set_kv_park(enabled, max_bytes)
+        .await?)
+}
+
+/// Sets a model's MoE expert offload (`off`, `auto`, `on`; MEM-5).
+#[tauri::command]
+pub async fn hypnos_set_moe_offload(
+    hypnos: State<'_, Hypnos>,
+    model: String,
+    mode: MoeOffload,
+) -> CmdResult<MoeOffloadSwitch> {
+    Ok(hypnos.client().await?.set_moe_offload(&model, mode).await?)
+}
+
 /// Filters of the request log view; `status` is `ok`, `error`, `4xx` or `5xx`.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct LogFilter {
@@ -1022,5 +1053,57 @@ mod tests {
             .records
             .iter()
             .all(|r| r.status >= 400 || r.error.is_some()));
+    }
+
+    /// Switches KV parking and a model's MoE offload on a running server built with MEM-4/5:
+    /// `HYPNOS_TEST_URL=... HYPNOS_TEST_MOE_MODEL=gemma4:26b-q4 cargo test switches -- --ignored`.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn switches_kv_parking_and_moe_offload() {
+        let url = std::env::var("HYPNOS_TEST_URL").expect("HYPNOS_TEST_URL");
+        let model = std::env::var("HYPNOS_TEST_MOE_MODEL").expect("HYPNOS_TEST_MOE_MODEL");
+        let app = tauri::test::mock_builder()
+            .manage(Hypnos::default())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        hypnos_connect(app.state(), url).await.unwrap();
+
+        let before = hypnos_kv_park(app.state()).await.unwrap();
+        let on = hypnos_set_kv_park(app.state(), Some(true), Some(2 << 30))
+            .await
+            .unwrap();
+        assert!(on.enabled);
+        assert_eq!(on.max_bytes, 2 << 30);
+        let status = hypnos_memory_status(app.state()).await.unwrap();
+        assert!(status.kv_park.as_ref().unwrap().enabled);
+        hypnos_set_kv_park(app.state(), Some(before.enabled), Some(before.max_bytes))
+            .await
+            .unwrap();
+
+        let m = status.models.iter().find(|m| m.id == model).unwrap();
+        assert!(m.expert_bytes > 0, "{model} has no experts");
+        let original = m.moe_offload.unwrap_or(MoeOffload::Off);
+        let other = if original == MoeOffload::On {
+            MoeOffload::Off
+        } else {
+            MoeOffload::On
+        };
+        let r = hypnos_set_moe_offload(app.state(), model.clone(), other)
+            .await
+            .unwrap();
+        assert_eq!(r.moe_offload, other);
+        let status = hypnos_memory_status(app.state()).await.unwrap();
+        assert_eq!(
+            status
+                .models
+                .iter()
+                .find(|m| m.id == model)
+                .unwrap()
+                .moe_offload,
+            Some(other)
+        );
+        hypnos_set_moe_offload(app.state(), model, original)
+            .await
+            .unwrap();
     }
 }
