@@ -4,6 +4,7 @@
   import { ChatStore } from './lib/chats.svelte.js';
   import Sidebar from './lib/Sidebar.svelte';
   import Chat from './lib/Chat.svelte';
+  import StatsPanel from './lib/StatsPanel.svelte';
 
   const POLL_MS = 3000;
   const MODELS_MS = 10000;
@@ -144,10 +145,7 @@
 
     {#if panelOpen}
       <aside class="w-80 shrink-0 border-l border-slate-800 bg-slate-900/40 overflow-y-auto">
-        <div class="p-4">
-          <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Stats</h2>
-          <p class="mt-3 text-sm text-slate-500">Live Hypnos stats come here (DESK-3).</p>
-        </div>
+        <StatsPanel {client} {status} lastResponse={store.lastTelemetry} />
       </aside>
     {/if}
   </div>

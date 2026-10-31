@@ -78,15 +78,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
 
-- [ ] 🩵 **DESK-3** `P1` Collapsible right panel with live Hypnos stats
-      Polls `GET /v1/memory/status` (1-2 s, paused while collapsed or the window is hidden):
-      Tier 1 / Tier 2 / Tier 3 usage bars and budgets, which models sit in which tier, leases,
-      recent evictions with their reason; `/health` and `/ready`. Below it, the last chat
-      response's `hypnos_telemetry`: TTFT, prefill/decode tokens/s, cached tokens, previous
-      tier, tier-switch latency and phases, evicted models. Toggle button + shortcut
-      (Cmd/Ctrl+.), collapsed state remembered. Reuse the visual language of the frontend's
-      tier visualizer. After DESK-1.
-
 - [ ] 🩵 **DESK-4** `P2` Connection settings and server states
       Settings screen: server URL (default `http://localhost:9999`), API key kept in the OS
       keychain (not plain storage), "test connection". The UI shows distinct states for
@@ -116,6 +107,21 @@ _No cards yet._
 
 ## Done
 
+- [x] 🩵 **DESK-3** `P1` Collapsible right panel with live Hypnos stats
+      Polls `GET /v1/memory/status` (1-2 s, paused while collapsed or the window is hidden):
+      Tier 1 / Tier 2 / Tier 3 usage bars and budgets, which models sit in which tier, leases,
+      recent evictions with their reason; `/health` and `/ready`. Below it, the last chat
+      response's `hypnos_telemetry`: TTFT, prefill/decode tokens/s, cached tokens, previous
+      tier, tier-switch latency and phases, evicted models. Toggle button + shortcut
+      (Cmd/Ctrl+.), collapsed state remembered. Reuse the visual language of the frontend's
+      tier visualizer. After DESK-1.
+      Done: `src/lib/StatsPanel.svelte` polls every 1.5 s while open and the window is visible
+      (it unmounts when collapsed): server version/uptime/device, unified-memory bar on
+      Apple Silicon or Tier 1/Tier 2 bars on discrete GPUs, Tier 3 mapped bytes, process
+      memory against its cap, nvidia-smi line, enabled models grouped by tier (leases,
+      partial GPU layers, requests, idle), last response's telemetry with load phases, and
+      the last five evictions. The last response survives a restart (newest saved answer).
+
 - [x] 🩵 **DESK-2** `P1` Chat view in the style of Ollama
       Model picker from `GET /v1/models` (chat-capable, enabled models only); streaming
       `POST /v1/chat/completions` over SSE with markdown and code-block rendering; Stop
@@ -127,7 +133,7 @@ _No cards yet._
       (localStorage in a browser); the picker lists enabled models whose `modalities` include
       `text_generation`, with their tier; markdown via marked + DOMPurify with copy buttons
       on code blocks; per-answer footer with tok/s, TTFT, tokens and load tier; Cmd/Ctrl+N
-      new chat; `src/lib/errors.js` turns SDK errors into sentences.
+      new chat; `src/lib/errors.js` turns SDK errors into sentences. (commit 4633077)
 
 - [x] 🩵 **DESK-1** `P1` Scaffold the Tauri 2 desktop app in `desktop/`
       Tauri 2 + Vite + Svelte 5 (runes) + Tailwind, the same stack and versions as `frontend/`

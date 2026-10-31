@@ -48,6 +48,9 @@ export class ChatStore {
       }
     }
     this.chats = chats.sort((a, b) => b.updatedAt - a.updatedAt);
+    // The stats panel starts from the newest answer that has telemetry.
+    const last = this.chats.map((c) => c.messages.findLast((m) => m.telemetry)).find(Boolean);
+    if (last) this.lastTelemetry = { model: last.model, telemetry: last.telemetry, usage: last.usage };
     this.lastModel = await load(LAST_MODEL_KEY, null);
     this.currentId = this.chats[0]?.id ?? null;
   }
