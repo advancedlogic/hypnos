@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 3  | 11  | 5   | 6   | 9    | 6   | 10    | 7   | 3    | 18   |
+| 3  | 11  | 5   | 6   | 10   | 7   | 10    | 7   | 3    | 18   |
 
 ---
 
@@ -89,11 +89,34 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       Decide first: curated list vs. live HF search filtered by `gguf` tag + pipeline type, and
       how unknown architectures are validated (`gguf_inspector.rs`) before they are offered.
 
+- [ ] 🟧 **PERF-9** `P2` Three concurrent streams on the 26B decode at 34 tokens/s each on CUDA
+      Scenario 4 of `docs/bench/cuda-2026-10-31.md` (RTX 5090 laptop, `slots = 3`, 16k, f16 KV):
+      one client decodes at 152-160 tokens/s; three batched clients got 34 each in one run
+      (aggregate 105, 0.69x of one, the fourth waiting 4 s for a slot) and 92-99 each in the next
+      (223, 1.39x), so the batched shape is also unstable between runs. The old
+      `slots = 4` q8_0 default gave 2.18x in the same scenario (`after-C-2026-10-29.md`, 68 per
+      client). PERF-7 only measured one stream per slot shape; the batched multi-stream shape
+      probably makes llama.cpp b11982 re-capture its CUDA graph every step again. Check with the
+      graph counters / `GGML_CUDA_DISABLE_GRAPHS`, try 2 slots and 4 x 8k, and ship the shape that
+      batches well (on Metal 4 slots gave 1.43x).
+
 ## In Progress
 
 _No cards yet._
 
 ## Done
+
+- [x] 🟥 **BUG-6** `P1` Kokoro's fp16 graph returns all-NaN audio on Windows too; use fp32 everywhere
+      Seen in the voice round-trip benchmark on the RTX 5090 laptop (2026-10-31): the two-sentence
+      reply "That is one of the most iconic lines from John F. Kennedy's inaugural address. It
+      serves as a powerful call to civic duty and personal responsibility." made
+      `kokoro/model_fp16.onnx` return 250,200 non-finite samples (HTTP 500), while each sentence
+      alone and a 628-character paragraph synthesized. Same failure as on Apple Silicon
+      (`docs/apple-silicon.md`). The fp32 `model.onnx` synthesizes it (10.4 s of audio in 1.5 s,
+      RTF 0.14, the same as fp16 on this CPU).
+      Fixed: `kokoro/model.onnx` is the weights path on every platform (both example configs, the
+      default profile, one manifest row for `all`, README, CLAUDE.md); `./run.sh models
+      kokoro-82m-q4` fetches it (310 MiB). The fp16 file can be deleted. (commit dc71df9)
 
 - [x] 🩵 **DESK-17** `P2` First-run model download in the desktop app
       A bundled server without weights still leaves users stuck (DESK-16). On first run, or from
@@ -1084,7 +1107,9 @@ _No cards yet._
       `--swap-files`, `--chart`), per-file page-cache eviction without root (`posix_fadvise` /
       `msync(MS_INVALIDATE)`) checked with `mincore`, SVG chart. Metal run in
       `docs/bench/swap-metal-2026-10-29.md` (Tier 3 2.29 s, Tier 2 0.99 s, Tier 1 84 ms TTFT),
-      chart in the README. CUDA run still to do on the Windows box (no page-cache drop there).
+      chart in the README. CUDA run 2026-10-31 (`docs/bench/cuda-2026-10-31.md`: Tier 3 4.28 s,
+      Tier 2 3.69 s, Tier 1 131 ms; no page-cache drop on Windows) drawn next to the Metal run in
+      one chart (`--chart-compare`, `docs/bench/swap-2026-10-31.svg`).
 - [x] ⬜ **DOC-2** `P1` Rewrite README around the pitch, a quickstart and bring-your-own models
       Lead with the one-line pitch (one OpenAI endpoint for every modality on one GPU, with a
       scheduler that manages VRAM), then a short demo GIF/video of the 3-tier visualizer, then a
