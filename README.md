@@ -67,12 +67,13 @@ Release build, `hypnos.example.toml` ([report](docs/bench/cuda-2026-10-31.md); s
 | Voice round trip (11 s of speech → transcript → reply → speech) | **8.5 s** to the first audio: the E4B transcriber and the 26B do not fit a 24 GB card together, so each stage swaps a model in (3.1 s transcription with the E4B's promotion, 4.0 s reply with the 26B's, 1.4 s speech); the engines alone take 0.4 + 0.2 + 1.4 s |
 | Document conversion (docling), text page / page with two tables | **49 ms** / 1.07 s on the GPU, 133 ms / 0.9 s on the CPU ([report](docs/bench/docling-cuda-2026-10-30.md)) |
 | Model swap, Tier 2 → first token | **3.7 s** median (3.6-5.9 s); Tier 3 4.3 s, resident 131 ms (chart below) |
+| Next chat turn after the model was swapped out, 1.7k / 6.3k / 12.6k-token conversation | 4.08 / 4.75 / 5.93 s → **3.95 / 4.09 / 4.01 s** with KV parking (restore 87-130 ms for 1.1-1.6 GB); the 3.5-3.8 s swap is what remains ([report](docs/bench/cuda-features-2026-10-31.md)) |
+| MoE expert offload (`moe_offload = "on"`) | VRAM weights 15.8 → **3.0 GB** (12.8 GB of experts in host memory) at 36 vs 141 tokens/s decode and 1,400-2,800 vs 4,100-5,800 tokens/s prefill: the way to keep the 26B resident next to the other models on a 24 GB card instead of swapping |
 
 The Tier 2 promotion was 7.5 s warm and 23-59 s when another model had just been loaded before
 the PERF-6 changes: the weights are now read through pinned staging buffers instead of a file
 mapping (2.4x faster upload), and Tier 2 pins a model's projector and text-encoder files with its
-weights ([docs/bench/swap-cuda-2026-10-30.md](docs/bench/swap-cuda-2026-10-30.md)). KV parking
-and MoE expert offload are not measured on CUDA yet.
+weights ([docs/bench/swap-cuda-2026-10-30.md](docs/bench/swap-cuda-2026-10-30.md)).
 
 #### Apple Silicon (M5 Max, 128 GB, Metal)
 

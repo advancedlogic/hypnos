@@ -1,8 +1,10 @@
 # Expert offload for Mixture-of-Experts models (proposal)
 
 Status: implemented (MEM-5), off by default: per model `moe_offload = "off" | "auto" | "on"`, or
-`POST /v1/models/{id}/moe-offload` at runtime (docs/api.md section 6). The CUDA benchmark of
-step 1 is still to run; what was measured on Apple Silicon is in "Measured" below.
+`POST /v1/models/{id}/moe-offload` at runtime (docs/api.md section 6). Measured on Apple Silicon
+below and on CUDA in `docs/bench/cuda-features-2026-10-31.md` (RTX 5090 laptop: VRAM weights
+15.8 -> 3.0 GB, decode 141 -> 36 tok/s, prefill 4,100-5,800 -> 1,400-2,800 tok/s: the prefill
+penalty is 2-3x, not 14x, because llama.cpp copies the experts to the GPU for large batches).
 
 ## Measured (Apple Silicon, Metal, 2026-10-30)
 
@@ -18,8 +20,8 @@ step 1 is still to run; what was measured on Apple Silicon is in "Measured" belo
 
 On unified memory the offload saves nothing (one pool) and llama.cpp runs the experts' prefill on
 the CPU, hence the 14x; `auto` therefore never acts on unified memory. On a discrete GPU `op_offload`
-copies expert weights to the GPU for large batches, so the prefill penalty should be smaller: that
-is the number step 1 still has to produce on the RTX 5090 laptop. One finding while implementing:
+copies expert weights to the GPU for large batches, so the prefill penalty is smaller: 2-3x on the
+RTX 5090 laptop (`docs/bench/cuda-features-2026-10-31.md`). One finding while implementing:
 the bindings' `add_cpu_moe_override` pattern `\.ffn_(up|down|gate)_(ch|)exps` does not match Gemma
 4's fused `ffn_gate_up_exps`, so it would have left two thirds of the experts on the GPU; Hypnos uses
 its own pattern.

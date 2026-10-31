@@ -231,8 +231,10 @@ _No cards yet._
       Measured on Apple Silicon (26B): 12.0 GiB of experts in `CPU_REPACK`, 2.8 GiB of weights on
       the GPU, decode 47 vs 105 tok/s, prefill 300 vs 4,100 tok/s, identical answer; the runtime
       switch reloads it full-GPU. Docs: api.md section 6, operating.md, example configs, moe.md;
-      SDKs `set_moe_offload` / `setMoeOffload`. Still to measure: the CUDA laptop, where
-      `op_offload` should cut the prefill penalty and `auto` is meant to act.
+      SDKs `set_moe_offload` / `setMoeOffload`. CUDA (RTX 5090 laptop, 2026-10-31,
+      `docs/bench/cuda-features-2026-10-31.md`): VRAM weights 15.8 -> 3.0 GB, decode 141 -> 36
+      tok/s, prefill 4,100-5,800 -> 1,400-2,800 tok/s (2-3x, not 14x); KV parking there saves
+      0.1-1.9 s per turn after a swap, the 3.5-3.8 s switch remains.
 
 - [x] 🟧 **PERF-8** `P2` A repeated prompt (Regenerate) is prefilled in full
       Sending a byte-identical prompt that a slot has just answered gets `cached_tokens: 0` and a
