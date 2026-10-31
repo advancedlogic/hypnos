@@ -221,6 +221,14 @@ before `apply_models_dir`); the config file is never rewritten. With API keys th
 an admin key (plain `api_keys`, or `[[server.keys]] admin = true`; else 403 `permission_denied`).
 The mock server's pool makes mock engines without file checks (`ModelPool::with_factory`).
 
+Advisor (API-12): `hypnos-memory/src/advisor.rs` recommends a lineup from the catalog for a
+machine (VRAM / RAM / unified) and needs. Budgets as `detect` derives them; each candidate placed
+with `KvCacheEstimator::compute_optimal_placement`; catalog `[models.estimate]` stands in for the
+GGUF values (`CatalogEntry::model_config`). Exhaustive over entries x variants; scores model size
+per need, interactive co-residency (tries 1 slot / 8k context, MoE offload on discrete GPUs), minus
+partial GPU fits and extra models; every model must be the lineup's largest for some need.
+`hypnos advise ...` (CLI) and `POST /v1/advisor` (`hypnos-server/src/catalog.rs`).
+
 ### Engines (`hypnos-backends`)
 
 - `llama.rs`: `ggml_llama`. Text, vision, audio-in (via mtmd), embeddings, tool calling (`tools.rs`:

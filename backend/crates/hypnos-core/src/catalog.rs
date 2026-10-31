@@ -77,6 +77,11 @@ pub struct CatalogEntry {
     /// Further `[[models]]` keys, `arch` as the `[models.arch]` table.
     #[serde(default)]
     pub config: toml::Table,
+    /// `[models.arch]` values the server reads from the GGUF at startup (layers, KV heads, head
+    /// size, context, sliding window, expert bytes), for sizing the model without its files (the
+    /// advisor, API-12). Never written into the block: the GGUF stays the source at runtime.
+    #[serde(default, skip_serializing_if = "toml::Table::is_empty")]
+    pub estimate: toml::Table,
     pub variants: Vec<CatalogVariant>,
 }
 
@@ -336,6 +341,39 @@ impl CatalogEntry {
         out
     }
 
+    /// The `ModelConfig` of `variant` as the server would run it, with the `estimate` values for
+    /// the `[models.arch]` keys the block leaves to the GGUF (paths stay relative).
+    pub fn model_config(
+        &self,
+        variant: &CatalogVariant,
+    ) -> Result<crate::config::ModelConfig, String> {
+        let mut doc: toml::Table = toml::from_str(&format!(
+            "config_version = 1\n{}",
+            self.render_block(variant)
+        ))
+        .map_err(|e| e.to_string())?;
+        if let Some(toml::Value::Table(model)) = doc
+            .get_mut("models")
+            .and_then(|m| m.as_array_mut())
+            .and_then(|a| a.first_mut())
+        {
+            let arch = model
+                .entry("arch")
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            if let toml::Value::Table(arch) = arch {
+                for (k, v) in &self.estimate {
+                    arch.entry(k.clone()).or_insert_with(|| v.clone());
+                }
+            }
+        }
+        let text = toml::to_string(&doc).map_err(|e| e.to_string())?;
+        let mut config = HypnosConfig::from_toml_str(&text).map_err(|e| e.to_string())?;
+        config
+            .models
+            .pop()
+            .ok_or_else(|| "no [[models]] block".to_string())
+    }
+
     /// With the weights of `variant` under `models_dir`: an error when their GGUF reports an
     /// architecture other than the entry's (a wrong file, or a renamed one). Missing or non-GGUF
     /// weights pass.
@@ -458,6 +496,32 @@ mod tests {
             .collect();
         from_catalog.sort();
         assert_eq!(from_catalog, lines);
+    }
+
+    #[test]
+    fn model_configs_take_the_estimate_where_the_gguf_would_fill_in() {
+        let c = catalog();
+        let e = c.entry("lfm3:1.7b").unwrap();
+        let m = e.model_config(e.variant(None).unwrap()).unwrap();
+        assert_eq!((m.arch.num_layers, m.arch.num_kv_heads), (24, 4));
+        assert_eq!(
+            m.arch.default_context_len, 16384,
+            "the block's own value wins"
+        );
+        assert!(
+            !e.render_block(e.variant(None).unwrap())
+                .contains("num_layers"),
+            "the estimate never reaches the block"
+        );
+        // Every ggml_llama entry can be sized without its files.
+        for e in c
+            .entries
+            .iter()
+            .filter(|e| e.engine == EngineKind::GgmlLlama)
+        {
+            let m = e.model_config(e.variant(None).unwrap()).unwrap();
+            assert!(m.arch.num_layers > 1 && m.arch.head_dim > 0, "{}", e.id);
+        }
     }
 
     #[test]

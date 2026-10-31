@@ -197,3 +197,60 @@ pub async fn list_catalog(
     .map_err(|e| HypnosError::BackendError(format!("catalog task failed: {e}")))?;
     Ok(Json(body))
 }
+
+/// `POST /v1/advisor` body: what is left out is this server's machine.
+#[derive(Debug, Deserialize)]
+pub struct AdvisorBody {
+    pub needs: Vec<hypnos_memory::advisor::Need>,
+    pub vram_bytes: Option<u64>,
+    pub ram_bytes: Option<u64>,
+    pub unified_memory: Option<bool>,
+}
+
+/// `POST /v1/advisor` (API-12): a lineup from the catalog for this machine or the one described,
+/// with tiers, priorities, slots, warnings and a config file.
+pub async fn advisor(
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<AdvisorBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some(catalog) = state.catalog.clone() else {
+        return Err(HypnosError::NotFound(format!(
+            "no model catalog: {FILE_NAME} was not found next to the server (or $HYPNOS_CATALOG)"
+        ))
+        .into());
+    };
+    let caps = state.scheduler.memory().capabilities();
+    let here_unified = state.scheduler.memory().is_unified_memory();
+    let unified = body
+        .unified_memory
+        .unwrap_or(here_unified && body.vram_bytes.is_none());
+    let ram = body
+        .ram_bytes
+        .or(hypnos_memory::process::physical_memory_bytes())
+        .unwrap_or(caps.physical_memory_bytes);
+    let vram = match (body.vram_bytes, unified) {
+        (Some(v), _) => v,
+        (None, true) => 0,
+        (None, false) => caps.total_vram_bytes,
+    };
+    let req = hypnos_memory::advisor::AdvisorRequest {
+        vram_bytes: vram,
+        ram_bytes: ram,
+        unified_memory: unified,
+        needs: body.needs,
+    };
+    let advice =
+        hypnos_memory::advisor::advise(&catalog, &req).map_err(HypnosError::InvalidRequest)?;
+    let mut v = serde_json::to_value(advice).unwrap_or_default();
+    if let serde_json::Value::Object(map) = &mut v {
+        map.insert(
+            "machine".into(),
+            serde_json::json!({
+                "vram_bytes": req.vram_bytes,
+                "ram_bytes": req.ram_bytes,
+                "unified_memory": req.unified_memory,
+            }),
+        );
+    }
+    Ok(Json(v))
+}

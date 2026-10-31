@@ -1929,7 +1929,9 @@ dependencies = [
  "memmap2",
  "parking_lot",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
+ "toml",
  "tracing",
  "windows-sys 0.52.0",
 ]

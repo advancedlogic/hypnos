@@ -41,6 +41,12 @@ Three startup sanity checks: `hypnos --check-config hypnos.toml` validates the f
 starting; the first lines of the log print the detected device, the budgets and every model's
 booking; `/v1/memory/status` right after `/ready` shows the pre-staged models in their tiers.
 
+**Choosing a lineup**: `hypnos advise --needs chat,voice,documents` (this machine; or
+`--vram 24G --ram 64G`, `--unified --ram 32G`) recommends catalog models, variants, context, slots,
+tiers and priorities that fit, says what stays resident together and what will swap, and
+`--config` prints a config file for it (`POST /v1/advisor` from a client). It sizes with the same
+planner as the scheduler, so its numbers are bookings, not measurements.
+
 **Adding a model** from the catalog (`backend/models.catalog.toml`, `GET /v1/models/catalog`):
 `./run.sh models <id>[:<quant>]` downloads a variant's files into the models folder, then
 `POST /v1/models {"catalog": "<id>[:<quant>]"}` adds it to the running server (no restart; its

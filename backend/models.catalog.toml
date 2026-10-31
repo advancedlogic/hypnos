@@ -11,6 +11,9 @@
 # modality, additional_modalities, engine, capabilities (thinking, tools), summary, lineup,
 # [models.config] (further [[models]] keys; [models.config.arch] = [models.arch]) and one
 # [[models.variants]] per quantization: quant, default (exactly one), note, files.
+# [models.estimate] holds the [models.arch] values the server reads from the GGUF (layers, KV heads,
+# head size, context, sliding window, expert bytes), so a model can be sized without its files
+# (the advisor, POST /v1/advisor); it is never written into a config block.
 # File: role (weights | aux | text_encoder | tokenizer | voices | data), repo (Hugging Face
 # repository or an https:// base URL), remote (path in the repo, `/` = folder), local (path under
 # models_dir), entry (for a folder: the file the config path names), size (bytes), platform
@@ -52,6 +55,15 @@ kv_dtype = "f16"
 non_layer_overhead_bytes = 2415919104
 activation_workspace_bytes = 2147483648
 
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 30
+num_kv_heads = 8
+head_dim = 512
+max_context_len = 262144
+sliding_window_len = 1024
+global_attn_every_n_layers = 6
+expert_bytes = 12846382080
+
 [[models.variants]]
 quant = "Q4_0"
 default = true
@@ -86,6 +98,14 @@ kv_dtype = "q8_0"
 non_layer_overhead_bytes = 1610612736
 activation_workspace_bytes = 536870912
 
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 42
+num_kv_heads = 2
+head_dim = 512
+max_context_len = 131072
+sliding_window_len = 512
+global_attn_every_n_layers = 6
+
 [[models.variants]]
 quant = "Q4_0"
 default = true
@@ -116,6 +136,14 @@ default_context_len = 16384
 kv_dtype = "q8_0"
 non_layer_overhead_bytes = 268435456
 activation_workspace_bytes = 536870912
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 24
+num_kv_heads = 4
+head_dim = 128
+max_context_len = 262144
+sliding_window_len = 256
+global_attn_every_n_layers = 1
 
 [[models.variants]]
 quant = "Q8_0"
@@ -155,6 +183,14 @@ kv_dtype = "q8_0"
 non_layer_overhead_bytes = 671088640
 activation_workspace_bytes = 805306368
 
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 24
+num_kv_heads = 4
+head_dim = 128
+max_context_len = 128000
+sliding_window_len = 256
+global_attn_every_n_layers = 1
+
 [[models.variants]]
 quant = "Q8_0"
 default = true
@@ -193,6 +229,14 @@ default_context_len = 8192
 kv_dtype = "q8_0"
 non_layer_overhead_bytes = 838860800
 activation_workspace_bytes = 536870912
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 24
+num_kv_heads = 4
+head_dim = 128
+max_context_len = 128000
+sliding_window_len = 256
+global_attn_every_n_layers = 1
 
 [[models.variants]]
 quant = "Q8_0"
@@ -237,6 +281,13 @@ max_context_len = 8192
 kv_dtype = "f16"
 non_layer_overhead_bytes = 104857600
 activation_workspace_bytes = 134217728
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 24
+num_kv_heads = 2
+head_dim = 512
+sliding_window_len = 1024
+global_attn_every_n_layers = 6
 
 [[models.variants]]
 quant = "Q8_0"

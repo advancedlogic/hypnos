@@ -1,3 +1,4 @@
+pub mod advisor;
 pub mod hardware;
 pub mod manager;
 pub mod mmap_cache;

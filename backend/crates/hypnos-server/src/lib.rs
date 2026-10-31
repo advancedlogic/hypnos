@@ -249,6 +249,7 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
             axum::routing::put(pool::replace_model).delete(pool::remove_model),
         )
         .route("/v1/models/catalog", get(catalog::list_catalog))
+        .route("/v1/advisor", post(catalog::advisor))
         .route("/v1/models/:id/enable", post(enable_model))
         .route("/v1/models/:id/disable", post(disable_model))
         .route("/v1/models/:id/moe-offload", post(set_moe_offload))
@@ -326,6 +327,7 @@ fn open_while_staging(method: &axum::http::Method, route: &str) -> bool {
         || route == "/v1/memory/status"
         || (route == "/v1/models" && method == axum::http::Method::GET)
         || route == "/v1/models/catalog"
+        || route == "/v1/advisor"
         // Stored pictures are served from disk, no model involved.
         || (route.starts_with("/v1/documents/") && route != "/v1/documents/convert")
 }

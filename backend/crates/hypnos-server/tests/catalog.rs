@@ -99,3 +99,56 @@ async fn the_catalog_reports_what_is_on_disk() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[tokio::test]
+async fn the_advisor_recommends_a_lineup() {
+    let mut cfg = HypnosConfig::from_toml_str("").unwrap();
+    cfg.hardware.accelerator = AcceleratorKind::Vulkan;
+    cfg.server.document_pictures_dir = Some(
+        std::env::temp_dir().join(format!("hypnos-advisor-{}", uuid::Uuid::new_v4().simple())),
+    );
+    let app = build_router(AppState::from_config(cfg).unwrap(), &[]);
+    let post = |body: &'static str| {
+        let app = app.clone();
+        async move {
+            let req = Request::builder()
+                .method("POST")
+                .uri("/v1/advisor")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            let resp = app.oneshot(req).await.unwrap();
+            let status = resp.status();
+            let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            (
+                status,
+                serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_default(),
+            )
+        }
+    };
+    let (status, body) = post(
+        r#"{"needs": ["chat", "voice"], "vram_bytes": 25769803776, "ram_bytes": 68719476736}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["machine"]["unified_memory"], false);
+    assert_eq!(body["interactive_coresident"], true);
+    let ids: Vec<&str> = body["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&"kokoro-82m-q4"), "{ids:?}");
+    assert!(body["config"].as_str().unwrap().contains("[[models]]"));
+    // This machine when nothing is said about it.
+    let (status, body) = post(r#"{"needs": ["documents"]}"#).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["machine"]["ram_bytes"].as_u64().unwrap() > 0);
+    // Impossible: an image model on a tiny GPU.
+    let (status, _) =
+        post(r#"{"needs": ["images"], "vram_bytes": 2147483648, "ram_bytes": 8589934592}"#).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

@@ -87,6 +87,9 @@ async fn run() -> Result<()> {
             println!("hypnos {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
+        Some("advise") => {
+            return advise_cli(&args[1..]);
+        }
         Some("--catalog-files") => {
             // `hypnos --catalog-files <id>[:<quant>]`: the variant's files as models.manifest
             // lines (model repo remote local platform), for the fetch scripts.
@@ -126,7 +129,7 @@ async fn run() -> Result<()> {
         }
         Some("--help" | "-h") => {
             println!(
-                "usage: hypnos [config.toml] [--port N]   start the server (config: $HYPNOS_CONFIG, then ./hypnos.toml;\n                                         port: --port, then $HYPNOS_PORT, then server.port, default 9999)\n       hypnos --check-config [config.toml]   validate the config and exit (1 on errors)\n       hypnos --catalog-block <id>[:<quant>]   print the [[models]] block of a models.catalog.toml entry\n       hypnos --catalog-files <id>[:<quant>]   print its files as models.manifest lines\n       hypnos --version"
+                "usage: hypnos [config.toml] [--port N]   start the server (config: $HYPNOS_CONFIG, then ./hypnos.toml;\n                                         port: --port, then $HYPNOS_PORT, then server.port, default 9999)\n       hypnos --check-config [config.toml]   validate the config and exit (1 on errors)\n       hypnos --catalog-block <id>[:<quant>]   print the [[models]] block of a models.catalog.toml entry\n       hypnos --catalog-files <id>[:<quant>]   print its files as models.manifest lines\n       hypnos advise --needs chat,voice,documents [--vram 24G] [--ram 64G] [--unified] [--json|--config]\n                                         recommend a lineup from the catalog for this (or that) machine\n       hypnos --version"
             );
             return Ok(());
         }
@@ -360,5 +363,148 @@ async fn run() -> Result<()> {
     let _ = staging.await;
     state.scheduler.shutdown().await;
     info!("Hypnos stopped");
+    Ok(())
+}
+
+/// `24G`, `24GB`, `24GiB`, `512M` or plain bytes (GiB / MiB either way).
+fn parse_size(s: &str) -> anyhow::Result<u64> {
+    let t = s.trim().to_ascii_lowercase();
+    let t = t.trim_end_matches('b').trim_end_matches('i');
+    let (num, mult) = match t.chars().last() {
+        Some('g') => (&t[..t.len() - 1], 1u64 << 30),
+        Some('m') => (&t[..t.len() - 1], 1u64 << 20),
+        Some('t') => (&t[..t.len() - 1], 1u64 << 40),
+        _ => (t, 1),
+    };
+    let n: f64 = num
+        .trim()
+        .parse()
+        .map_err(|_| anyhow::anyhow!("{s:?} is not a size (e.g. 24G)"))?;
+    Ok((n * mult as f64) as u64)
+}
+
+/// `hypnos advise`: a lineup from the catalog for this machine, or the one described.
+fn advise_cli(args: &[String]) -> Result<()> {
+    use hypnos_memory::advisor::{advise, AdvisorRequest, Need};
+    let mut needs = Vec::new();
+    let (mut vram, mut ram, mut unified) = (None, None, None);
+    let (mut json, mut config_only) = (false, false);
+    let mut i = 0;
+    while i < args.len() {
+        let value = || {
+            args.get(i + 1)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("{} needs a value", args[i]))
+        };
+        match args[i].as_str() {
+            "--needs" => {
+                for n in value()?.split(',').filter(|n| !n.trim().is_empty()) {
+                    needs.push(Need::parse(n).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "unknown need {n:?} (chat, vision, voice, transcription, speech, embeddings, images, documents, entities)"
+                        )
+                    })?);
+                }
+                i += 1;
+            }
+            "--vram" => {
+                vram = Some(parse_size(&value()?)?);
+                i += 1;
+            }
+            "--ram" => {
+                ram = Some(parse_size(&value()?)?);
+                i += 1;
+            }
+            "--unified" => unified = Some(true),
+            "--discrete" => unified = Some(false),
+            "--json" => json = true,
+            "--config" => config_only = true,
+            other => anyhow::bail!("unknown argument {other:?} (see hypnos --help)"),
+        }
+        i += 1;
+    }
+    if needs.is_empty() {
+        anyhow::bail!("--needs is required, e.g. --needs chat,voice,documents");
+    }
+    // This machine unless described: its RAM, Apple Silicon = unified, else the GPU's memory.
+    let unified = unified
+        .unwrap_or(cfg!(all(target_os = "macos", target_arch = "aarch64")) && vram.is_none());
+    let ram = match ram {
+        Some(r) => r,
+        None => hypnos_memory::process::physical_memory_bytes()
+            .ok_or_else(|| anyhow::anyhow!("could not read this machine's RAM: pass --ram"))?,
+    };
+    let vram = match (vram, unified) {
+        (Some(v), _) => v,
+        (None, true) => 0,
+        (None, false) => {
+            let caps = hypnos_memory::DeviceMemoryCapabilities::detect(
+                &hypnos_core::config::HardwareConfig::default(),
+            );
+            caps.total_vram_bytes
+        }
+    };
+    let path = hypnos_server::catalog::locate()
+        .with_context(|| format!("{} not found", hypnos_server::catalog::FILE_NAME))?;
+    let catalog = hypnos_core::catalog::ModelCatalog::load(&path).map_err(anyhow::Error::msg)?;
+    let advice = advise(
+        &catalog,
+        &AdvisorRequest {
+            vram_bytes: vram,
+            ram_bytes: ram,
+            unified_memory: unified,
+            needs,
+        },
+    )
+    .map_err(anyhow::Error::msg)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&advice)?);
+        return Ok(());
+    }
+    if config_only {
+        print!("{}", advice.config);
+        return Ok(());
+    }
+    let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
+    println!(
+        "Budgets: GPU (Tier 1) {:.1} GiB, warm RAM (Tier 2) {:.1} GiB{}",
+        gib(advice.budgets.tier1_bytes),
+        gib(advice.budgets.tier2_bytes),
+        if unified { ", unified memory" } else { "" }
+    );
+    for m in &advice.models {
+        let serves: Vec<String> = m
+            .serves
+            .iter()
+            .map(|n| format!("{n:?}").to_lowercase())
+            .collect();
+        println!(
+            "  {:<18} {:<7} {:>5.1} GiB resident{}  {:?}, {:?}  serves {}",
+            m.id,
+            m.quant,
+            gib(m.resident_bytes),
+            if m.runs_on_cpu { " (RAM)" } else { "" },
+            m.initial_tier,
+            m.priority,
+            serves.join(", ")
+        );
+    }
+    println!(
+        "Interactive models together: {:.1} GiB ({})",
+        gib(advice.interactive_bytes),
+        if advice.interactive_coresident {
+            "they stay resident together"
+        } else {
+            "they swap"
+        }
+    );
+    for w in &advice.warnings {
+        println!("  ! {w}");
+    }
+    println!(
+        "Download: ./run.sh models <spec> for {}",
+        advice.specs.join(" ")
+    );
+    println!("Config:   hypnos advise ... --config > hypnos.toml (or --json for everything)");
     Ok(())
 }
