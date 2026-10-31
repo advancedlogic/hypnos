@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 2  | 10  | 5   | 4   | 8    | 6   | 10    | 7   | 3    | 13   |
+| 2  | 10  | 5   | 4   | 8    | 6   | 10    | 7   | 3    | 14   |
 
 ---
 
@@ -77,6 +77,18 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       `@hypnos` included), add the tokens as repository secrets (`PYPI_TOKEN` or trusted
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
+
+- [ ] 🩵 **DESK-13** `P2` Request log viewer, as in the playground
+      A "Logs" view (a tab beside the stats panel, or its own window) over the server's request
+      log: `GET /v1/logs` refreshed every few seconds while open, one row per request (time,
+      route, model, key label, status, duration, tokens in / out, tok/s, tier switch, previous
+      tier, error), filters by model, route and status, and a click that opens the record
+      (`GET /v1/logs/{id}`: input and output text, request and response payloads when the log
+      level captures them, telemetry). The log level selector (`POST /v1/logs/level`: off ...
+      trace) and Clear (`DELETE /v1/logs`) as in the playground's "Request Logs" tab. Calls go
+      through the Rust SDK (`logs`, `log`, `set_log_level`, `clear_logs`) like the rest of the
+      app; a row for the app's own last answer can be highlighted from its `x-request-id`.
+      Copy a record as JSON. The local server's process output (DESK-5) stays in its own dialog.
 
 ## In Progress
 
