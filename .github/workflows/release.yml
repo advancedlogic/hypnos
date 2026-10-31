@@ -140,12 +140,25 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
           WINDOWS_THUMBPRINT: ${{ steps.wincert.outputs.thumbprint }}
         run: |
           npm ci
+          # Notarization with the App Store Connect API key when its secrets exist (Tauri reads
+          # APPLE_API_KEY, APPLE_API_ISSUER and the .p8 at APPLE_API_KEY_PATH), else the Apple ID.
+          if [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_ISSUER" ] && [ -n "$APPLE_API_KEY_P8" ]; then
+            export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey_$APPLE_API_KEY.p8"
+            printf '%s\n' "$APPLE_API_KEY_P8" > "$APPLE_API_KEY_PATH"
+            unset APPLE_ID APPLE_PASSWORD
+          else
+            unset APPLE_API_KEY APPLE_API_ISSUER
+          fi
+          unset APPLE_API_KEY_P8
           # Tauri treats a set-but-empty variable as configured: drop the ones without a secret.
           for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
-            [ -n "${!v}" ] || unset "$v"
+            [ -n "${!v:-}" ] || unset "$v"
           done
           # The tag's version goes into the installers; a manual run keeps tauri.conf.json's.
           config='{}'
@@ -243,7 +256,7 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-          MAC_SIGNED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_ID != '' }}
+          MAC_SIGNED: ${{ secrets.APPLE_CERTIFICATE != '' && (secrets.APPLE_API_KEY != '' || secrets.APPLE_ID != '') }}
           WIN_SIGNED: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
         run: |
           cd dist

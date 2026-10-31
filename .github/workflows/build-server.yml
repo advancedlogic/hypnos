@@ -95,6 +95,9 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
           if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_SIGNING_IDENTITY" ]; then
             echo "No APPLE_CERTIFICATE / APPLE_SIGNING_IDENTITY secret: ad-hoc signature."; exit 0
@@ -108,11 +111,17 @@ jobs:
           rm -f "$RUNNER_TEMP/cert.p12"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpw" "$kc" >/dev/null
           security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          # Notarization: the App Store Connect API key when its secrets exist, else the Apple ID.
           notarize=()
-          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+          if [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_ISSUER" ] && [ -n "$APPLE_API_KEY_P8" ]; then
+            export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey_$APPLE_API_KEY.p8"
+            printf '%s\n' "$APPLE_API_KEY_P8" > "$APPLE_API_KEY_PATH"
+            unset APPLE_ID APPLE_PASSWORD
             notarize=(--notarize)
-            echo "notarized=1" >> "$GITHUB_OUTPUT"
+          elif [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            notarize=(--notarize)
           fi
+          [ ${#notarize[@]} -gt 0 ] && echo "notarized=1" >> "$GITHUB_OUTPUT"
           SIGN_KEYCHAIN="$kc" ./backend/scripts/sign-macos.sh ${notarize[@]+"${notarize[@]}"}
 
       - uses: actions/download-artifact@v4

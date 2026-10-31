@@ -6,8 +6,10 @@
 #
 #   APPLE_SIGNING_IDENTITY  "Developer ID Application: Name (TEAMID)" (required)
 #   SIGN_KEYCHAIN           keychain to take the identity from (optional; CI uses a temporary one)
-#   --notarize credentials, one of:
+#   --notarize credentials, the first that is set:
 #     NOTARY_PROFILE                              a `xcrun notarytool store-credentials` profile
+#     APPLE_API_KEY + APPLE_API_ISSUER + APPLE_API_KEY_PATH
+#                                                 App Store Connect API key: key id, issuer id, .p8
 #     APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID   Apple ID and an app-specific password
 #
 # The library is signed before the executable that loads it, both with the hardened runtime and a
@@ -49,10 +51,12 @@ codesign --verify --strict --verbose=2 "$LIB" "$EXE"
 
 if [ -n "${NOTARY_PROFILE:-}" ]; then
     creds=(--keychain-profile "$NOTARY_PROFILE")
+elif [ -n "${APPLE_API_KEY:-}" ] && [ -n "${APPLE_API_ISSUER:-}" ] && [ -n "${APPLE_API_KEY_PATH:-}" ]; then
+    creds=(--key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER")
 elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
     creds=(--apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID")
 else
-    echo "--notarize needs NOTARY_PROFILE or APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID" >&2
+    echo "--notarize needs NOTARY_PROFILE, APPLE_API_KEY + APPLE_API_ISSUER + APPLE_API_KEY_PATH, or APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID" >&2
     exit 2
 fi
 

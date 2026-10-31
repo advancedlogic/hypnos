@@ -50,9 +50,13 @@ You need one of these two:
 
 - **Apple ID + app-specific password.** Create the password at account.apple.com > Sign-In and
   Security > App-Specific Passwords. Never use the account password.
-- **App Store Connect API key.** Create it at App Store Connect > Users and Access >
-  Integrations > App Store Connect API, with the *Developer* role. You get a `.p8` file, a key ID
-  and an issuer ID. A key does not expire with a password change, and it suits CI better.
+- **App Store Connect API key (recommended, what this repository uses).** Create it at App
+  Store Connect > Users and Access > Integrations > App Store Connect API > *Team Keys* > **+**,
+  with the *Developer* role (the first time, the Account Holder accepts the API terms there).
+  You get a `.p8` file that can be downloaded **only once**, a key ID (10 characters) and an
+  issuer ID (a UUID above the key list). A key is not tied to an Apple ID password: changing or
+  revoking app-specific passwords, the usual source of `401 Invalid credentials`, does not
+  touch it. Revoke the key in the same place if it leaks.
 
 For local use, store them once in the keychain as a `notarytool` profile:
 
@@ -133,9 +137,16 @@ Add these repository secrets (Settings > Secrets and variables > Actions):
 | `APPLE_CERTIFICATE` | the base64 `.p12` from 1.4 |
 | `APPLE_CERTIFICATE_PASSWORD` | its export password |
 | `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Your Name (TEAMID1234)` |
-| `APPLE_ID` | the Apple ID email |
+| `APPLE_API_KEY` | notarization with an API key (1.3): the key ID |
+| `APPLE_API_ISSUER` | the issuer ID |
+| `APPLE_API_KEY_P8` | the contents of `AuthKey_<key id>.p8` |
+| `APPLE_ID` | notarization with an Apple ID instead: the Apple ID email |
 | `APPLE_PASSWORD` | the app-specific password |
 | `APPLE_TEAM_ID` | `TEAMID1234` |
+
+The three `APPLE_API_*` secrets win over the Apple ID ones when all three are set. CI writes the
+`.p8` to `$RUNNER_TEMP/AuthKey_<key id>.p8` and passes it to `notarytool` (server) and to Tauri
+(`APPLE_API_KEY_PATH`, app).
 
 From the terminal, `gh secret set NAME` reads the value from a prompt that does not echo, or
 from stdin. That keeps the values out of your shell history and out of any chat or log:
@@ -143,16 +154,19 @@ from stdin. That keeps the values out of your shell history and out of any chat 
 ```bash
 base64 -i cert.p12 | gh secret set APPLE_CERTIFICATE
 gh secret set APPLE_CERTIFICATE_PASSWORD     # prompts
-gh secret set APPLE_PASSWORD                 # prompts
 gh secret set APPLE_SIGNING_IDENTITY --body "Developer ID Application: Your Name (TEAMID1234)"
 gh secret set APPLE_TEAM_ID --body TEAMID1234
-gh secret set APPLE_ID --body you@example.com
+# notarization, API key:
+gh secret set APPLE_API_KEY --body ABC123DEFG
+gh secret set APPLE_API_ISSUER --body 00000000-0000-0000-0000-000000000000
+gh secret set APPLE_API_KEY_P8 < AuthKey_ABC123DEFG.p8
+# or Apple ID:  gh secret set APPLE_ID --body you@example.com; gh secret set APPLE_PASSWORD
 gh secret list
 rm cert.p12
 ```
 
-With the first three, the app and the server are signed. With all six, they are also
-notarized, and the app's ticket is stapled. The release notes step reads the secrets and says
+With the first three, the app and the server are signed. With the notarization secrets too,
+they are also notarized, and the app's ticket is stapled. The release notes step reads the secrets and says
 "The macOS app and server are signed and notarized." Run the workflow by hand first (Actions >
 release > Run workflow). A manual run only produces artifacts, so you can check the `.dmg` and
 the server archive before you tag.
@@ -177,10 +191,6 @@ the server archive before you tag.
   new one (1.2) and replace the secrets. Revocation also invalidates what was signed with the
   old certificate, so do it only for a real leak.
 
-To use an API key instead of an Apple ID, Tauri reads `APPLE_API_KEY` (key ID),
-`APPLE_API_ISSUER` and `APPLE_API_KEY_PATH` (a path to the `.p8`). `release.yml` does not
-pass those yet. You would add a step that writes the `.p8` from a secret into
-`$RUNNER_TEMP` and exports the three variables.
 
 ### 2.3 Signing locally
 
@@ -362,12 +372,13 @@ In `build-server.yml`, which `release.yml` calls as `build-macos` for the Metal 
 - Otherwise, it imports the `.p12` into a temporary keychain (unlocked, with a partition list
   so that `codesign` never prompts) and runs
   `SIGN_KEYCHAIN=<it> sign-macos.sh`.
-- If `APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID` are also set, it adds `--notarize` and
-  sets `MACOS_NOTARIZED=1` for **Package**. A rejected submission fails the release instead of
+- If `APPLE_API_KEY`, `APPLE_API_ISSUER` and `APPLE_API_KEY_P8` are set (or else `APPLE_ID`,
+  `APPLE_PASSWORD` and `APPLE_TEAM_ID`), it adds `--notarize` and sets `MACOS_NOTARIZED=1` for
+  **Package**. A rejected submission fails the release instead of
   shipping.
 
 The release notes say "The macOS app and server are signed and notarized" when
-`APPLE_CERTIFICATE` and `APPLE_ID` are both set.
+`APPLE_CERTIFICATE` is set together with `APPLE_API_KEY` or `APPLE_ID`.
 
 ---
 
