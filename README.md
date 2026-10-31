@@ -25,6 +25,11 @@ the big ones come in when asked for, and nothing is evicted while a request is u
 - **Priorities, not timeouts.** `realtime_pinned` models never leave the GPU, `high` ones are kept
   warm in RAM, `low` ones are evicted first. Models that don't fully fit run with part of their
   layers on the GPU (CUDA).
+- **Swaps that keep their place.** With KV parking (optional) a chat model that is evicted for
+  another one saves its conversations' KV cache in host RAM and restores it when it comes back, so
+  the next turn prefills only its new tokens. A Mixture-of-Experts model can keep its expert
+  weights on the CPU (optional, per model) and need a fraction of the VRAM, to stay resident next to
+  an image or document model instead of being swapped out.
 - **Drop-in for OpenAI clients.** `/v1/chat/completions` (streaming, images, audio, tool calling), `/v1/embeddings`,
   `/v1/audio/transcriptions`, `/v1/audio/speech` (streaming), `/v1/images/generations`, with
   optional API keys and in-process HTTPS. Plus `/v1/documents/convert` (PDFs, images and office
@@ -52,6 +57,7 @@ Measured on one 24 GB CUDA GPU with the default lineup (full reports in [docs/be
 | Chat decode, Gemma 4 26B-A4B Q4 | ~100 tokens/s per stream on a 24 GB desktop GPU; **150** on an RTX 5090 laptop with 3 slots at 16k and an f16 KV cache (4 slots at 16k with q8_0 made llama.cpp re-capture its CUDA graph every step: 8 tokens/s, see [docs/bench/decode-slots-cuda-2026-10-30.md](docs/bench/decode-slots-cuda-2026-10-30.md)) |
 | Five-turn chat, time to first token per turn | 300 ms → **145 ms** with KV prefix reuse |
 | Follow-up question about the same image | 300 ms → **105 ms** (image not re-encoded) |
+| Next chat turn after the model was swapped out, 1.7k / 6.3k / 12.6k-token conversation | 1.40 / 2.56 / 4.71 s → **1.01 / 1.01 / 1.06 s** with KV parking (M5 Max, Metal; restore 2-5 ms for 230-344 MiB, [report](docs/bench/mem4-baseline-2026-10-30.md)) |
 | Four concurrent chat clients | **2.18x** the aggregate decode throughput of one (continuous batching) |
 | Text-to-speech, time to first audio | 5.4 s → **385 ms** with streaming synthesis |
 | Document conversion (docling), text page / page with two tables | **49 ms** / 1.07 s on the GPU, 133 ms / 0.9 s on the CPU (RTX 5090 laptop; [report](docs/bench/docling-cuda-2026-10-30.md)) |
@@ -216,6 +222,10 @@ it without editing the file, so one config can serve several instances.
   buffers with asynchronous uploads when layers go to a CUDA device, a file mapping on Metal and
   for CPU placements. Every Tier 1 load reports its phases (weights, projector, context) in the
   log and in `hypnos_telemetry.tier_switch_phases`.
+- `moe_offload = "auto"` on a Mixture-of-Experts model keeps its expert weights on the CPU when
+  the GPU is short, `"on"` always ([MoE expert offload](#operating-the-server)); `[hardware] kv_park = true`
+  keeps chat models' conversations across swaps ([KV parking](#operating-the-server)). Both are off
+  by default and can be switched at runtime.
 - `[models.arch]` fields you leave out are read from the GGUF header at startup
   (`<arch>.block_count`, `.attention.head_count_kv`, `.attention.key_length`, `.context_length`,
   `.attention.sliding_window[_pattern]`) and logged; values you set always win, and a mismatch with
@@ -471,6 +481,8 @@ yet; install them from the repository.
 | `GET /v1/memory/status` | full 3-tier snapshot, including `tier1_vram_real_free_bytes` and `tier1_vram_unaccounted_bytes`, plus `gpu` (utilisation, temperature, power, SM clock, throttling, ECC errors, pending retired pages; NVIDIA through `nvidia-smi`, sampled at most every 3 s; also the `hypnos_gpu_*` gauges on `/metrics` and the visualizer's header line) |
 | `POST /v1/memory/tier` | manual promote / demote (`{"model": "...", "target_tier": "tier2_pinned_ram"}`); refused with 429 while the model is leased |
 | `POST /v1/models/{id}/disable`, `.../enable` | take a model out of service without removing its config, or put it back. Disabling evicts it to Tier 3 (refused with 429 while leased), hides it from `/v1/models` and makes requests for it answer 404 `model_disabled`; enabling lets it load on its next request. Same as `enabled = false` in its `[[models]]` block (which also tolerates missing weights), but not written back to the file. `/v1/memory/status` shows `enabled` per model, and the playground's model cards carry the switch |
+| `GET /v1/memory/kv-park`, `POST /v1/memory/kv-park` | KV parking state (parked models, slots, tokens, bytes) and the runtime switch: `{"enabled": true, "max_bytes": 4294967296}`; turning it off drops every parked state |
+| `POST /v1/models/{id}/moe-offload` | a Mixture-of-Experts model's expert offload at runtime: `{"mode": "off" \| "auto" \| "on"}`; an idle resident model is unloaded so its next load uses the new mode |
 | `GET /v1/logs` | recent API calls, newest first (`?model=&route=&status=ok|error|4xx|5xx&limit=`): route, status, duration, model, tokens in / out / cached, tokens/s, tier switch; `GET /v1/logs/{id}` adds the prompt and completion text (level `debug`) and the request / response payloads with media replaced by placeholders (level `trace`) |
 | `POST /v1/logs/level` | `{"level": "off|error|warn|info|debug|trace"}` changes what is captured at runtime (`server.request_log_level` sets the start value, `server.request_log_capacity` the ring size); `DELETE /v1/logs` empties the ring. The playground's "Request Logs" tab is a client of these |
 
@@ -493,6 +505,25 @@ Behaviour that matters in production:
   prompt that extends what a slot processed last prefills only the new part, and an image or audio
   clip already in the cache is not re-encoded; `usage.prompt_tokens_details.cached_tokens` reports
   the reused positions. Idle slot caches are cleared after `server.kv_idle_timeout_secs`.
+- **KV parking** (`hardware.kv_park`, off by default; `POST /v1/memory/kv-park` at runtime): when a
+  llama.cpp model leaves Tier 1, or is reloaded with a different layer split, each used slot's KV
+  state (with its token keys and sliding-window checkpoint) is copied to host RAM; when the model
+  comes back with the same context layout (context length, slots, KV type, weights) the slots are
+  restored before it takes requests, and prefix reuse carries on as if it had never left.
+  `hardware.kv_park_bytes` (default 4 GiB) caps the parked states, the least recently parked going
+  first; a disabled model's states are dropped. Responses that restored report `kv_restore_ms` and
+  `kv_restored_tokens` in `hypnos_telemetry.tier_switch_phases`. Design and numbers:
+  [docs/pagination.md](docs/pagination.md).
+- **MoE expert offload** (`moe_offload` per model: `off` (default), `auto`, `on`;
+  `POST /v1/models/{id}/moe-offload` at runtime): the expert tensors of a Mixture-of-Experts model
+  stay in host memory and run on the CPU, while attention, the dense layers, the router and the KV
+  cache stay on the GPU. Gemma 4 26B-A4B then needs about 2.8 GiB of weights on the GPU instead of
+  14.7 GiB. `on` offloads every layer's experts; `auto` offloads the experts of as few of the last
+  layers as needed when the model does not fit whole, before falling back to a layer split
+  (discrete GPUs only). It costs speed: on an M5 Max decode went from ~105 to ~47 tokens/s and
+  prefill from 4,100 to 300 tokens/s, which is why `auto` never acts on unified memory; the CUDA
+  measurement is pending. The placement reports `cpu_expert_layers`. Design:
+  [docs/moe.md](docs/moe.md).
 - **Exposure**: binds `127.0.0.1` by default; CORS allows loopback origins only unless
   `server.allowed_origins` says otherwise. To serve beyond the local machine, set both:
   - `server.api_keys` (or env `HYPNOS_API_KEYS`, comma-separated, which replaces the list): every
