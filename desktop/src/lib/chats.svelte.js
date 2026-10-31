@@ -103,11 +103,30 @@ export class ChatStore {
     await this.#generate(chat);
   }
 
-  /** Replaces the last assistant answer with a new one. */
-  async regenerate(chat) {
+  /**
+   * The user request at `index` (or the one an answer at `index` replies to) is asked again:
+   * everything after it is dropped and a new answer streams in. `/image` requests make a new image.
+   */
+  async regenerateFrom(chat, index) {
     if (this.isRunning(chat.id)) return;
-    while (chat.messages.length && chat.messages.at(-1).role === 'assistant') chat.messages.pop();
-    if (chat.messages.length) await this.#generate(chat);
+    let at = Math.min(index, chat.messages.length - 1);
+    while (at >= 0 && chat.messages[at].role !== 'user') at--;
+    if (at < 0) return;
+    const request = chat.messages[at];
+    const command = !request.attachments?.length && request.content?.match(/^\/image\s+([\s\S]+)/);
+    if (command) {
+      chat.messages.splice(at);
+      return this.generateImage(chat, command[1].trim());
+    }
+    chat.messages.splice(at + 1);
+    await this.#generate(chat);
+  }
+
+  /** How many later turns `regenerateFrom(chat, index)` would drop (0: only the answer itself). */
+  laterTurns(chat, index) {
+    let at = index;
+    while (at >= 0 && chat.messages[at].role !== 'user') at--;
+    return chat.messages.slice(at + 1).filter((m) => m.role === 'user').length;
   }
 
   stop(id) {
@@ -119,7 +138,7 @@ export class ChatStore {
   async #generate(chat) {
     const requestId = crypto.randomUUID();
     this.running[chat.id] = requestId;
-    chat.messages.push({ role: 'assistant', content: '', model: chat.model, pending: true });
+    chat.messages.push({ role: 'assistant', content: '', model: chat.model, pending: true, at: Date.now() });
     // Mutate through the proxy so the UI follows the stream.
     const answer = chat.messages.at(-1);
     chat.updatedAt = Date.now();
@@ -173,7 +192,7 @@ export class ChatStore {
     if (!prompt || this.isRunning(chat.id)) return;
     if (chat.messages.length === 0) chat.title = titleFrom(prompt);
     chat.messages.push({ role: 'user', content: `/image ${prompt}` });
-    chat.messages.push({ role: 'assistant', content: '', pending: true, tool: { prompt, startedAt: Date.now() } });
+    chat.messages.push({ role: 'assistant', content: '', pending: true, at: Date.now(), tool: { prompt, startedAt: Date.now() } });
     await this.#makeImage(chat, chat.messages.at(-1), prompt);
   }
 

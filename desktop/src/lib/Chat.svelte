@@ -194,8 +194,17 @@
     }
   }
 
+  // `at` tells a regenerated answer from the one it replaced at the same index.
   function answerId(i) {
-    return `${chat.id}:${i}`;
+    return `${chat.id}:${i}:${chat.messages[i]?.at ?? ''}`;
+  }
+
+  /** The refresh icon: asks the request at (or before) `i` again, dropping what follows. */
+  function regenerateFrom(i) {
+    const later = store.laterTurns(chat, i);
+    if (later > 0 && !confirm(`Regenerate from here? The ${later} later ${later === 1 ? 'turn' : 'turns'} of this chat will be removed.`)) return;
+    api.speakStop();
+    store.regenerateFrom(chat, i);
   }
 
   function toggleAutoRead() {
@@ -496,13 +505,26 @@
       <div class="max-w-3xl mx-auto px-4 py-6 space-y-6">
         {#each chat.messages as message, i (i)}
           {#if message.role === 'user'}
-            <div class="flex flex-col items-end gap-2">
+            <div class="group flex flex-col items-end gap-2">
               {#if message.attachments?.length}
                 <div class="max-w-[80%]"><Attachments items={message.attachments} /></div>
               {/if}
               {#if message.content}
                 <div class="max-w-[80%] rounded-2xl bg-slate-800 px-4 py-2 text-sm whitespace-pre-wrap break-words">{message.content}</div>
               {/if}
+              <div class="-mt-1 flex text-slate-500 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                <button
+                  class="p-0.5 hover:text-slate-200 disabled:opacity-40"
+                  onclick={() => regenerateFrom(i)}
+                  disabled={running || serverState !== 'ready'}
+                  title="Regenerate the answer to this request"
+                  aria-label="Regenerate the answer to this request"
+                >
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 12a9 9 0 11-2.64-6.36M21 3v6h-6" />
+                  </svg>
+                </button>
+              </div>
             </div>
           {:else}
             <div class="group">
@@ -559,11 +581,17 @@
                         {speakingId === answerId(i) ? 'Stop reading' : 'Read aloud'}
                       </button>
                     {/if}
-                    {#if i === chat.messages.length - 1}
-                      <button class="hover:text-slate-200 disabled:opacity-40" onclick={() => store.regenerate(chat)} disabled={serverState !== 'ready'}>
-                        Regenerate
-                      </button>
-                    {/if}
+                    <button
+                      class="p-0.5 hover:text-slate-200 disabled:opacity-40"
+                      onclick={() => regenerateFrom(i)}
+                      disabled={running || serverState !== 'ready'}
+                      title={i === chat.messages.length - 1 ? 'Regenerate this answer' : 'Regenerate this answer (later turns are removed)'}
+                      aria-label={i === chat.messages.length - 1 ? 'Regenerate this answer' : 'Regenerate this answer (later turns are removed)'}
+                    >
+                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 12a9 9 0 11-2.64-6.36M21 3v6h-6" />
+                      </svg>
+                    </button>
                   </span>
                 </div>
               {/if}

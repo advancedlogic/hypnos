@@ -16,7 +16,7 @@ app's commands.
 
 - **Chat.** The model picker lists the enabled models that do text generation, with their
   current tier. Enter sends, Shift+Enter adds a line. Stop cuts an answer short (the server
-  stops at the next token); Regenerate replaces the last answer. Each chat keeps its own model and
+  stops at the next token); the refresh icon under any request or answer asks that request again and drops the turns after it (with a confirmation when later turns go). Each chat keeps its own model and
   system prompt. Chats are saved on this machine.
 - **Attachments** (the paperclip, drag and drop onto the chat, or paste): each file is prepared
   when it is added and shows as a chip until it is ready. Images are scaled to 1024 px and sent

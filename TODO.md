@@ -95,6 +95,14 @@ _No cards yet._
 
 ## Done
 
+- [x] 🩵 **DESK-15** `P2` Regenerate from any request or answer
+      A refresh icon (on hover) under every user request and assistant answer: it asks that
+      request again (for an answer, the request it replies to), drops everything after it and
+      streams a new answer; a confirmation names the later turns that would be removed, and an
+      `/image` request makes a new image. Replaces the text "Regenerate" link on the last answer.
+      `ChatStore.regenerateFrom` / `laterTurns`; answers carry `at` so the speaker reads a
+      regenerated answer from its start (the read-aloud session was keyed by index only).
+
 - [x] 🩵 **DESK-14** `P2` Desktop: switches for KV parking and MoE offload
       The same two controls in the desktop app: a KV parking toggle and cap in the connection
       dialog (or the stats panel), the parked conversations in the stats panel, and a MoE offload
