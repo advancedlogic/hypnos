@@ -37,6 +37,11 @@ export class ChatStore {
     this.#client = client;
   }
 
+  /** The client for new requests, after the connection settings changed. */
+  setClient(client) {
+    this.#client = client;
+  }
+
   async init() {
     const chats = await load(CHATS_KEY, []);
     // A response cut off by quitting the app has no telemetry and no error: mark it.

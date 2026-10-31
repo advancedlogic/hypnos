@@ -1,9 +1,10 @@
 <script>
   import { tick } from 'svelte';
   import Markdown from './Markdown.svelte';
+  import logo from '../assets/logo.png';
   import { telemetrySummary, tierName } from './format.js';
 
-  let { store, models, serverState } = $props();
+  let { store, models, serverState, onsettings } = $props();
 
   let input = $state('');
   let showSystem = $state(false);
@@ -120,12 +121,17 @@
   <div class="flex-1 min-h-0 overflow-y-auto" bind:this={scroller} onscroll={onScroll}>
     {#if !chat || chat.messages.length === 0}
       <div class="h-full flex flex-col items-center justify-center gap-3 text-center px-6">
-        <div class="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center font-bold text-xl shadow-lg shadow-indigo-600/30">H</div>
+        <div class="w-14 h-14 rounded-2xl bg-white flex items-center justify-center"><img src={logo} alt="Hypnos" class="w-10 h-10" /></div>
         <p class="text-lg text-slate-300">How can I help?</p>
-        {#if serverState !== 'ready'}
+        {#if serverState === 'starting'}
+          <p class="text-sm text-slate-500">Hypnos is loading its models…</p>
+        {:else if serverState === 'unreachable' || serverState === 'unauthorized'}
           <p class="text-sm text-slate-500">
-            {serverState === 'starting' ? 'Hypnos is loading its models…' : 'Waiting for the Hypnos server…'}
+            {serverState === 'unauthorized' ? 'The server needs a valid API key.' : 'Cannot reach the Hypnos server. Retrying…'}
+            <button class="text-indigo-300 hover:text-indigo-200" onclick={onsettings}>Connection settings</button>
           </p>
+        {:else if serverState !== 'ready'}
+          <p class="text-sm text-slate-500">Connecting to Hypnos…</p>
         {:else if models.length === 0}
           <p class="text-sm text-slate-500">The server has no chat model enabled.</p>
         {/if}

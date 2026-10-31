@@ -1,27 +1,33 @@
 <script>
   import { onMount } from 'svelte';
-  import { createClient, probe, DEFAULT_SERVER_URL } from './lib/hypnos.js';
+  import { createClient, probe } from './lib/hypnos.js';
+  import { loadConnection, saveConnection } from './lib/connection.js';
   import { ChatStore } from './lib/chats.svelte.js';
   import Sidebar from './lib/Sidebar.svelte';
   import Chat from './lib/Chat.svelte';
   import StatsPanel from './lib/StatsPanel.svelte';
+  import Settings from './lib/Settings.svelte';
+  import logo from './assets/logo.png';
 
   const POLL_MS = 3000;
   const MODELS_MS = 10000;
   const PANEL_KEY = 'hypnos.desktop.panelOpen';
 
-  const serverUrl = DEFAULT_SERVER_URL;
-  const client = createClient({ baseUrl: serverUrl });
+  /** `{ url, apiKey }`, loaded from the store and the keychain at start. */
+  let connection = $state(null);
+  let client = $derived(connection && createClient({ baseUrl: connection.url, apiKey: connection.apiKey || undefined }));
 
-  const store = new ChatStore(client);
+  const store = new ChatStore(null);
 
   let status = $state({ state: 'connecting', health: null });
   let models = $state([]);
   let panelOpen = $state(readPanelOpen());
+  let settingsOpen = $state(false);
 
   const STATES = {
     connecting: { label: 'Connecting', dot: 'bg-slate-500' },
     unreachable: { label: 'Unreachable', dot: 'bg-rose-500' },
+    unauthorized: { label: 'API key refused', dot: 'bg-rose-500' },
     starting: { label: 'Warming up', dot: 'bg-amber-400 animate-pulse' },
     ready: { label: 'Ready', dot: 'bg-emerald-400' },
   };
@@ -45,31 +51,66 @@
   }
 
   function onKeydown(e) {
-    if (!(e.metaKey || e.ctrlKey)) return;
+    if (!(e.metaKey || e.ctrlKey) || settingsOpen) return;
     if (e.key === '.') {
       e.preventDefault();
       togglePanel();
     } else if (e.key === 'n') {
       e.preventDefault();
       store.newChat();
+    } else if (e.key === ',') {
+      e.preventDefault();
+      settingsOpen = true;
     }
   }
 
+  async function onSaveSettings(next) {
+    await saveConnection(next);
+    connection = next;
+    settingsOpen = false;
+  }
+
   /** The enabled models that answer `/v1/chat/completions`, with their current tier. */
-  async function loadModels(signal) {
-    const [list, memory] = await Promise.all([client.models({ signal }), client.memoryStatus({ signal })]);
+  async function loadModels(c, signal) {
+    const [list, memory] = await Promise.all([c.models({ signal }), c.memoryStatus({ signal })]);
     const modalities = new Map(memory.models.map((m) => [m.id, m.modalities ?? [m.modality]]));
     models = list.data.filter((m) => (modalities.get(m.id) ?? [m.modality]).includes('text_generation'));
   }
 
+  // Each client (a new server or key) gets its own status loop; the loop keeps going while the
+  // server is down, so the app recovers by itself when it comes back.
+  $effect(() => {
+    const c = client;
+    if (!c) return;
+    store.setClient(c);
+    status = { state: 'connecting', health: null };
+    models = [];
+    const controller = new AbortController();
+    let timer;
+    const tick = async () => {
+      try {
+        status = await probe(c, controller.signal);
+      } catch {
+        return;
+      }
+      timer = setTimeout(tick, POLL_MS);
+    };
+    tick();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  });
+
   // The model list follows the server: loaded once it is ready, then refreshed for the tiers.
   $effect(() => {
-    if (serverState !== 'ready') return;
+    const c = client;
+    if (!c || serverState !== 'ready') return;
     const controller = new AbortController();
     let timer;
     const refresh = async () => {
       try {
-        await loadModels(controller.signal);
+        await loadModels(c, controller.signal);
       } catch {
         if (controller.signal.aborted) return;
       }
@@ -82,23 +123,10 @@
     };
   });
 
-  onMount(() => {
-    store.init().then(() => store.current ?? store.newChat());
-    const controller = new AbortController();
-    let timer;
-    const tick = async () => {
-      try {
-        status = await probe(client, controller.signal);
-      } catch {
-        return;
-      }
-      timer = setTimeout(tick, POLL_MS);
-    };
-    tick();
-    return () => {
-      controller.abort();
-      clearTimeout(timer);
-    };
+  onMount(async () => {
+    connection = await loadConnection();
+    await store.init();
+    if (!store.current) store.newChat();
   });
 </script>
 
@@ -107,20 +135,27 @@
 <div class="h-full flex flex-col">
   <header class="h-12 shrink-0 border-b border-slate-800 bg-slate-900/70 px-4 flex items-center justify-between gap-4">
     <div class="flex items-center gap-3">
-      <div class="w-7 h-7 rounded-md bg-indigo-600 flex items-center justify-center font-bold text-sm shadow-lg shadow-indigo-600/30">
-        H
+      <div class="w-7 h-7 rounded-md bg-white flex items-center justify-center">
+        <img src={logo} alt="" class="w-5 h-5" />
       </div>
       <h1 class="font-semibold text-sm tracking-tight">Hypnos</h1>
     </div>
 
     <div class="flex items-center gap-3">
-      <div class="flex items-center gap-2 text-xs text-slate-400" title={serverUrl}>
+      <button
+        class="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200 rounded-md px-2 py-1 hover:bg-slate-800"
+        title="{connection?.url ?? ''}: connection settings (⌘/Ctrl + ,)"
+        onclick={() => (settingsOpen = true)}
+      >
         <span class="w-2 h-2 rounded-full {shown.dot}"></span>
         <span>{shown.label}</span>
         {#if status.health}
           <span class="text-slate-600">v{status.health.version}</span>
         {/if}
-      </div>
+        {#if connection && !/^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(connection.url)}
+          <span class="text-slate-500 font-mono">{new URL(connection.url).host}</span>
+        {/if}
+      </button>
       <button
         class="p-1.5 rounded-md text-slate-400 hover:text-slate-100 hover:bg-slate-800"
         onclick={togglePanel}
@@ -140,13 +175,17 @@
     <Sidebar {store} />
 
     <main class="flex-1 min-w-0">
-      <Chat {store} {models} {serverState} />
+      <Chat {store} {models} {serverState} onsettings={() => (settingsOpen = true)} />
     </main>
 
-    {#if panelOpen}
+    {#if panelOpen && client}
       <aside class="w-80 shrink-0 border-l border-slate-800 bg-slate-900/40 overflow-y-auto">
         <StatsPanel {client} {status} lastResponse={store.lastTelemetry} />
       </aside>
     {/if}
   </div>
 </div>
+
+{#if settingsOpen && connection}
+  <Settings {connection} onsave={onSaveSettings} onclose={() => (settingsOpen = false)} />
+{/if}

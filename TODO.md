@@ -78,14 +78,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
 
-- [ ] 🩵 **DESK-4** `P2` Connection settings and server states
-      Settings screen: server URL (default `http://localhost:9999`), API key kept in the OS
-      keychain (not plain storage), "test connection". The UI shows distinct states for
-      unreachable, warming up (503 `model_not_available` until ready), unauthorized (401) and
-      ready, and recovers by itself when the server comes back. The `http:default` scope in
-      `src-tauri/capabilities/default.json` allows loopback only (DESK-1): a remote server
-      needs a wider scope (or a runtime one) limited to the configured origin.
-
 - [ ] 🩵 **DESK-5** `P3` Start and stop a local Hypnos server from the app
       Optional: bundle or locate the `hypnos` binary and run it as a Tauri sidecar with a
       chosen config, show its log (`/v1/logs`), stop it on quit. Decide first whether the
@@ -107,6 +99,22 @@ _No cards yet._
 
 ## Done
 
+- [x] 🩵 **DESK-4** `P2` Connection settings and server states
+      Settings screen: server URL (default `http://localhost:9999`), API key kept in the OS
+      keychain (not plain storage), "test connection". The UI shows distinct states for
+      unreachable, warming up (503 `model_not_available` until ready), unauthorized (401) and
+      ready, and recovers by itself when the server comes back. The `http:default` scope in
+      `src-tauri/capabilities/default.json` allows loopback only (DESK-1): a remote server
+      needs a wider scope (or a runtime one) limited to the configured origin.
+      Done: `src/lib/Settings.svelte` (Cmd/Ctrl+, or a click on the status) with Test
+      connection; URL in the store, key in the keychain per server origin (`keyring` 4,
+      Rust commands `get_api_key` / `set_api_key`); `allow_server` adds a runtime capability
+      scoping `http:default` to the server's origin (kept until restart: capabilities cannot
+      be removed). The probe tells unreachable / unauthorized (401 on `GET /v1/models`) /
+      warming up / ready apart and keeps polling, so the app recovers by itself. Not yet
+      tested end to end against a non-loopback server. App icon and in-app logo from
+      `assets/logo.png` on a white tile.
+
 - [x] 🩵 **DESK-3** `P1` Collapsible right panel with live Hypnos stats
       Polls `GET /v1/memory/status` (1-2 s, paused while collapsed or the window is hidden):
       Tier 1 / Tier 2 / Tier 3 usage bars and budgets, which models sit in which tier, leases,
@@ -121,6 +129,7 @@ _No cards yet._
       memory against its cap, nvidia-smi line, enabled models grouped by tier (leases,
       partial GPU layers, requests, idle), last response's telemetry with load phases, and
       the last five evictions. The last response survives a restart (newest saved answer).
+      (commit df02d19)
 
 - [x] 🩵 **DESK-2** `P1` Chat view in the style of Ollama
       Model picker from `GET /v1/models` (chat-capable, enabled models only); streaming

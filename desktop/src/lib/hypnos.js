@@ -1,4 +1,4 @@
-import { Client } from '@hypnos/client';
+import { AuthenticationError, Client } from '@hypnos/client';
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 
 export const DEFAULT_SERVER_URL = 'http://localhost:9999';
@@ -15,14 +15,24 @@ export function createClient({ baseUrl = DEFAULT_SERVER_URL, apiKey } = {}) {
   return new Client({ baseUrl, apiKey, fetch: inTauri ? tauriFetch : undefined });
 }
 
-/** One look at the server: `unreachable`, `starting` (up, not ready) or `ready`. */
+/**
+ * One look at the server: `unreachable`, `unauthorized` (the API key is missing or refused),
+ * `starting` (up, models still loading) or `ready`. `/health` is open to everyone and
+ * `GET /v1/models` checks the key even during startup, so each state is told apart.
+ */
 export async function probe(client, signal) {
   let health;
   try {
     health = await client.health({ signal });
   } catch (e) {
     if (signal?.aborted) throw e;
-    return { state: 'unreachable', health: null };
+    return { state: 'unreachable', health: null, error: String(e?.message ?? e) };
+  }
+  try {
+    await client.models({ signal });
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    if (e instanceof AuthenticationError) return { state: 'unauthorized', health };
   }
   const ready = await client.isReady({ signal });
   return { state: ready ? 'ready' : 'starting', health };
