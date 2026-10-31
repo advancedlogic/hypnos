@@ -147,7 +147,7 @@ jobs:
         run: npm ci && npm run build
 
   # The Tauri desktop app (desktop/): the binary on each OS, without installers (release.yml
-  # makes those). Its web side compiles the JavaScript SDK from sdk/javascript/src.
+  # makes those). Its Rust side depends on the Rust SDK in sdk/rust (a path dependency).
   desktop:
     name: desktop app (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
