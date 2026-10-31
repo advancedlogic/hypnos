@@ -325,6 +325,22 @@ impl InMessage {
                         "\n\n<document name=\"{name}\"{cut}>\n{body}\n</document>"
                     ));
                 }
+                Attachment::Web {
+                    name,
+                    url,
+                    text: body,
+                    truncated,
+                    ..
+                } => {
+                    let cut = if *truncated {
+                        " truncated=\"true\""
+                    } else {
+                        ""
+                    };
+                    text.push_str(&format!(
+                        "\n\n<web_page url=\"{url}\" title=\"{name}\"{cut}>\n{body}\n</web_page>"
+                    ));
+                }
                 Attachment::Audio {
                     name, transcript, ..
                 } => {

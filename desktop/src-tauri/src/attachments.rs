@@ -52,6 +52,18 @@ pub enum Attachment {
         transcript: String,
         duration_secs: f64,
     },
+    /// A web page or file read from a URL (DESK-8).
+    #[serde(rename_all = "camelCase")]
+    Web {
+        /// The page title (or the file name).
+        name: String,
+        url: String,
+        size: u64,
+        text: String,
+        truncated: bool,
+        content_type: String,
+        file_name: String,
+    },
     /// `frames` are filled by the webview; `path` lets it open the file through the asset protocol.
     #[serde(rename_all = "camelCase")]
     Video {
@@ -253,7 +265,7 @@ async fn prepare(
     }
 }
 
-fn cap(text: String) -> (String, bool) {
+pub(crate) fn cap(text: String) -> (String, bool) {
     if text.chars().count() <= DOCUMENT_MAX_CHARS {
         return (text, false);
     }

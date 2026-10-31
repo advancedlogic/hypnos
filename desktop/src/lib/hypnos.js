@@ -60,3 +60,12 @@ export const attachFromPath = (path, chatModel) => invoke('attachment_from_path'
 export function attachFromBytes(name, bytes, chatModel) {
   return invoke('attachment_from_bytes', bytes, { headers: { 'x-name': name, ...(chatModel ? { 'x-chat-model': chatModel } : {}) } });
 }
+
+/** Fetches a URL on the Rust side and converts it: a `{ kind: 'web', name (title), url, text }` attachment. */
+export const readUrl = (url) => invoke('url_extract', { url });
+
+/** Writes text to a path chosen in the save dialog. */
+export const saveText = (path, text) => invoke('save_text', { path, text });
+
+/** Downloads the original file of a URL again into a path chosen in the save dialog. */
+export const downloadUrl = (url, path) => invoke('url_download', { url, path });

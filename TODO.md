@@ -78,14 +78,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
 
-- [ ] 🩵 **DESK-8** `P2` Extract a URL's content into the chat, and download it
-      URLs in the composer (or a "Read URL" action) are fetched by the Rust side (reqwest,
-      size and time limits, http(s) only) and converted to markdown with docling (HTML, PDF,
-      office files); the result is added to the message context like a document attachment
-      (DESK-7) with its title and source. Each extracted item gets "Download" (save as .md,
-      or the original file, through the dialog plugin) and "Copy". Rust-side fetching works
-      even when the server sets `allow_remote_image_urls = false`. After DESK-7.
-
 - [ ] 🩵 **DESK-9** `P1` Microphone button: speak a message
       Mic button in the composer: press to record, press again (or release, hold mode) to
       stop. Record in Rust with `cpal` (16 kHz mono WAV; more reliable than getUserMedia across
@@ -127,6 +119,21 @@ _No cards yet._
 
 ## Done
 
+- [x] 🩵 **DESK-8** `P2` Extract a URL's content into the chat, and download it
+      URLs in the composer (or a "Read URL" action) are fetched by the Rust side (reqwest,
+      size and time limits, http(s) only) and converted to markdown with docling (HTML, PDF,
+      office files); the result is added to the message context like a document attachment
+      (DESK-7) with its title and source. Each extracted item gets "Download" (save as .md,
+      or the original file, through the dialog plugin) and "Copy". Rust-side fetching works
+      even when the server sets `allow_remote_image_urls = false`. After DESK-7.
+      Done: `src-tauri/src/web.rs`: `url_extract` (reqwest, http(s) only, 50 MiB, 30 s, 5
+      redirects; file name from the URL or the content type; title from `<title>` or the
+      first heading; docling for HTML/PDF/office, plain text as is) returns a `web`
+      attachment sent as `<web_page url title>`; `save_text` and `url_download` write to a
+      save-dialog path. Composer: a "Read <link>" chip per URL typed; the chip's panel has
+      Copy, Download .md, Download <original>. Documents get Copy and Download .md too. Live
+      test passes (example.com, a PDF, both saves, a 404 as a sentence).
+
 - [x] 🩵 **DESK-7** `P1` Attach images, documents, audio and video to a message
       Paperclip button + drag and drop + paste; chips with name, size and a remove button above
       the composer. Routing (in Rust, DESK-6): images -> `image_url` data URL parts (needs a
@@ -150,7 +157,7 @@ _No cards yet._
       overlay, paste, chips with progress and the extracted text. Deviation: audio is always
       sent as its transcript, never as `input_audio`, so it works with any chat model and
       persists as text. Live test passes (m4a transcript, PDF text, image colour + document
-      in one chat); video frame sampling not yet tried in the window.
+      in one chat); video frame sampling not yet tried in the window. (commit 0d08176)
 
 - [x] 🩵 **DESK-6** `P1` Route every server call through the Rust SDK in `src-tauri`
       Add `hypnos-client` (`sdk/rust`, path dependency) to the Tauri crate and expose Tauri

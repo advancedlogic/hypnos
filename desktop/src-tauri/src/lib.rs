@@ -1,6 +1,7 @@
 mod attachments;
 mod hypnos;
 mod local_server;
+mod web;
 
 use tauri::Manager;
 
@@ -67,6 +68,9 @@ pub fn run() {
             hypnos::hypnos_chat_cancel,
             attachments::attachment_from_path,
             attachments::attachment_from_bytes,
+            web::url_extract,
+            web::url_download,
+            web::save_text,
             local_server::local_server_detect,
             local_server::local_server_start,
             local_server::local_server_stop,

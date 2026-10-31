@@ -27,6 +27,10 @@ app's commands.
   (MP4, MOV, MKV, WebM, as far as the system's webview decodes them) becomes six frames plus
   the transcript of its soundtrack. Click a chip to read the extracted text. Attachments are
   saved with the chat.
+- **Links** typed in the composer get a "Read" chip: the app fetches the page or file itself
+  (http/https, up to 50 MiB, 30 s), converts HTML, PDF and office files with docling (plain text
+  as is) and adds it to the message with its title and source. Open the chip to Copy it,
+  Download it as .md, or download the original file again.
 - **Under each answer:** decode speed, time to first token, tokens, and the tier the model was
   loaded from when it was not on the GPU already.
 - **Stats panel** (the right side, toggled with the header button or Cmd/Ctrl+.): server version
@@ -132,6 +136,7 @@ desktop/
     ├── src/lib.rs            # store plugin, keychain commands (get/set_api_key), command list
     ├── src/hypnos.rs         # every server call on hypnos-client, the model router, errors
     ├── src/attachments.rs    # image resize, docling, audio decode (symphonia) + transcription
+    ├── src/web.rs            # fetch a URL, convert it, save markdown or the original
     ├── src/local_server.rs   # find, start, stop and log a hypnos process (health via hypnos-client)
     ├── capabilities/         # what the window may call: core + store, no HTTP
     ├── icons/                # generated from app-icon.png (assets/logo.png on a tile)
@@ -142,7 +147,8 @@ Tests: `cd src-tauri && cargo test`. Two tests need a real server and are ignore
 `HYPNOS_TEST_URL=http://127.0.0.1:9999 cargo test hypnos -- --ignored` chats, cancels and checks
 the errors through the commands; `HYPNOS_TEST_URL=... HYPNOS_TEST_FILES=<dir with jfk.m4a and a
 one-page sample.pdf containing "pelican"> cargo test attachments -- --ignored` prepares real
-attachments and asks a vision model about them; the local-server test starts one itself: `HYPNOS_TEST_BINARY=../../backend/target/release/hypnos HYPNOS_TEST_CONFIG=<config with
+attachments and asks a vision model about them; `cargo test web -- --ignored` (same URL, needs
+the network) reads example.com and a PDF and saves both; the local-server test starts one itself: `HYPNOS_TEST_BINARY=../../backend/target/release/hypnos HYPNOS_TEST_CONFIG=<config with
 one small model> cargo test -- --ignored` (it uses port 9997).
 
 To regenerate the icons after changing `src-tauri/icons/app-icon.png`:

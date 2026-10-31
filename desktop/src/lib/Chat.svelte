@@ -40,8 +40,8 @@
   }
 
   /** Prepares a file (path) or pasted bytes in the background, as a chip above the composer. */
-  async function attach(name, prepare) {
-    const item = { id: crypto.randomUUID(), name, status: 'preparing', step: stepFor(name) };
+  async function attach(name, prepare, extra = {}) {
+    const item = { id: crypto.randomUUID(), name, status: 'preparing', step: extra.url ? 'reading the page' : stepFor(name), ...extra };
     pending.push(item);
     const entry = () => pending.find((p) => p.id === item.id);
     try {
@@ -84,6 +84,24 @@
       const name = file.name && file.name !== 'image.png' ? file.name : `pasted-${Date.now()}.${(file.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`;
       attach(name, async () => api.attachFromBytes(name, new Uint8Array(await file.arrayBuffer()), chat?.model));
     }
+  }
+
+  // Links typed in the composer can be read into the message (DESK-8).
+  const URL_RE = /https?:\/\/[^\s<>"'`)\]]+/g;
+  let links = $derived(
+    [...new Set((input.match(URL_RE) ?? []).map((u) => u.replace(/[.,;:!?]+$/, '')))].filter(
+      (u) => !pending.some((p) => p.url === u),
+    ),
+  );
+
+  function readLink(url) {
+    let label = url;
+    try {
+      const u = new URL(url);
+      label = u.host + (u.pathname.length > 1 ? u.pathname : '');
+    } catch {}
+    const item = { url };
+    attach(label, () => api.readUrl(url), item);
   }
 
   function removePending(i) {
@@ -293,6 +311,19 @@
   <div class="shrink-0 px-4 pb-4">
     {#if pending.length}
       <div class="max-w-3xl mx-auto mb-2"><Attachments items={pending} onremove={removePending} /></div>
+    {/if}
+    {#if links.length}
+      <div class="max-w-3xl mx-auto mb-2 flex flex-wrap gap-2">
+        {#each links as url (url)}
+          <button
+            class="max-w-80 truncate text-[11px] px-2 py-1 rounded-full border border-slate-700 text-slate-300 hover:border-indigo-400 hover:text-indigo-200"
+            onclick={() => readLink(url)}
+            title="Fetch this page and add its text to the message"
+          >
+            Read {url.replace(/^https?:\/\//, '')}
+          </button>
+        {/each}
+      </div>
     {/if}
     <div class="max-w-3xl mx-auto flex items-end gap-2 rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 focus-within:border-slate-500">
       <button
