@@ -24,6 +24,25 @@ before(async () => {
 after(() => server.stop());
 beforeEach(() => server.reset());
 
+test("models catalog", async () => {
+  const catalog = await client.modelsCatalog();
+  assert.equal(catalog.object, "list");
+  assert.ok(catalog.data.length >= 10);
+  const entries = new Map(catalog.data.map((e) => [e.id, e]));
+  assert.equal(entries.get(CHAT).configured, true);
+  const lfm3 = entries.get("lfm3:1.7b");
+  assert.equal(lfm3.configured, false);
+  assert.ok(!("enabled" in lfm3));
+  const q8 = lfm3.variants.find((v) => v.quant === "Q8_0");
+  assert.equal(q8.default, true);
+  assert.ok(lfm3.variants.some((v) => v.quant === "Q4_K_M"));
+  assert.ok(q8.config_block.includes('weights_path = "LFM3-1.7B-Q8_0.gguf"'));
+  assert.ok(catalog.data.every((e) => e.variants.every((v) => !v.installed)));
+  const vision = new Set((await client.modelsCatalog({ modality: "vision" })).data.map((e) => e.id));
+  for (const id of ["gemma4:26b-q4", "gemma4:e4b-q4", "lfm3-vl:2b"]) assert.ok(vision.has(id), id);
+  assert.ok(!vision.has("lfm3:1.7b"));
+});
+
 test("health, ready, models, metrics", async () => {
   assert.equal((await client.health()).status, "ok");
   assert.ok(await client.isReady());

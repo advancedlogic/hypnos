@@ -22,6 +22,8 @@ import type {
   LogRecord,
   MemoryStatus,
   MemoryTier,
+  Modality,
+  ModelCatalog,
   ModelList,
   ModelSwitch,
   MoeOffload,
@@ -127,6 +129,11 @@ export interface DocumentOptions extends CallOptions {
   output_format?: "markdown" | "json";
   describe_pictures?: string;
   return_pictures?: boolean;
+}
+
+export interface CatalogQuery extends CallOptions {
+  /** Only the entries serving this modality (primary or additional). */
+  modality?: Modality;
 }
 
 export interface LogQuery extends CallOptions {
@@ -451,6 +458,15 @@ export class Client {
   /** `GET /v1/models`: the models in service. */
   models(opts: CallOptions = {}): Promise<ModelList> {
     return this.json("GET", "/v1/models", { signal: opts.signal });
+  }
+
+  /**
+   * `GET /v1/models/catalog`: the curated catalog, configured or not, with each variant's files,
+   * what is installed and its config block. `NotFoundError` when the server has no catalog file.
+   */
+  modelsCatalog(query: CatalogQuery = {}): Promise<ModelCatalog> {
+    const { signal, ...q } = query;
+    return this.json("GET", "/v1/models/catalog", { query: q, signal });
   }
 
   /** `POST /v1/models/{id}/enable`. */

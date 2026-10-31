@@ -40,6 +40,8 @@ from .types import (
     LogRecord,
     MemoryStatus,
     MemoryTier,
+    Modality,
+    ModelCatalog,
     ModelList,
     ModelSwitch,
     MoeOffload,
@@ -210,6 +212,13 @@ class AsyncClient:
     async def models(self) -> ModelList:
         """``GET /v1/models``: the models in service."""
         return cast(ModelList, await self._json("GET", "/v1/models"))
+
+    async def models_catalog(self, modality: Optional[Modality] = None) -> ModelCatalog:
+        """``GET /v1/models/catalog``: the curated catalog, configured or not, with each variant's
+        files, what is installed and its config block. ``modality`` keeps the entries serving it
+        (primary or additional). :class:`NotFoundError` when the server has no catalog file."""
+        params = {"modality": modality}
+        return cast(ModelCatalog, await self._json("GET", "/v1/models/catalog", params=params))
 
     async def enable_model(self, model: str) -> ModelSwitch:
         """``POST /v1/models/{id}/enable``."""

@@ -29,6 +29,24 @@ def test_health_ready_models(client: Client) -> None:
     assert "hypnos_http_requests_total" in client.metrics()
 
 
+def test_models_catalog(client: Client) -> None:
+    catalog = client.models_catalog()
+    assert catalog["object"] == "list"
+    assert len(catalog["data"]) >= 10
+    entries = {e["id"]: e for e in catalog["data"]}
+    assert entries[CHAT]["configured"] is True
+    lfm3 = entries["lfm3:1.7b"]
+    assert lfm3["configured"] is False and "enabled" not in lfm3
+    quants = {v["quant"]: v for v in lfm3["variants"]}
+    assert {"Q8_0", "Q4_K_M"} <= set(quants)
+    assert quants["Q8_0"]["default"] is True
+    assert 'weights_path = "LFM3-1.7B-Q8_0.gguf"' in quants["Q8_0"]["config_block"]
+    assert not any(v["installed"] for e in catalog["data"] for v in e["variants"])
+    vision = {e["id"] for e in client.models_catalog(modality="vision")["data"]}
+    assert {"gemma4:26b-q4", "gemma4:e4b-q4", "lfm3-vl:2b"} <= vision
+    assert "lfm3:1.7b" not in vision
+
+
 def test_chat(client: Client) -> None:
     reply = client.chat(CHAT, USER, max_tokens=20, temperature=0.2, seed=1, num_ctx=4096)
     assert reply["choices"][0]["message"]["content"] == "echo: hello there"

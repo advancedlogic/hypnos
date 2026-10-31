@@ -321,6 +321,65 @@ export interface MoeOffloadSwitch {
   placement: Placement;
 }
 
+export type CatalogCapability = "thinking" | "tools";
+export type CatalogFileRole = "weights" | "aux" | "text_encoder" | "tokenizer" | "voices" | "data";
+export type CatalogPlatform = "all" | "macos-arm64" | "other";
+
+/** One file a catalog variant needs (`GET /v1/models/catalog`). */
+export interface CatalogFile {
+  role: CatalogFileRole;
+  /** A Hugging Face repository or an `https://` base URL `remote` is appended to. */
+  repo: string;
+  remote: string;
+  /** Path under `models_dir`. */
+  local: string;
+  entry?: string;
+  size: number;
+  platform: CatalogPlatform;
+  present: boolean;
+  outdated?: boolean;
+}
+
+export interface CatalogVariant {
+  quant: string;
+  default: boolean;
+  note?: string;
+  size_bytes: number;
+  files: CatalogFile[];
+  installed: boolean;
+  outdated: boolean;
+  problem?: string;
+  /** The `[[models]]` TOML block that runs this variant. */
+  config_block: string;
+}
+
+export interface CatalogEntry {
+  id: string;
+  name: string;
+  publisher: string;
+  license: string;
+  architecture: string;
+  modality: Modality;
+  additional_modalities?: Modality[];
+  engine: string;
+  capabilities?: CatalogCapability[];
+  summary: string;
+  lineup: boolean;
+  configured: boolean;
+  /** Only when `configured`. */
+  enabled?: boolean;
+  variants: CatalogVariant[];
+}
+
+/** `GET /v1/models/catalog`; see docs/api.md section 6. */
+export interface ModelCatalog {
+  object: string;
+  catalog_version: number;
+  models_dir: string;
+  tested_architectures: string[];
+  data: CatalogEntry[];
+}
+
 export interface TierMove {
   model: string;
   placement: Placement;

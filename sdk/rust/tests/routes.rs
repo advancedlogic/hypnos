@@ -493,3 +493,43 @@ async fn logs() {
     c.set_log_level("info").await.unwrap();
     assert_eq!(c.clear_logs().await.unwrap()["cleared"], true);
 }
+
+#[tokio::test]
+async fn models_catalog() {
+    let server = MockServer::start();
+    let c = server.client();
+    let catalog = c.models_catalog(None).await.unwrap();
+    assert_eq!(catalog.object, "list");
+    assert!(catalog.data.len() >= 10, "{} entries", catalog.data.len());
+    let entry = |id: &str| catalog.data.iter().find(|e| e.id == id).unwrap();
+    assert!(entry(CHAT).configured);
+    let lfm3 = entry("lfm3:1.7b");
+    assert!(!lfm3.configured);
+    assert_eq!(lfm3.enabled, None);
+    let q8 = lfm3.variants.iter().find(|v| v.quant == "Q8_0").unwrap();
+    assert!(q8.default);
+    assert!(lfm3.variants.iter().any(|v| v.quant == "Q4_K_M"));
+    assert!(q8
+        .config_block
+        .contains(r#"weights_path = "LFM3-1.7B-Q8_0.gguf""#));
+    assert!(catalog
+        .data
+        .iter()
+        .all(|e| e.variants.iter().all(|v| !v.installed)));
+
+    let vision: Vec<String> = c
+        .models_catalog(Some("vision"))
+        .await
+        .unwrap()
+        .data
+        .into_iter()
+        .map(|e| e.id)
+        .collect();
+    for id in ["gemma4:26b-q4", "gemma4:e4b-q4", "lfm3-vl:2b"] {
+        assert!(
+            vision.iter().any(|i| i == id),
+            "{id} missing from {vision:?}"
+        );
+    }
+    assert!(!vision.iter().any(|i| i == "lfm3:1.7b"));
+}

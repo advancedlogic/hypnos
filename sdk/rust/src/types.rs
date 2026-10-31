@@ -912,6 +912,120 @@ pub struct ModelList {
     pub data: Vec<ModelInfo>,
 }
 
+/// One file a catalog variant needs (`GET /v1/models/catalog`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CatalogFile {
+    /// The config key the file fills: `weights`, `aux`, `text_encoder`, `tokenizer`, `voices`,
+    /// or `data` (needed beside the weights, named by no key).
+    #[serde(default)]
+    pub role: String,
+    /// A Hugging Face repository or an `https://` base URL `remote` is appended to.
+    #[serde(default)]
+    pub repo: String,
+    /// The file (or, ending in `/`, a whole folder) in `repo`.
+    #[serde(default)]
+    pub remote: String,
+    /// Path under `models_dir`.
+    #[serde(default)]
+    pub local: String,
+    /// The file inside a folder the config names.
+    #[serde(default)]
+    pub entry: Option<String>,
+    #[serde(default)]
+    pub size: u64,
+    /// `all`, `macos-arm64` or `other`.
+    #[serde(default)]
+    pub platform: String,
+    #[serde(default)]
+    pub present: bool,
+    /// Present with another size than listed.
+    #[serde(default)]
+    pub outdated: bool,
+}
+
+/// One quantization of a catalog entry.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CatalogVariant {
+    #[serde(default)]
+    pub quant: String,
+    #[serde(default)]
+    pub default: bool,
+    #[serde(default)]
+    pub note: Option<String>,
+    /// Bytes of this machine's files.
+    #[serde(default)]
+    pub size_bytes: u64,
+    #[serde(default)]
+    pub files: Vec<CatalogFile>,
+    /// Every file is present.
+    #[serde(default)]
+    pub installed: bool,
+    /// Some present file has another size (re-download it).
+    #[serde(default)]
+    pub outdated: bool,
+    /// The downloaded weights report another architecture than the entry.
+    #[serde(default)]
+    pub problem: Option<String>,
+    /// The `[[models]]` TOML block that runs this variant.
+    #[serde(default)]
+    pub config_block: String,
+}
+
+/// One model of the catalog.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CatalogEntry {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub publisher: String,
+    #[serde(default)]
+    pub license: String,
+    #[serde(default)]
+    pub architecture: String,
+    #[serde(default)]
+    pub modality: String,
+    #[serde(default)]
+    pub additional_modalities: Vec<String>,
+    #[serde(default)]
+    pub engine: String,
+    /// `thinking`, `tools`.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub summary: String,
+    /// Part of the default lineup.
+    #[serde(default)]
+    pub lineup: bool,
+    /// The config has a `[[models]]` block with this id.
+    #[serde(default)]
+    pub configured: bool,
+    /// Present only when `configured`.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub variants: Vec<CatalogVariant>,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+/// `GET /v1/models/catalog`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ModelCatalog {
+    #[serde(default)]
+    pub object: String,
+    #[serde(default)]
+    pub catalog_version: u32,
+    #[serde(default)]
+    pub models_dir: String,
+    #[serde(default)]
+    pub tested_architectures: Vec<String>,
+    #[serde(default)]
+    pub data: Vec<CatalogEntry>,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
 /// `POST /v1/models/{id}/enable|disable`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelSwitch {

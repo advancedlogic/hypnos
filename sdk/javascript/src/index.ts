@@ -6,6 +6,7 @@
 export { Client, DEFAULT_BASE_URL, VERSION, sliceByCodePoints } from "./client.js";
 export type {
   CallOptions,
+  CatalogQuery,
   ChatOptions,
   ClientOptions,
   DocumentOptions,

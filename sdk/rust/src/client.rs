@@ -745,6 +745,21 @@ impl Client {
             .await
     }
 
+    /// `GET /v1/models/catalog`: the curated catalog, configured or not, with each variant's
+    /// files, what is installed and its config block. `modality` (`"vision"`, ...) keeps the
+    /// entries serving it (primary or additional). [`Error::NotFound`] when the server has no
+    /// catalog file.
+    pub async fn models_catalog(&self, modality: Option<&str>) -> Result<ModelCatalog> {
+        self.json(None, || {
+            let req = self.request(Method::GET, "/v1/models/catalog");
+            match modality {
+                Some(m) => req.query(&[("modality", m)]),
+                None => req,
+            }
+        })
+        .await
+    }
+
     /// `POST /v1/models/{id}/enable`.
     pub async fn enable_model(&self, model: &str) -> Result<ModelSwitch> {
         let path = format!("/v1/models/{model}/enable");

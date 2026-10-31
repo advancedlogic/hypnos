@@ -428,6 +428,68 @@ class MoeOffloadSwitch(TypedDict):
     placement: Placement
 
 
+CatalogCapability = Literal["thinking", "tools"]
+CatalogFileRole = Literal["weights", "aux", "text_encoder", "tokenizer", "voices", "data"]
+CatalogPlatform = Literal["all", "macos-arm64", "other"]
+
+
+class CatalogFile(TypedDict):
+    """One file a catalog variant needs (``GET /v1/models/catalog``)."""
+
+    role: CatalogFileRole
+    #: A Hugging Face repository or an ``https://`` base URL ``remote`` is appended to.
+    repo: str
+    remote: str
+    #: Path under ``models_dir``.
+    local: str
+    entry: NotRequired[str]
+    size: int
+    platform: CatalogPlatform
+    present: bool
+    outdated: NotRequired[bool]
+
+
+class CatalogVariant(TypedDict):
+    quant: str
+    default: bool
+    note: NotRequired[str]
+    size_bytes: int
+    files: List[CatalogFile]
+    installed: bool
+    outdated: bool
+    problem: NotRequired[str]
+    #: The ``[[models]]`` TOML block that runs this variant.
+    config_block: str
+
+
+class CatalogEntry(TypedDict):
+    id: str
+    name: str
+    publisher: str
+    license: str
+    architecture: str
+    modality: Modality
+    additional_modalities: NotRequired[List[Modality]]
+    engine: str
+    capabilities: NotRequired[List[CatalogCapability]]
+    summary: str
+    lineup: bool
+    configured: bool
+    #: Only when ``configured``.
+    enabled: NotRequired[bool]
+    variants: List[CatalogVariant]
+
+
+class ModelCatalog(TypedDict):
+    """``GET /v1/models/catalog``; see docs/api.md section 6."""
+
+    object: str
+    catalog_version: int
+    models_dir: str
+    tested_architectures: List[str]
+    data: List[CatalogEntry]
+
+
 class TierMove(TypedDict):
     model: str
     placement: Placement
