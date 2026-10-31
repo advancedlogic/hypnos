@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 2  | 10  | 5   | 4   | 8    | 6   | 10    | 7   | 3    | 14   |
+| 2  | 10  | 5   | 5   | 8    | 6   | 10    | 7   | 3    | 14   |
 
 ---
 
@@ -77,6 +77,18 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       `@hypnos` included), add the tokens as repository secrets (`PYPI_TOKEN` or trusted
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
+
+- [ ] 🟫 **MEM-4** `P2` Keep each slot's KV state across a demotion
+      Design in docs/pagination.md. On demotion the worker saves every slot's full sequence
+      state (`state_seq_get`, flags 0) with its token keys, the SWA checkpoint and a context
+      signature, outside the worker; on promotion, if the signature matches, the next request
+      for that conversation is matched by longest prefix and restored (`state_seq_set`), with
+      the same divergence rules as today's in-context reuse, else it prefills normally. A cap
+      `hardware.kv_park_bytes` booked by the memory manager, LRU eviction, shown in
+      `/v1/memory/status`; new timings `restore_ms`, `restored_tokens`. Size from the GGUF:
+      ~360 MiB for an 8k conversation on the 26B (20 KiB/token + <=200 MiB SWA). Bench: N-token
+      conversation, swap, next turn TTFT with and without (N = 2k, 8k, 16k). Not paged attention,
+      no Tier 3 spill at first.
 
 ## In Progress
 
