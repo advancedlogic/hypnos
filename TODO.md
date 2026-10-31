@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 2  | 11  | 5   | 6   | 9    | 6   | 10    | 7   | 3    | 14   |
+| 3  | 11  | 5   | 6   | 9    | 6   | 10    | 7   | 3    | 15   |
 
 ---
 
@@ -99,6 +99,23 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       backend, preferred over a layer split or an eviction (config `moe_offload`), shown in
       `/v1/memory/status` and telemetry. Gemma 4 26B: experts ~12.0 of ~13.6 GiB, ~0.8 GB read
       per decoded token. Discrete GPUs only.
+
+- [ ] 🟦 **UI-2** `P2` Playground: switches for KV parking and MoE offload
+      In the memory panel: a KV parking toggle and cap (`GET` / `POST /v1/memory/kv-park`), with
+      what is parked per model (slots, tokens, bytes, age, from `kv_park` in
+      `/v1/memory/status`); and per model card a MoE offload selector `off` / `auto` / `on`
+      (`POST /v1/models/{id}/moe-offload`, shown only when `expert_bytes` > 0), with
+      `placement.cpu_expert_layers` and whether the change applied now or at the next load. Show
+      `kv_restored_tokens` / `kv_restore_ms` in the telemetry log when a load restored
+      conversations. After MEM-5.
+
+- [ ] 🩵 **DESK-14** `P2` Desktop: switches for KV parking and MoE offload
+      The same two controls in the desktop app: a KV parking toggle and cap in the connection
+      dialog (or the stats panel), the parked conversations in the stats panel, and a MoE offload
+      selector per model in the stats panel's model list (MoE models only), all through the Rust
+      SDK (`kv_park` / `set_kv_park`, and the MoE call MEM-5 adds). The stats panel's "Last
+      response" shows the restored tokens and restore time when a swap brought conversations
+      back. After MEM-5.
 
 ## In Progress
 
