@@ -42,8 +42,10 @@ app's commands.
   sentence. "Read aloud" under any answer reads it on demand; sending a message, switching
   chats or "Stop reading" stops it. Code blocks are announced ("Code block.") rather than
   read, links are read as their text. Voice and speed are in the connection dialog.
-- **Images**: ask the chat model for a picture ("draw a lighthouse at dawn") and it writes a
-  prompt for the image model (MOSS-Image), which the app runs; the image appears in the answer
+- **Images**: ask the chat model for a picture ("draw a lighthouse at dawn") and it calls the
+  `generate_image` tool with a prompt for the image model (MOSS-Image), which the app runs (a
+  real OpenAI tool call on servers with tool calling, API-9; a prompt convention for models
+  without a native tool format); the image appears in the answer
   with the prompt, Save, Copy and Regenerate, followed by a one-line comment. The Image button
   in the composer (or `/image <prompt>`) skips the chat model. A generation takes from tens of
   seconds to a few minutes, longer when the image model must load first, which may unload the
@@ -184,7 +186,7 @@ desktop/
     ├── src/web.rs            # fetch a URL, convert it, save markdown or the original
     ├── src/mic.rs            # record with cpal on its own thread, then transcribe
     ├── src/tts.rs            # markdown to speech text, sentence queue, rodio playback
-    ├── src/images.rs         # the image tool: instruction, ToolGate, generation, save
+    ├── src/images.rs         # the image tool: tool spec, prompt fallback (ToolGate), generation, save
     ├── src/tray.rs           # tray icon with a status dot, its menu, close-to-tray, Dock icon
     ├── Info.plist            # macOS: NSMicrophoneUsageDescription
     ├── src/local_server.rs   # find, start, stop and log a hypnos process (health via hypnos-client)

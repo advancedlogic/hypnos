@@ -265,9 +265,11 @@ them in order and plays them on a rodio player thread; `speak` takes the text so
 `tray.rs` is the tray icon (status dot drawn on the logo, menu events `tray-server` /
 `tray-open-settings` handled by the webview, close-to-tray in `on_window_event`, macOS Dock
 visibility); `local_server_stop_port` stops any local process named `hypnos` on the connection's
-port, so the tray can stop a server `run.sh` started. `images.rs` is the app-side tool loop (the server ignores `tools`, API-9): `TOOL_INSTRUCTION` in
-the system prompt, a `ToolGate` that holds back an answer's start until it knows whether it is a
-```generate_image block, then the image, an `image` event and a short comment round. The real-server tests are `#[ignore]`d (`HYPNOS_TEST_URL`;
+port, so the tray can stop a server `run.sh` started. `images.rs` is the image tool: `generate_image` goes to the server as a real tool
+(`image_tool_spec`, API-9), its call becomes an image, an `image` event and a `tool` result the
+model comments on (second round with `tool_choice: none`); when the server refuses tools for the
+model (400, no native format) `hypnos_chat` falls back to the prompt convention
+(`TOOL_INSTRUCTION` plus a `ToolGate` that holds back an answer's start). The real-server tests are `#[ignore]`d (`HYPNOS_TEST_URL`;
 `HYPNOS_TEST_BINARY` / `HYPNOS_TEST_CONFIG`). `get_api_key` / `set_api_key` keep the API key in
 the OS keychain (`keyring`), keyed by origin; chats and the server URL live in `tauri-plugin-store`. `ChatStore`
 (`src/lib/chats.svelte.js`) owns chats and streaming; `StatsPanel.svelte` polls

@@ -137,8 +137,8 @@ _No cards yet._
       `toolMessage` / `ChatMessage::tool`, `assistant_message`, `parse_arguments`, streams
       accumulate calls by index) with tests (Python 43, JS 41, Rust 44 passing). Live on
       gemma4:e4b: a weather call, its result answered, required / named / none, streaming.
-      The desktop image tool (DESK-11) still uses its prompt convention; switching it to
-      native tools is a follow-up.
+      The desktop image tool (DESK-11) uses native tool calls since the follow-up commit
+      (prompt convention only as the fallback for models without a native format).
 
 - [x] ⬛ **BUILD-9** `P3` Sign and notarize the desktop installers
       The release's desktop installers are ad-hoc signed on macOS and unsigned on Windows

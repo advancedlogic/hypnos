@@ -8,11 +8,14 @@ use std::time::Duration;
 
 use hypnos_client::{
     ChatMessage, ChatRequest, Client, Content, ContentPart, Error, MemoryStatus, MemoryTier,
-    ModelStatus, Telemetry, Usage,
+    ModelStatus, Telemetry, ToolChoice, Usage,
 };
 
 use crate::attachments::Attachment;
-use crate::images::{generate, Generated, ToolGate, TOOL_INSTRUCTION};
+use crate::images::{
+    generate, image_tool_spec, Generated, ToolCall as ImageCall, ToolGate, IMAGE_TOOL,
+    TOOL_INSTRUCTION,
+};
 use serde::{Deserialize, Serialize};
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
@@ -521,9 +524,86 @@ fn send_done(stream: &hypnos_client::ChatStream, on_event: &Channel<ChatEvent>) 
     });
 }
 
-/// The first round runs with the tool instruction and its start held back by a [`ToolGate`];
-/// a tool call becomes an image and a second, instruction-free round for the model's comment.
+/// The image tool: as a native tool call when the server can run tools for the model (API-9),
+/// else through the prompt convention.
 async fn answer_with_image_tool<R: Runtime>(
+    app: &AppHandle<R>,
+    client: &Client,
+    model: &str,
+    messages: Vec<ChatMessage>,
+    on_event: &Channel<ChatEvent>,
+) -> CmdResult<()> {
+    match answer_with_native_tool(app, client, model, messages.clone(), on_event).await {
+        Err(e)
+            if e.kind == "bad_request"
+                && e.detail.as_deref().is_some_and(|d| d.contains("tool")) =>
+        {
+            answer_with_prompt_tool(app, client, model, messages, on_event).await
+        }
+        other => other,
+    }
+}
+
+/// `generate_image` as a real tool: the answer streams as usual, a call becomes an image and a
+/// `tool` result, and the model comments on it in a second round (tools hidden, so no new call).
+async fn answer_with_native_tool<R: Runtime>(
+    app: &AppHandle<R>,
+    client: &Client,
+    model: &str,
+    messages: Vec<ChatMessage>,
+    on_event: &Channel<ChatEvent>,
+) -> CmdResult<()> {
+    let tools = vec![image_tool_spec()];
+    let request = ChatRequest::new(model, messages.clone())
+        .tools(tools.clone())
+        .tool_choice(ToolChoice::Auto);
+    let mut stream = client.chat_stream(&request).await?;
+    {
+        let mut pieces = stream.text();
+        while let Some(piece) = pieces.next().await {
+            if on_event.send(ChatEvent::Delta { text: piece? }).is_err() {
+                return Ok(());
+            }
+        }
+    }
+    let calls = stream.tool_calls().to_vec();
+    let Some(call) = calls.iter().find(|c| c.function.name == IMAGE_TOOL) else {
+        send_done(&stream, on_event);
+        return Ok(());
+    };
+    let args: ImageCall = call.function.parse_arguments().map_err(|e| ErrorPayload {
+        kind: "image".into(),
+        message: "The model asked for an image without a usable prompt.".into(),
+        detail: Some(e.to_string()),
+        retry_after_secs: None,
+    })?;
+    let _ = on_event.send(ChatEvent::ToolCall {
+        prompt: args.prompt.clone(),
+        size: args.size.clone(),
+    });
+    let image = generate(&app.state::<Hypnos>(), &args.prompt, Some(&args.size)).await?;
+    let _ = on_event.send(ChatEvent::Image(Box::new(image)));
+
+    let mut follow_up = messages;
+    follow_up.push(ChatMessage::assistant_with_calls("", calls.clone()));
+    for c in &calls {
+        let result = if c.id == call.id {
+            "The image was generated and is now shown to the user. Tell them in one short sentence that it is ready and what it shows; do not claim to see it and do not ask a question."
+        } else {
+            "Unknown tool."
+        };
+        follow_up.push(ChatMessage::tool(c.id.clone(), result));
+    }
+    let request = ChatRequest::new(model, follow_up)
+        .tools(tools)
+        .tool_choice(ToolChoice::None);
+    stream_answer(client, &request, on_event).await
+}
+
+/// The prompt convention for models without a native tool format: the first round runs with the
+/// tool instruction and its start held back by a [`ToolGate`]; a call becomes an image and a
+/// second, instruction-free round for the model's comment.
+async fn answer_with_prompt_tool<R: Runtime>(
     app: &AppHandle<R>,
     client: &Client,
     model: &str,

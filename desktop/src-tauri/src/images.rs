@@ -1,8 +1,9 @@
-//! The image tool (DESK-11). The server ignores OpenAI `tools`, so the app runs the loop: a
-//! system instruction tells the chat model how to ask for an image, [`ToolGate`] holds back the
-//! start of each answer until it is clear whether it is such a request, and the request is
-//! carried out on the `image_generation` model. The image button and `/image` call
-//! [`hypnos_generate_image`] directly.
+//! The image tool (DESK-11). With a model the server can run tools for (API-9), `generate_image`
+//! is sent as a real OpenAI tool ([`image_tool_spec`]). For a model without a native tool format
+//! the app falls back to a prompt convention: a system instruction tells the chat model how to ask
+//! for an image and [`ToolGate`] holds back the start of each answer until it is clear whether it
+//! is such a request. Either way the request runs on the `image_generation` model. The image button
+//! and `/image` call [`hypnos_generate_image`] directly.
 
 use std::time::Instant;
 
@@ -14,7 +15,32 @@ use tauri::State;
 use crate::attachments::downscale_jpeg;
 use crate::hypnos::{ErrorPayload, Hypnos};
 
-/// The fence the chat model opens to call the tool.
+pub const IMAGE_TOOL: &str = "generate_image";
+
+/// `generate_image` as an OpenAI tool.
+pub fn image_tool_spec() -> hypnos_client::ToolSpec {
+    hypnos_client::ToolSpec::function(
+        IMAGE_TOOL,
+        "Create an image with the image generator. Call it when the user asks you to draw, paint, generate, create or show an image or picture.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "A detailed visual description in English: subject, setting, style, lighting, composition"
+                },
+                "size": {
+                    "type": "string",
+                    "enum": ["1024x1024", "1344x768", "768x1344"],
+                    "description": "1344x768 for wide scenes, 768x1344 for tall ones"
+                }
+            },
+            "required": ["prompt"]
+        }),
+    )
+}
+
+/// The fence the chat model opens to call the tool (prompt-convention fallback).
 pub const TOOL_FENCE: &str = "```generate_image";
 pub const DEFAULT_SIZE: &str = "1024x1024";
 
