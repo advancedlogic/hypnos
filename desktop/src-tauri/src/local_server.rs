@@ -1,7 +1,15 @@
-//! A Hypnos server started by the app (DESK-5). The app never bundles the server: it finds an
-//! installed `hypnos` binary, runs it with a config and a port, keeps its output for the log
-//! view, and stops it when asked or when the app quits. Health and readiness go through the
-//! Rust SDK (`hypnos-client`).
+//! A Hypnos server started by the app (DESK-5). It runs a `hypnos` binary with a config and a
+//! port, keeps its output for the log view, and stops it when asked or when the app quits.
+//! Health and readiness go through the Rust SDK (`hypnos-client`).
+//!
+//! The macOS app can carry the server (DESK-15): `hypnos` in `Contents/MacOS`, its dylib in
+//! `Contents/Frameworks`, the data and a config template in `Contents/Resources`. The bundle is
+//! read-only (its signature covers it), so the bundled server runs with a config the app owns
+//! in `~/Library/Application Support/Hypnos/` (`hypnos.toml`, `models/`). Before each start the
+//! app disables the models of that config whose files are missing (the server refuses to start
+//! otherwise) and enables them again once the files are there; models the user disabled stay
+//! disabled. Elsewhere the app finds an installed binary: this checkout's build, one beside the
+//! app, or PATH.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -10,7 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Runtime, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
@@ -172,30 +180,149 @@ fn beside_app() -> Option<PathBuf> {
     existing(std::env::current_exe().ok()?.parent()?.join(BINARY_NAME))
 }
 
-/// Finds an installed server: this checkout's build, a binary beside the app, then PATH.
+/// The server inside this app's bundle (DESK-15): `Contents/MacOS/hypnos` with the config
+/// template the bundling build puts in `Contents/Resources/server/`.
+fn bundled() -> Option<PathBuf> {
+    let binary = beside_app()?;
+    bundled_template(&binary)?;
+    Some(binary)
+}
+
+fn bundled_template(binary: &Path) -> Option<PathBuf> {
+    let macos = binary.parent()?;
+    if macos.file_name()? != "MacOS" {
+        return None;
+    }
+    existing(macos.parent()?.join("Resources/server/hypnos.toml"))
+}
+
+/// The folder the bundled server's config and models live in, `~/Library/Application
+/// Support/Hypnos`: outside the bundle, which must stay unchanged for its signature.
+fn managed_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .data_dir()
+        .map_err(|e| format!("no application data folder: {e}"))?
+        .join("Hypnos"))
+}
+
+/// The bundled server's config, written from the bundle's template the first time.
+fn managed_config<R: Runtime>(app: &AppHandle<R>, binary: &Path) -> Result<PathBuf, String> {
+    let dir = managed_dir(app)?;
+    let config = dir.join("hypnos.toml");
+    std::fs::create_dir_all(dir.join("models"))
+        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    if !config.exists() {
+        let template = bundled_template(binary).ok_or("the app bundle has no config template")?;
+        std::fs::copy(&template, &config)
+            .map_err(|e| format!("could not write {}: {e}", config.display()))?;
+    }
+    Ok(config)
+}
+
+/// Finds a server: the one bundled in this app, this checkout's build, a binary beside the
+/// app, then PATH. The bundled one comes with the app's own config (created on first use).
 #[tauri::command]
-pub fn local_server_detect() -> Detected {
-    let found = repo_backend()
-        .map(|b| (b, "repo"))
+pub fn local_server_detect<R: Runtime>(app: AppHandle<R>) -> Result<Detected, String> {
+    let found = bundled()
+        .map(|b| (b, "bundled"))
+        .or_else(|| repo_backend().map(|b| (b, "repo")))
         .or_else(|| beside_app().map(|b| (b, "beside-app")))
         .or_else(|| on_path().map(|b| (b, "path")));
-    match found {
-        Some((binary, source)) => Detected {
-            config: if source == "repo" {
-                repo_config(&binary)
-            } else {
-                None
-            }
-            .map(|c| c.display().to_string()),
-            binary: Some(binary.display().to_string()),
-            source: Some(source.to_string()),
-        },
-        None => Detected {
+    let Some((binary, source)) = found else {
+        return Ok(Detected {
             binary: None,
             config: None,
             source: None,
-        },
+        });
+    };
+    let config = match source {
+        "bundled" => Some(managed_config(&app, &binary)?),
+        "repo" => repo_config(&binary),
+        _ => None,
+    };
+    Ok(Detected {
+        config: config.map(|c| c.display().to_string()),
+        binary: Some(binary.display().to_string()),
+        source: Some(source.to_string()),
+    })
+}
+
+const MODEL_PATH_KEYS: [&str; 4] = [
+    "weights_path",
+    "aux_weights_path",
+    "text_encoder_path",
+    "tokenizer_path",
+];
+/// Beside the managed config: the ids the app disabled because their files were missing.
+const AUTO_DISABLED_FILE: &str = "auto-disabled.json";
+
+/// What `sync_models` changed in the config.
+#[derive(Debug, Default, PartialEq)]
+struct ModelSync {
+    disabled: Vec<String>,
+    enabled: Vec<String>,
+}
+
+/// Matches `enabled` in the app's own config to the model files on disk, as the server's
+/// validation checks them: a model whose files are missing is disabled (the server would refuse
+/// to start), one the app disabled that way is enabled again when they are all there. A model
+/// the user disabled is not in the auto-disabled list and stays as it is.
+fn sync_models(config: &Path) -> Result<ModelSync, String> {
+    let dir = config.parent().unwrap_or(Path::new("."));
+    let text = std::fs::read_to_string(config)
+        .map_err(|e| format!("could not read {}: {e}", config.display()))?;
+    let mut doc: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|e| format!("{}: {e}", config.display()))?;
+    let state_path = dir.join(AUTO_DISABLED_FILE);
+    let mut auto: std::collections::BTreeSet<String> = std::fs::read_to_string(&state_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let before = auto.clone();
+
+    let mut sync = ModelSync::default();
+    let mut ids = std::collections::BTreeSet::new();
+    if let Some(models) = doc
+        .get_mut("models")
+        .and_then(|m| m.as_array_of_tables_mut())
+    {
+        for model in models.iter_mut() {
+            let Some(id) = model.get("id").and_then(|v| v.as_str()).map(String::from) else {
+                continue;
+            };
+            ids.insert(id.clone());
+            let present = MODEL_PATH_KEYS
+                .iter()
+                .filter_map(|k| model.get(k).and_then(|v| v.as_str()))
+                .all(|p| dir.join(p).is_file());
+            let enabled = model
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            if enabled && !present {
+                model["enabled"] = toml_edit::value(false);
+                auto.insert(id.clone());
+                sync.disabled.push(id);
+            } else if !enabled && present && auto.remove(&id) {
+                model["enabled"] = toml_edit::value(true);
+                sync.enabled.push(id);
+            }
+        }
     }
+    auto.retain(|id| ids.contains(id));
+
+    if !sync.disabled.is_empty() || !sync.enabled.is_empty() {
+        std::fs::write(config, doc.to_string())
+            .map_err(|e| format!("could not write {}: {e}", config.display()))?;
+    }
+    if auto != before {
+        let json = serde_json::to_string_pretty(&auto).unwrap_or_default();
+        std::fs::write(&state_path, json)
+            .map_err(|e| format!("could not write {}: {e}", state_path.display()))?;
+    }
+    Ok(sync)
 }
 
 fn sdk_client(port: u16) -> Result<hypnos_client::Client, String> {
@@ -232,6 +359,25 @@ pub async fn local_server_start<R: Runtime>(
     if let Some(c) = config {
         if !Path::new(c).is_file() {
             return Err(format!("no config file at {c}"));
+        }
+    }
+    // The app's own config (the bundled server's): match `enabled` to the files on disk.
+    let mut notes = Vec::new();
+    if let Some(c) = config.filter(|c| is_managed(&app, Path::new(c))) {
+        let sync = sync_models(Path::new(c))?;
+        let models = Path::new(c).with_file_name("models");
+        if !sync.disabled.is_empty() {
+            notes.push(format!(
+                "[app] disabled until their files are in {}: {}",
+                models.display(),
+                sync.disabled.join(", ")
+            ));
+        }
+        if !sync.enabled.is_empty() {
+            notes.push(format!(
+                "[app] enabled again, their files are there now: {}",
+                sync.enabled.join(", ")
+            ));
         }
     }
 
@@ -299,6 +445,9 @@ pub async fn local_server_start<R: Runtime>(
         workdir.display()
     );
     server.push_line(&app, header).await;
+    for note in notes {
+        server.push_line(&app, note).await;
+    }
 
     if let Some(out) = stdout {
         tauri::async_runtime::spawn(forward(app.clone(), server.inner().clone(), out));
@@ -309,6 +458,17 @@ pub async fn local_server_start<R: Runtime>(
     tauri::async_runtime::spawn(watch_exit(app.clone(), server.inner().clone()));
 
     Ok(server.0.lock().await.status.clone())
+}
+
+fn is_managed<R: Runtime>(app: &AppHandle<R>, config: &Path) -> bool {
+    let Ok(dir) = managed_dir(app) else {
+        return false;
+    };
+    let managed = dir.join("hypnos.toml");
+    match (managed.canonicalize(), config.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 #[cfg(unix)]
@@ -488,7 +648,100 @@ pub async fn local_server_probe(port: u16) -> Result<(bool, bool), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tauri::Manager;
+
+    const CONFIG: &str = r#"# the user's comment survives
+[server]
+port = 9999
+
+[[models]]
+id = "chat"
+weights_path = "models/chat.gguf"
+aux_weights_path = "models/mmproj.gguf"
+
+[[models]]
+id = "tts"
+weights_path = "models/kokoro/model.onnx"
+
+[[models]]
+id = "off-by-user"
+enabled = false
+weights_path = "models/gone.gguf"
+"#;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("hypnos-desktop-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("models/kokoro")).unwrap();
+        std::fs::write(dir.join("hypnos.toml"), CONFIG).unwrap();
+        dir
+    }
+
+    fn enabled(config: &Path, id: &str) -> bool {
+        let doc: toml_edit::DocumentMut = std::fs::read_to_string(config).unwrap().parse().unwrap();
+        let found = doc["models"]
+            .as_array_of_tables()
+            .unwrap()
+            .iter()
+            .find(|m| m["id"].as_str() == Some(id))
+            .and_then(|m| m.get("enabled").and_then(|v| v.as_bool()));
+        found.unwrap_or(true)
+    }
+
+    #[test]
+    fn disables_models_without_files_and_enables_them_once_they_arrive() {
+        let dir = scratch("sync");
+        let config = dir.join("hypnos.toml");
+        std::fs::write(dir.join("models/kokoro/model.onnx"), b"x").unwrap();
+        std::fs::write(dir.join("models/chat.gguf"), b"x").unwrap();
+
+        // The projector is missing: chat goes off, tts stays on, the user's choice is kept.
+        let sync = sync_models(&config).unwrap();
+        assert_eq!(sync.disabled, vec!["chat".to_string()]);
+        assert!(sync.enabled.is_empty());
+        assert!(!enabled(&config, "chat"));
+        assert!(enabled(&config, "tts"));
+        assert!(!enabled(&config, "off-by-user"));
+        assert!(std::fs::read_to_string(&config)
+            .unwrap()
+            .starts_with("# the user's comment survives"));
+
+        // Nothing changed on disk: nothing to do.
+        assert_eq!(sync_models(&config).unwrap(), ModelSync::default());
+
+        // The projector arrives: chat is back; off-by-user still off although never auto-disabled.
+        std::fs::write(dir.join("models/mmproj.gguf"), b"x").unwrap();
+        std::fs::write(dir.join("models/gone.gguf"), b"x").unwrap();
+        let sync = sync_models(&config).unwrap();
+        assert_eq!(sync.enabled, vec!["chat".to_string()]);
+        assert!(enabled(&config, "chat"));
+        assert!(!enabled(&config, "off-by-user"));
+        let auto: Vec<String> =
+            serde_json::from_str(&std::fs::read_to_string(dir.join(AUTO_DISABLED_FILE)).unwrap())
+                .unwrap();
+        assert!(auto.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_bundled_server_needs_the_app_layout_and_its_template() {
+        let root = scratch("bundle");
+        let macos = root.join("Hypnos.app/Contents/MacOS");
+        std::fs::create_dir_all(&macos).unwrap();
+        std::fs::write(macos.join(BINARY_NAME), b"").unwrap();
+        assert_eq!(bundled_template(&macos.join(BINARY_NAME)), None);
+        let resources = root.join("Hypnos.app/Contents/Resources/server");
+        std::fs::create_dir_all(&resources).unwrap();
+        std::fs::write(resources.join("hypnos.toml"), CONFIG).unwrap();
+        assert_eq!(
+            bundled_template(&macos.join(BINARY_NAME)),
+            Some(resources.join("hypnos.toml"))
+        );
+        // A binary beside a plain executable (target/release, an archive) is not a bundle.
+        std::fs::write(root.join(BINARY_NAME), b"").unwrap();
+        assert_eq!(bundled_template(&root.join(BINARY_NAME)), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn strips_colour_sequences() {

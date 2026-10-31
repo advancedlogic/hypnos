@@ -184,8 +184,12 @@ jobs:
   #   Windows: WINDOWS_CERTIFICATE (base64 .pfx) and WINDOWS_CERTIFICATE_PASSWORD.
   # Without them macOS gets an ad-hoc signature (Gatekeeper offers "Open Anyway" instead of
   # calling the app damaged) and Windows none (SmartScreen: "More info > Run anyway").
+  # The macOS app carries the Metal server from the macos-arm64-metal archive (DESK-15), hence
+  # `needs: build`; `!cancelled()` keeps a failed CUDA leg from skipping the installers.
   desktop:
     name: desktop ${{ matrix.platform }}
+    needs: build
+    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -229,6 +233,16 @@ jobs:
           $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
           Remove-Item $pfx
           "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
+      - name: Server for the app bundle (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/download-artifact@v4
+        with:
+          name: hypnos-macos-arm64-metal
+          path: dist-server
+      - name: Stage the server (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: ./desktop/scripts/stage-server.sh --archive dist-server/hypnos-*-macos-arm64-metal.tar.gz
       - name: Build the installers
         working-directory: desktop
         shell: bash
@@ -253,14 +267,18 @@ jobs:
             config=$(jq -c --arg v "${GITHUB_REF_NAME#v}" '.version = $v' <<<"$config")
           fi
           if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
-            config=$(jq -c --arg id "$APPLE_SIGNING_IDENTITY" '.bundle.macOS.signingIdentity = $id' <<<"$config")
+            # A Developer ID signature gets the hardened runtime (notarization needs it); the
+            # ad-hoc default has none, whose library validation would refuse the bundled dylib.
+            config=$(jq -c --arg id "$APPLE_SIGNING_IDENTITY" '.bundle.macOS.signingIdentity = $id | .bundle.macOS.hardenedRuntime = true' <<<"$config")
           fi
           if [ -n "$WINDOWS_THUMBPRINT" ]; then
             config=$(jq -c --arg t "$WINDOWS_THUMBPRINT" \
               '.bundle.windows.certificateThumbprint = $t | .bundle.windows.digestAlgorithm = "sha256" | .bundle.windows.timestampUrl = "http://timestamp.digicert.com"' <<<"$config")
           fi
           echo "tauri config overrides: $(jq -c 'if .bundle.windows then .bundle.windows.certificateThumbprint = "***" else . end' <<<"$config")"
-          npx tauri build --bundles ${{ matrix.bundles }} --config "$config"
+          server=()
+          [ "$RUNNER_OS" = macOS ] && server=(--config src-tauri/tauri.server-macos.conf.json)
+          npx tauri build --bundles ${{ matrix.bundles }} ${server[@]+"${server[@]}"} --config "$config"
       - name: Collect
         shell: bash
         run: |

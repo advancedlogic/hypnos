@@ -4,7 +4,7 @@ This guide covers signing and notarizing the two things Hypnos ships for macOS:
 
 | Artifact | What it is | Status today |
 | :--- | :--- | :--- |
-| `hypnos-desktop-<version>-macos-arm64.dmg` | the Tauri desktop app (`desktop/`) | signing + notarization wired into `release.yml`, on once the secrets exist |
+| `hypnos-desktop-<version>-macos-arm64.dmg` | the Tauri desktop app (`desktop/`), with the server inside (DESK-15) | signing + notarization wired into `release.yml`, on once the secrets exist |
 | `hypnos-<version>-macos-arm64-metal.tar.gz` | the server (`hypnos` + `libstable-diffusion.dylib` + data) | `backend/scripts/sign-macos.sh`, run by `release.yml` with the same secrets |
 
 If a file is downloaded with a browser and has no Developer ID signature plus notarization,
@@ -102,7 +102,15 @@ Keep the `.p12` out of the repository and delete the local copy once the secret 
 ### 2.1 What is already in the repository
 
 - `desktop/src-tauri/tauri.conf.json`: `bundle.macOS.signingIdentity` is `"-"` (ad-hoc), which
-  is what an unsigned build gets. CI overrides it with the real identity.
+  is what an unsigned build gets, and `hardenedRuntime` is `false`. Under the hardened runtime,
+  library validation only loads a library signed by the same team, and an ad-hoc signature has
+  no team: the bundled server would fail to load `libstable-diffusion.dylib` ("different Team
+  IDs"). CI overrides both with a real identity: `signingIdentity` set and `hardenedRuntime`
+  set to `true`.
+- `desktop/src-tauri/tauri.server-macos.conf.json` (merged with `--config`) puts the server in
+  the bundle: `Contents/MacOS/hypnos` as a sidecar and `Contents/Frameworks/libstable-diffusion.dylib`.
+  Tauri signs both in its own pass, with the app's identity, so they share the team and library
+  validation passes. The data folders go in `Contents/Resources`, which is not code.
 - `desktop/src-tauri/Entitlements.plist`, referenced as `bundle.macOS.entitlements`, holds
   `com.apple.security.device.audio-input`. A Developer ID signature turns on the **hardened
   runtime**, and notarization requires it. The hardened runtime blocks the microphone
@@ -183,10 +191,13 @@ cd desktop
 export APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID1234)"
 # notarization (omit for a signed-only build):
 export APPLE_ID=you@example.com APPLE_PASSWORD=xxxx-xxxx-xxxx-xxxx APPLE_TEAM_ID=TEAMID1234
-npx tauri build --bundles dmg --config "{\"bundle\":{\"macOS\":{\"signingIdentity\":\"$APPLE_SIGNING_IDENTITY\"}}}"
+./scripts/stage-server.sh          # the server for the bundle (see desktop/README.md); skip for an app without it
+npx tauri build --bundles dmg --config src-tauri/tauri.server-macos.conf.json \
+  --config "{\"bundle\":{\"macOS\":{\"signingIdentity\":\"$APPLE_SIGNING_IDENTITY\",\"hardenedRuntime\":true}}}"
 ```
 
-The `--config` override is there because `tauri.conf.json` contains `"-"`. Tauri prints the
+The second `--config` override is there because `tauri.conf.json` contains `"-"` and no
+hardened runtime. Without `hardenedRuntime: true`, notarization refuses the app. Tauri prints the
 signing step, then "Notarizing ..." and "Stapling ...". The upload and Apple's scan usually take
 1 to 10 minutes. Outputs:
 
@@ -206,6 +217,7 @@ codesign --verify --deep --strict --verbose=2 "$APP"           # valid on disk, 
 codesign -dv --verbose=4 "$APP" 2>&1 | grep -E 'Authority|TeamIdentifier|flags'
 #   Authority=Developer ID Application: ...   flags=0x10000(runtime)
 codesign -d --entitlements - "$APP"                             # com.apple.security.device.audio-input = true
+codesign -dv "$APP/Contents/MacOS/hypnos" 2>&1 | grep -E 'Authority=Developer|flags'   # the bundled server: same identity, runtime
 xcrun stapler validate "$APP"                                   # The validate action worked!
 spctl -a -vvv -t exec "$APP"                                    # accepted, source=Notarized Developer ID
 spctl -a -vvv -t open --context context:primary-signature desktop/src-tauri/target/release/bundle/dmg/*.dmg
@@ -372,6 +384,8 @@ The release notes say "The macOS app and server are signed and notarized" when
 | `hypnos` dies at startup with *Library Validation failed* | the dylib and the binary are signed by different teams, or the dylib was changed after signing | sign both with the same identity, the dylib first |
 | desktop: microphone records silence or no prompt appears | `Entitlements.plist` not applied | `codesign -d --entitlements - Hypnos.app` must list `audio-input` |
 | desktop: Tauri skips signing | `signingIdentity` is still `"-"` | pass the `--config` override (2.3) |
+| notarization: *The executable does not have the hardened runtime enabled* for `Hypnos.app` | `hardenedRuntime` still `false` from `tauri.conf.json` | add `"hardenedRuntime": true` to the override (2.3) |
+| bundled server dies: *Library not loaded: @rpath/libstable-diffusion.dylib … different Team IDs* | ad-hoc signatures with the hardened runtime on | keep `hardenedRuntime: false` for ad-hoc builds; with a Developer ID both files get the same team |
 | Tauri: *skipping app notarization* | the `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` (or `APPLE_API_*`) set is incomplete | export all three |
 | Gatekeeper still prompts on a notarized binary | first launch offline (no stapled ticket on bare Mach-O) | connect once, or ship inside a stapled `.dmg` / `.pkg` |
 | *E0463 can't find crate* after a "strip" step you added | Xcode's `strip` damages proc-macro dylibs (BUG-5) | never strip build-script outputs; strip only the final binary, **before** signing |

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "externalBin": ["server/hypnos"],
+    "macOS": {
+      "frameworks": ["server/libstable-diffusion.dylib"]
+    },
+    "resources": {
+      "server/resources/espeak-ng-data/": "espeak-ng-data/",
+      "server/resources/frontend/": "frontend/",
+      "server/resources/server/": "server/"
+    }
+  }
+}

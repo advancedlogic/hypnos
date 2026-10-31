@@ -237,13 +237,19 @@ fn load_kokoro(cfg: &ModelConfig, n_threads: i32) -> Result<LoadedKokoro> {
             .map(|p| p.join("voices"))
             .unwrap_or_else(|| PathBuf::from("voices"))
     });
-    // Let espeak-rs find the phoneme data: next to the executable (release archives, Docker),
-    // else where our build script copied it on the build machine.
+    // Let espeak-rs find the phoneme data: next to the executable (release archives, Docker) or
+    // in ../Resources (the server bundled in the macOS app), else where our build script copied
+    // it on the build machine. The variable names the folder that holds `espeak-ng-data`.
     if std::env::var_os("PIPER_ESPEAKNG_DATA_DIRECTORY").is_none() {
         let beside_exe = std::env::current_exe()
             .ok()
             .and_then(|exe| exe.parent().map(PathBuf::from))
-            .filter(|dir| dir.join("espeak-ng-data").is_dir());
+            .and_then(|dir| {
+                hypnos_core::config::beside_executable(&dir, "espeak-ng-data")
+                    .into_iter()
+                    .find(|d| d.is_dir())
+            })
+            .and_then(|data| data.parent().map(PathBuf::from));
         let parent =
             beside_exe.or_else(|| option_env!("HYPNOS_ESPEAK_DATA_PARENT").map(PathBuf::from));
         if let Some(parent) = parent {

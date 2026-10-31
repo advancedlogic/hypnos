@@ -5,12 +5,26 @@ import { load, save } from './storage.js';
 const SETTINGS_KEY = 'localServer';
 export const DEFAULT_PORT = 9999;
 
-/** `{ binary, config, port, autoStart }`, filled from detection the first time. */
+/**
+ * `{ binary, config, port, autoStart }`, filled from detection the first time. The server
+ * bundled in the macOS app (DESK-15) starts with the app by default, as Ollama's does.
+ */
 export async function loadLocalSettings() {
   const saved = await load(SETTINGS_KEY, null);
   if (saved?.binary) return saved;
-  const found = await invoke('local_server_detect');
-  return { binary: found.binary ?? '', config: found.config ?? '', port: DEFAULT_PORT, autoStart: false, ...saved };
+  let found = {};
+  try {
+    found = await invoke('local_server_detect');
+  } catch (e) {
+    console.warn('local server detection failed', e);
+  }
+  return {
+    binary: found.binary ?? '',
+    config: found.config ?? '',
+    port: DEFAULT_PORT,
+    autoStart: found.source === 'bundled',
+    ...saved,
+  };
 }
 
 export function saveLocalSettings(settings) {

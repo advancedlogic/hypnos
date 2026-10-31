@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 3  | 11  | 5   | 6   | 9    | 6   | 10    | 7   | 3    | 15   |
+| 3  | 11  | 5   | 6   | 9    | 6   | 10    | 7   | 3    | 17   |
 
 ---
 
@@ -89,9 +89,54 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       Decide first: curated list vs. live HF search filtered by `gguf` tag + pipeline type, and
       how unknown architectures are validated (`gguf_inspector.rs`) before they are offered.
 
+- [ ] 🩵 **DESK-16** `P2` First-run model download in the desktop app
+      A bundled server without weights still leaves users stuck (DESK-15). On first run, or from
+      settings, show the lineup from `models.manifest` (31 GB for all of it) with size and
+      modality per model and let people pick. Download into
+      `~/Library/Application Support/Hypnos/models/` (macOS) with progress, resume and checksum
+      (the same manifest `fetch-models.sh` uses), enable the downloaded models in `hypnos.toml`
+      and disable the others, then start or restart the local server. Later the picker can take
+      entries from the API-10 inventory.
+      - Models directory in the settings: a folder picker (default `.../Hypnos/models/`, e.g. to
+        put 31 GB on an external SSD) used by both the downloader and the server. The server has
+        no such concept yet (each `weights_path` resolves from the config's folder), so add
+        `[server] models_dir` plus `HYPNOS_MODELS_DIR` that relative weight paths resolve
+        against (validation, `--check-config`, `docs/operating.md`, the example configs and the
+        default profile). Changing it offers to move the existing files, shows the free space
+        and restarts the local server; a missing folder (unplugged drive) is reported as such,
+        not as missing weights.
+
 ## In Progress
 
-_No cards yet._
+- [ ] 🩵 **DESK-15** `P2` Bundle the server inside the macOS app, as Ollama does
+      The `.dmg` ships `hypnos` (Metal build, about 136 MB with the dylib and espeak data), and
+      `local_server.rs` starts it when no other server is configured, so app and server always
+      match versions. Windows and Linux keep the standalone archives (CUDA vs CPU, runtime size).
+      - Placement: `hypnos` in `Contents/MacOS` as a Tauri sidecar (`externalBin`, named
+        `hypnos-aarch64-apple-darwin`), `libstable-diffusion.dylib` in `Contents/Frameworks`
+        (`bundle.macOS.frameworks`). The binary finds the dylib through
+        `@executable_path` only, so link it with an extra `-rpath @executable_path/../Frameworks`.
+        No Mach-O files in `Resources`: codesign treats that folder as data.
+      - Data paths: `espeak-ng-data` and the playground `frontend/dist` in `Resources`. Kokoro
+        looks beside the binary (`kokoro.rs:243`) or in `PIPER_ESPEAKNG_DATA_DIRECTORY`, so the app
+        sets that variable when it spawns the server; give the frontend path the same treatment
+        (`hypnos-server/src/lib.rs:286` also resolves it from `current_exe`).
+      - Config and models in `~/Library/Application Support/Hypnos/` (`hypnos.toml`, `models/`),
+        never inside the bundle, which must stay read-only to keep its signature valid. The app
+        writes a default `hypnos.toml` from `hypnos.macos.example.toml` on first run.
+      - Signing: Tauri signs sidecars and frameworks in its pass with the hardened runtime; check
+        that library validation passes inside the bundle and that the notarized `.dmg` still
+        assesses as "Notarized Developer ID" (`docs/signing.md`).
+      - Licensing: `hypnos` statically links espeak-ng (GPL-3.0). Shipping it as a separate
+        program in the bundle should count as aggregation, so the app's own code stays
+        MIT/Apache, but the bundle must carry `licenses/GPL-3.0.txt`, `THIRD-PARTY-NOTICES.md` and
+        a pointer to the corresponding source, as the server archive does. Confirm that reading
+        before the first release that bundles it.
+      - release.yml: the desktop macOS job needs the Metal server build (artifact from the
+        `macos-arm64-metal` leg) before `tauri build`. Update `desktop/README.md`, `docs/signing.md`.
+      Status 2026-10-31: implemented and tested locally (Developer ID and ad-hoc bundles, first
+      run on a clean HOME, model sync, smoke test from inside the bundle). Open: a notarized
+      `.dmg` with the server inside, from CI, once the Apple credentials stop returning 401.
 
 ## Done
 

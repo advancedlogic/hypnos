@@ -261,10 +261,19 @@ API means a change to `docs/api.md`, the mock server and the three SDKs. In Pyth
 ### Desktop app (`desktop/`)
 
 Tauri 2 + Svelte 5 + Tailwind 3 (same versions as `frontend/`), its own `package.json` and a
-`src-tauri/` crate outside the backend workspace. It never bundles the server;
-`src-tauri/src/local_server.rs` can start an installed `hypnos` (detected or chosen), stream its
-output to the UI and stop it on quit, with health checks through `hypnos-client` (`sdk/rust`, a
-path dependency). Every server call is a command in `src-tauri/src/hypnos.rs` on `hypnos-client`
+`src-tauri/` crate outside the backend workspace. `src-tauri/src/local_server.rs` can start a
+`hypnos` (detected or chosen), stream its output to the UI and stop it on quit, with health
+checks through `hypnos-client` (`sdk/rust`, a path dependency). The macOS app bundles the
+Metal server (DESK-15): `desktop/scripts/stage-server.sh` stages it in the git-ignored
+`src-tauri/server/` and `tauri.server-macos.conf.json` (merged with `--config` only by
+`run.sh build desktop`, release.yml and by hand, so dev builds and clippy need no server) puts
+it in `Contents/MacOS` (sidecar), `Contents/Frameworks` (dylib, found through the server's
+`@executable_path/../Frameworks` rpath) and `Contents/Resources` (espeak data and playground,
+found by the server through `hypnos_core::config::beside_executable`). The bundled server runs
+with a config the app writes to `~/Library/Application Support/Hypnos/`; `sync_models`
+disables models with missing files before each start and enables them again later. Ad-hoc
+builds have no hardened runtime (`hardenedRuntime: false`; its library validation refuses an
+ad-hoc dylib); a Developer ID build turns it on. Every server call is a command in `src-tauri/src/hypnos.rs` on `hypnos-client`
 (chat tokens over a `tauri::ipc::Channel`, cancel by request id); the webview has no HTTP
 permission, and an SDK API change can break the app. `route` picks the model per modality from
 `/v1/memory/status` `modalities` (chat model, then the settings' choice, then a Tier 1 model),

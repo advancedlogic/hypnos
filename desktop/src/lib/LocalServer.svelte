@@ -24,9 +24,15 @@
   }
 
   async function redetect() {
-    const found = await server.detect();
+    let found;
+    try {
+      found = await server.detect();
+    } catch (e) {
+      error = String(e?.message ?? e);
+      return;
+    }
     if (found.binary) binary = found.binary;
-    if (found.config) config = found.config;
+    config = found.config ?? '';
     error = found.binary ? null : 'No hypnos binary found: build it (./run.sh build backend) or enter its path.';
   }
 
@@ -113,8 +119,10 @@
         </button>
       </div>
       <p class="text-xs text-slate-500">
-        Runs an installed <code>hypnos</code> on this machine and connects the app to it. The app does not include the
-        server; it stops the one it started when you quit.
+        Runs <code>hypnos</code> on this machine and connects the app to it: the server that comes with the app
+        (macOS), or an installed one. The app stops the server it started when you quit. The bundled server's
+        config and models live in <code>~/Library/Application Support/Hypnos</code>; models whose files are not
+        there yet are disabled until they are.
       </p>
 
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 items-center text-sm">

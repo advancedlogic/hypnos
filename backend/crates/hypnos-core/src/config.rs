@@ -2,6 +2,20 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+/// Where a data folder that ships with the binary (`espeak-ng-data`, `frontend`) may sit, in
+/// order: beside the executable (release archives, Docker, the cargo target dir), then
+/// `../Resources` when the executable is in an app bundle's `Contents/MacOS` (the server bundled
+/// in the macOS desktop app, DESK-15).
+pub fn beside_executable(exe_dir: &std::path::Path, name: &str) -> Vec<PathBuf> {
+    let mut dirs = vec![exe_dir.join(name)];
+    if exe_dir.file_name().is_some_and(|n| n == "MacOS") {
+        if let Some(contents) = exe_dir.parent() {
+            dirs.push(contents.join("Resources").join(name));
+        }
+    }
+    dirs
+}
+
 /// Supported GPU compute & memory architectures.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1253,6 +1267,25 @@ impl HypnosConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn data_folders_beside_the_binary_or_in_the_app_bundle() {
+        use std::path::Path;
+        assert_eq!(
+            beside_executable(Path::new("/opt/hypnos"), "frontend"),
+            vec![PathBuf::from("/opt/hypnos/frontend")]
+        );
+        assert_eq!(
+            beside_executable(
+                Path::new("/Applications/Hypnos.app/Contents/MacOS"),
+                "espeak-ng-data"
+            ),
+            vec![
+                PathBuf::from("/Applications/Hypnos.app/Contents/MacOS/espeak-ng-data"),
+                PathBuf::from("/Applications/Hypnos.app/Contents/Resources/espeak-ng-data"),
+            ]
+        );
+    }
 
     fn minimal_toml(weights: &str) -> String {
         format!(

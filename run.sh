@@ -300,9 +300,21 @@ build_frontend() {
 
 # build_desktop: npm install + `tauri build --no-bundle` (the app binary; `--bundles app` on macOS; the installers are
 # made by release.yml). Tauri compiles the Rust side with the cargo first on PATH (rustup's).
+# On Apple Silicon with a release server build, the app bundles that server (DESK-15): staged by
+# desktop/scripts/stage-server.sh and merged in with tauri.server-macos.conf.json.
 build_desktop() {
     echo "[Hypnos] Building the desktop app ($HYPNOS_PROFILE profile) -> $DESKTOP_BIN"
-    (cd "$ROOT_DIR/desktop" && npm install && npx tauri build "${DESKTOP_BUILD_FLAGS[@]}")
+    local flags=("${DESKTOP_BUILD_FLAGS[@]}")
+    if [ "$(uname -s)/$(uname -m)" = Darwin/arm64 ] && [ -x "$ROOT_DIR/backend/target/release/hypnos" ]; then
+        if [ ! -f "$ROOT_DIR/frontend/dist/index.html" ]; then
+            (cd "$ROOT_DIR/frontend" && npm install && npm run build) || { echo "[Hypnos] frontend build FAILED."; return 1; }
+        fi
+        "$ROOT_DIR/desktop/scripts/stage-server.sh" || { echo "[Hypnos] staging the server FAILED."; return 1; }
+        flags+=(--config src-tauri/tauri.server-macos.conf.json)
+    else
+        echo "[Hypnos] no release server build to bundle (./run.sh build backend first): the app runs an installed one."
+    fi
+    (cd "$ROOT_DIR/desktop" && npm install && npx tauri build "${flags[@]}")
     local rc=$?
     if [ "$rc" != 0 ]; then
         echo "[Hypnos] desktop build FAILED (exit code $rc)."

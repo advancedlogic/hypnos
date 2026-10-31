@@ -4,9 +4,11 @@ A native chat app for a running Hypnos server, in the spirit of the Ollama app: 
 chat with streaming answers, and keep a panel open with what the server is doing (which model
 sits in which memory tier, how much of each tier is used, what the last answer cost).
 
-It does not contain the server. Point it at a running Hypnos (`./run.sh start backend`, a
+On macOS (Apple Silicon) the app carries the server and starts it with itself, as the Ollama
+app does; its config and models live in `~/Library/Application Support/Hypnos/`. On Windows and
+Linux it does not contain the server: point it at a running Hypnos (`./run.sh start backend`, a
 release archive, the Docker image, another machine), or let it start an installed `hypnos` on
-this machine from its Local server dialog.
+this machine from its Local server dialog. Any platform can connect to a remote server instead.
 
 Built with Tauri 2, Svelte 5 (runes) and Tailwind 3, the same web stack as `frontend/`. Every call
 to the server is made by the Rust side with the Rust SDK (`sdk/rust`); the web UI only calls the
@@ -72,14 +74,25 @@ app's commands.
   Connecting, Unreachable, API key refused, Warming up (models still loading) or Ready, and the
   app reconnects by itself when the server comes back.
 
-- **Local server** (the server button in the header): runs an installed `hypnos` on this
-  machine and connects the app to it. The binary is detected (this checkout's
-  `backend/target/release`, a `hypnos` beside the app, then PATH) or entered by hand, with an
+- **Local server** (the server button in the header): runs `hypnos` on this machine and
+  connects the app to it. The binary is detected (the server bundled in the macOS app, this
+  checkout's `backend/target/release`, a `hypnos` beside the app, then PATH) or entered by hand, with an
   optional config (its folder becomes the working directory, so its relative model paths work;
   without one the server reads `hypnos.toml` beside the binary) and a port. The dialog shows the
   server's output live; "Start with the app" starts it at launch unless a server already answers
   on that port, in which case the app just connects to it. The app stops the server it started
   (gracefully, SIGTERM on Linux/macOS) when you quit, and never stops one it did not start.
+
+- **Bundled server (macOS)**: the `.dmg` carries `hypnos` (`Contents/MacOS`), its sd.cpp library
+  (`Contents/Frameworks`), the espeak data, the playground and a config template
+  (`Contents/Resources`). On first launch the app writes `~/Library/Application
+  Support/Hypnos/hypnos.toml` from that template and starts the server with it (Start with the app
+  is on by default). Model files go in `~/Library/Application Support/Hypnos/models/` with the
+  names the config uses (`./run.sh models` downloads them into `backend/models/`; copy or link
+  them). Before each start the app disables the models whose files are missing, since the server
+  refuses a config with missing weights, and enables them again once the files are there; the
+  log view lists both. A model you disable yourself in that config stays disabled. Edit the config
+  freely, it is never overwritten; delete it to get the template back.
 
 - **Menu bar / tray icon**: the logo with a dot for the server's state (green ready, amber
   loading, red unreachable or key refused, grey connecting). A left click shows or hides the
@@ -145,7 +158,8 @@ Prerequisites, besides Node.js 18+ and Rust (rustup stable):
 
 ```bash
 # from the repository root
-./run.sh build desktop     # npm install + tauri build --no-bundle (an .app bundle on macOS)
+./run.sh build desktop     # npm install + tauri build --no-bundle (an .app bundle on macOS,
+                           # with the server inside when backend/target/release/hypnos exists)
 ./run.sh start desktop     # open the built app (stop / status / logs desktop work too)
 
 # development, with hot reload of the web side
@@ -157,6 +171,18 @@ npx tauri build            # installers for this OS under src-tauri/target/relea
 
 `run.bat build desktop` / `run.bat start desktop` do the same on Windows. The `desktop` target is
 never part of `all`. `HYPNOS_PROFILE=debug` builds and starts the debug binary.
+
+To bundle the server by hand (Apple Silicon): build it (`./run.sh build backend`) and the
+playground (`cd frontend && npm run build`), stage it, then merge the bundling config:
+
+```bash
+./desktop/scripts/stage-server.sh          # or --archive hypnos-<version>-macos-arm64-metal.tar.gz
+cd desktop && npx tauri build --bundles dmg --config src-tauri/tauri.server-macos.conf.json
+```
+
+The staging folder (`src-tauri/server/`) is git-ignored. Without the merged config, `tauri dev`,
+`tauri build` and clippy do not need a server build. `release.yml` stages the server from the
+`macos-arm64-metal` archive of the same run.
 
 The UI needs the Tauri side for every server call, so it does not run in a plain browser.
 

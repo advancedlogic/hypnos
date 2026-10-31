@@ -7,7 +7,12 @@
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     match std::env::var("CARGO_CFG_TARGET_OS").as_deref() {
-        Ok("macos") => println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path"),
+        // Beside the binary (release archive, target dir), or in Contents/Frameworks when the
+        // desktop app bundles the server in Contents/MacOS (DESK-15).
+        Ok("macos") => {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
+            println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
+        }
         // Linux: find libstable-diffusion.so beside the binary without LD_LIBRARY_PATH.
         Ok("linux") => println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN"),
         _ => {}
