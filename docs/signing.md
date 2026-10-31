@@ -353,8 +353,9 @@ com.apple.quarantine .` instruction.
 
 ### 3.6 CI
 
-In `release.yml`, the `macos-arm64-metal` leg of the build job has a step, **Sign and notarize
-(macOS)**, between **Build** and **Package**. It reuses the desktop job's secrets:
+In `build-server.yml`, which `release.yml` calls as `build-macos` for the Metal archive, the
+`macos-arm64-metal` leg has a step, **Sign and notarize (macOS)**, between **Build** and
+**Package**. It reuses the desktop job's secrets:
 
 - Without `APPLE_CERTIFICATE` / `APPLE_SIGNING_IDENTITY`, it skips signing, and the binaries
   keep the linker's ad-hoc signature.

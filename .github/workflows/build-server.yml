@@ -1,0 +1,151 @@
+name: build-server
+
+# The server archives, one per platform in `platforms` (a JSON list of {platform, os, cargo}).
+# release.yml calls it twice, CUDA and macOS, so the macOS app (which bundles the Metal server,
+# DESK-15) does not wait for the CUDA builds. Expects the `frontend-dist` artifact of the same
+# run; uploads `hypnos-<platform>`. The macOS leg signs and notarizes with the APPLE_* secrets
+# (secrets: inherit).
+on:
+  workflow_call:
+    inputs:
+      platforms:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CMAKE_GENERATOR: Ninja
+  LLAMA_LIB_PROFILE: Release
+  # CUDA builds leave CMAKE_CUDA_ARCHITECTURES to ggml's portable default for this toolkit
+  # (PTX for Maxwell..Hopper plus Ampere, Ada and Blackwell device code), like llama.cpp releases.
+  CUDA_VERSION: "12.8.1"
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.platforms) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: lukka/get-cmake@latest
+
+      - name: Free disk space (Linux)
+        if: runner.os == 'Linux'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: CUDA toolkit (Linux, NVIDIA apt repository)
+        if: runner.os == 'Linux'
+        run: |
+          v="${CUDA_VERSION%.*}"; v="${v/./-}"
+          curl -fsSLO https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev libclang-dev \
+            "cuda-nvcc-$v" "cuda-cudart-dev-$v" "cuda-cccl-$v" "cuda-driver-dev-$v" "libcublas-dev-$v"
+          cuda="/usr/local/cuda-${CUDA_VERSION%.*}"
+          [ -e /usr/local/cuda ] || sudo ln -s "$cuda" /usr/local/cuda
+          echo "$cuda/bin" >> "$GITHUB_PATH"
+          echo "CUDA_PATH=$cuda" >> "$GITHUB_ENV"
+
+      - name: CUDA toolkit (Windows)
+        if: runner.os == 'Windows'
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: network
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
+
+      - name: MSVC developer environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: macOS deployment target
+        if: runner.os == 'macOS'
+        run: echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"
+
+      - name: Vendor engine sources (pinned commits + patches)
+        shell: bash
+        run: ./backend/scripts/vendor.sh
+
+      # pwsh, not bash: Git Bash puts its own /usr/bin/link.exe ahead of MSVC's on Windows.
+      - name: Build
+        working-directory: backend
+        shell: pwsh
+        run: cargo build --release -p hypnos-server ${{ matrix.cargo }}
+
+      # Developer ID signature + notarization of hypnos and libstable-diffusion.dylib with the
+      # desktop job's Apple secrets (docs/signing.md, section 3). Without APPLE_CERTIFICATE the
+      # binaries keep the linker's ad-hoc signature; without APPLE_ID they are signed only.
+      - name: Sign and notarize (macOS)
+        id: macsign
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "No APPLE_CERTIFICATE / APPLE_SIGNING_IDENTITY secret: ad-hoc signature."; exit 0
+          fi
+          kc="$RUNNER_TEMP/signing.keychain-db"; kcpw="$(uuidgen)"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$kcpw" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kcpw" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$kc"
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpw" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          notarize=()
+          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            notarize=(--notarize)
+            echo "notarized=1" >> "$GITHUB_OUTPUT"
+          fi
+          SIGN_KEYCHAIN="$kc" ./backend/scripts/sign-macos.sh ${notarize[@]+"${notarize[@]}"}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+      - name: Package
+        shell: bash
+        env:
+          MACOS_NOTARIZED: ${{ steps.macsign.outputs.notarized }}
+        run: |
+          version="${GITHUB_REF_NAME}"
+          [[ "$GITHUB_REF" == refs/tags/* ]] || version="$(git describe --tags --always)"
+          ./backend/scripts/package-release.sh ${{ matrix.platform }} --version "$version" --out dist
+
+      # cudart / cuBLAS are redistributable; shipped separately like llama.cpp's cudart archive,
+      # so the main download stays small for machines with the CUDA toolkit installed.
+      - name: CUDA runtime DLLs (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME}"
+          [[ "$GITHUB_REF" == refs/tags/* ]] || version="$(git describe --tags --always)"
+          bin="$(cygpath -u "$CUDA_PATH")/bin"
+          mkdir -p dist/cudart
+          cp "$bin"/cudart64_12.dll "$bin"/cublas64_12.dll "$bin"/cublasLt64_12.dll dist/cudart/
+          (cd dist/cudart && 7z a -tzip -mx=7 "../hypnos-$version-windows-x64-cuda12-runtime.zip" ./*.dll >/dev/null)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hypnos-${{ matrix.platform }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error

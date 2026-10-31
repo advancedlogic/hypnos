@@ -79,7 +79,9 @@ Build notes:
   hand (Actions > ci > Run workflow) before tagging, and run fmt + clippy + tests locally.
   Clippy runs on a pinned Rust (1.98.0 in the lint job; the builds use current stable): bump it
   on purpose, with the fixes the new lints ask for.
-- `.github/workflows/release.yml` builds the CUDA (Linux, Windows) and Metal archives and the
+- `.github/workflows/release.yml` builds the CUDA (Linux, Windows) and Metal archives (through
+  `build-server.yml`, called twice: `build` for CUDA, `build-macos` for Metal, which the desktop
+  job waits for because the macOS app bundles that server) and the
   desktop installers (.dmg, .msi/.exe, .deb/.AppImage) on a `v*` tag and publishes them as a
   GitHub release; a manual run only builds them as artifacts. With the `APPLE_*` secrets the
   macOS app and server (`scripts/sign-macos.sh`) get a Developer ID signature and notarization,
