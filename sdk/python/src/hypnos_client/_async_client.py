@@ -35,6 +35,7 @@ from .types import (
     EntityResponse,
     Health,
     ImageResponse,
+    KvParkStatus,
     LogList,
     LogRecord,
     MemoryStatus,
@@ -505,6 +506,19 @@ class AsyncClient:
         """``POST /v1/memory/tier``: promote or demote a model by hand (blocks for the load)."""
         body = drop_none({"model": model, "target_tier": target_tier, "context_len": context_len})
         return cast(TierMove, await self._json("POST", "/v1/memory/tier", json=body))
+
+    async def kv_park(self) -> KvParkStatus:
+        """``GET /v1/memory/kv-park``: whether KV parking is on, its cap and the parked states."""
+        return cast(KvParkStatus, await self._json("GET", "/v1/memory/kv-park"))
+
+    async def set_kv_park(
+        self, enabled: Optional[bool] = None, max_bytes: Optional[int] = None
+    ) -> KvParkStatus:
+        """``POST /v1/memory/kv-park``: turn KV parking on or off and/or change its cap."""
+        body = drop_none({"enabled": enabled, "max_bytes": max_bytes})
+        if not body:
+            raise ValueError("pass `enabled`, `max_bytes` or both")
+        return cast(KvParkStatus, await self._json("POST", "/v1/memory/kv-park", json=body))
 
     # --- request log -------------------------------------------------------------------------
 

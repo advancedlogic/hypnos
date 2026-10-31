@@ -259,6 +259,23 @@ test("memory and placement", async () => {
   assert.equal(back.placement.primary_tier, "tier1_gpu_vram");
 });
 
+test("kv parking", async () => {
+  const status = await client.kvPark();
+  assert.equal(status.enabled, false);
+  assert.equal(status.used_bytes, 0);
+  try {
+    const on = await client.setKvPark({ enabled: true, max_bytes: 1073741824 });
+    assert.equal(on.enabled, true);
+    assert.equal(on.max_bytes, 1073741824);
+    assert.deepEqual(on.models, []);
+    assert.equal((await client.memoryStatus()).kv_park.enabled, true);
+    await assert.rejects(client.setKvPark({}), TypeError);
+  } finally {
+    const off = await client.setKvPark({ enabled: false });
+    assert.equal(off.enabled, false);
+  }
+});
+
 test("enable and disable", async () => {
   assert.equal((await client.disableModel(IMAGE)).enabled, false);
   assert.ok(!(await client.models()).data.some((m) => m.id === IMAGE));

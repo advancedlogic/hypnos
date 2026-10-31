@@ -107,6 +107,12 @@ lock_host_memory = false
 # Soft cap on what the hypnos process itself may hold (0 = none). Before each model load idle
 # models are evicted, or the request fails with HTTP 507, rather than crossing it.
 # max_process_memory_bytes = 21474836480         # e.g. 20 GiB
+# Keep a chat model's conversations (its slots' KV state) in host memory when it is evicted, and
+# restore them when it comes back, so the next turn is not prefilled from scratch (MEM-4). Off by
+# default; POST /v1/memory/kv-park switches it at runtime. Up to kv_park_bytes in total, oldest
+# first out. About 20 KiB per token plus ~200 MiB per conversation for the 26B (f16 KV).
+# kv_park = true
+# kv_park_bytes = 4294967296                     # 4 GiB (default)
 
 # -----------------------------------------------------------------------------
 # 1. Gemma 4 26B-A4B (MoE, Q4_0) — Text Generation + Vision (/v1/chat/completions)

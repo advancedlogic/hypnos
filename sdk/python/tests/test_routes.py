@@ -213,6 +213,23 @@ def test_memory_and_placement(client: Client) -> None:
     assert back["placement"]["primary_tier"] == "tier1_gpu_vram"
 
 
+def test_kv_park(client: Client) -> None:
+    status = client.kv_park()
+    assert status["enabled"] is False
+    assert status["used_bytes"] == 0
+    try:
+        on = client.set_kv_park(enabled=True, max_bytes=1073741824)
+        assert on["enabled"] is True
+        assert on["max_bytes"] == 1073741824
+        assert on["models"] == []
+        assert client.memory_status()["kv_park"]["enabled"] is True
+        with pytest.raises(ValueError):
+            client.set_kv_park()
+    finally:
+        off = client.set_kv_park(enabled=False)
+    assert off["enabled"] is False
+
+
 def test_enable_and_disable(client: Client) -> None:
     off = client.disable_model(IMAGE)
     assert off["enabled"] is False

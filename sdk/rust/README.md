@@ -45,6 +45,7 @@ Clones share the connection pool and the bound.
 | `entities` | `POST /v1/entities` |
 | `models`, `enable_model`, `disable_model` | `/v1/models`, `/v1/models/{id}/enable\|disable` |
 | `memory_status`, `set_tier` | `/v1/memory/status`, `/v1/memory/tier` |
+| `kv_park`, `set_kv_park` | `GET`/`POST /v1/memory/kv-park` |
 | `logs`, `log`, `clear_logs`, `set_log_level` | `/v1/logs*` |
 | `health`, `is_ready`, `wait_until_ready`, `metrics` | `/health`, `/ready`, `/metrics` |
 

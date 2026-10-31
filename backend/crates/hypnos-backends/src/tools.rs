@@ -365,6 +365,7 @@ impl CallParser {
         p
     }
 
+    #[cfg(test)]
     pub fn calls(&self) -> usize {
         self.calls
     }

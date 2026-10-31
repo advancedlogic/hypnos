@@ -39,7 +39,9 @@ def turn(messages):
     tel = last["hypnos_telemetry"]; eng = tel["engine"]; usage = last["usage"]
     return {"ttft_client_ms": round(ttft or 0), "prompt_tokens": usage["prompt_tokens"],
             "cached": eng.get("cached_tokens", 0), "prefill_ms": round(eng.get("prefill_ms", 0)),
-            "switch_ms": round(tel.get("tier_switch_latency_ms", 0)), "prev_tier": tel["previous_tier"], "text": text}
+            "switch_ms": round(tel.get("tier_switch_latency_ms", 0)), "prev_tier": tel["previous_tier"],
+            "restore_ms": round((tel.get("tier_switch_phases") or {}).get("kv_restore_ms") or 0),
+            "restored": (tel.get("tier_switch_phases") or {}).get("kv_restored_tokens") or 0, "text": text}
 
 rows = []
 for target in (2000, 8000, 16000):
@@ -50,11 +52,17 @@ for target in (2000, 8000, 16000):
     msgs += [{"role": "assistant", "content": t1["text"]}, {"role": "user", "content": "Question 2: what is section 5 about?"}]
     t2 = turn(msgs)
     post("/v1/memory/tier", {"model": MODEL, "target_tier": "tier2_pinned_ram"}).read()
+    try:
+        park = json.load(urllib.request.urlopen(BASE + "/v1/memory/kv-park", timeout=30))
+        parked_mib = round(park["used_bytes"] / 2**20)
+    except Exception:
+        parked_mib = None  # a server without MEM-4
     msgs += [{"role": "assistant", "content": t2["text"]}, {"role": "user", "content": "Question 3: what is section 7 about?"}]
     t3 = turn(msgs)
     rows.append((target, t1, t2, t3))
     print(f"~{target}: first {t1['ttft_client_ms']} ms | warm {t2['ttft_client_ms']} ms (cached {t2['cached']}) | "
-          f"after swap {t3['ttft_client_ms']} ms (switch {t3['switch_ms']}, prefill {t3['prefill_ms']}, cached {t3['cached']}, prompt {t3['prompt_tokens']})", flush=True)
+          f"after swap {t3['ttft_client_ms']} ms (switch {t3['switch_ms']}, prefill {t3['prefill_ms']}, cached {t3['cached']}, "
+          f"prompt {t3['prompt_tokens']}, restored {t3['restored']} in {t3['restore_ms']} ms, parked {parked_mib} MiB)", flush=True)
 
 post("/v1/memory/tier", {"model": MODEL, "target_tier": "tier1_gpu_vram", "context_len": 16384}).read()
 print(json.dumps([{"target": r[0], "first": {k: v for k, v in r[1].items() if k != "text"},

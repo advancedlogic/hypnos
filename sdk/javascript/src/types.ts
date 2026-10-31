@@ -50,6 +50,8 @@ export interface LoadPhases {
   projector_ms?: number;
   context_ms?: number;
   total_ms?: number;
+  kv_restore_ms?: number;
+  kv_restored_tokens?: number;
 }
 
 /** `hypnos_telemetry`: where the model was, what loading it cost, engine timings. */
@@ -318,6 +320,23 @@ export interface ModelStatus {
   total_requests_served: number;
 }
 
+/** One model's parked KV state (`kv_park.models`). */
+export interface ParkedModel {
+  model: string;
+  slots: number;
+  tokens: number;
+  bytes: number;
+  parked_secs_ago: number;
+}
+
+/** `GET`/`POST /v1/memory/kv-park`, and `kv_park` in `/v1/memory/status`. */
+export interface KvParkStatus {
+  enabled: boolean;
+  max_bytes: number;
+  used_bytes: number;
+  models: ParkedModel[];
+}
+
 /** `GET /v1/memory/status`; docs/api.md section 14 lists every field. */
 export interface MemoryStatus {
   capabilities: Record<string, unknown>;
@@ -334,6 +353,7 @@ export interface MemoryStatus {
     unix_ms: number;
   }[];
   gpu?: Record<string, unknown>;
+  kv_park?: KvParkStatus;
   [field: string]: unknown;
 }
 

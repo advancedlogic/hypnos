@@ -1,4 +1,4 @@
-# MEM-4 baseline: the turn after a swap (2026-10-30)
+# MEM-4: the turn after a swap, before and after (2026-10-30)
 
 What MEM-4 (keep a slot's KV state across a demotion, `docs/pagination.md`) would remove, measured
 on today's server before any change. Apple Silicon (Metal, unified memory), `gemma4:26b-q4`,
@@ -22,3 +22,22 @@ would land near 1.05-1.1 s at every size: about 1.3x faster at 1.7k tokens, 2.4x
 
 Side observation: after the manual move to Tier 2, turn 3 reported `previous_tier:
 tier3_nvme_ssd`; to check separately (Tier 2 accounting on unified memory, or the telemetry).
+
+## With MEM-4 (`hardware.kv_park = true`, 4 GiB cap)
+
+Same script and machine, the debug build of the change on port 9996 with only the 26B enabled.
+
+| Prompt tokens | Turn 3 after the swap | of which tier switch | prefill | cached | restored | restore | parked |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 1,690 | 1,012 ms (was 1,401) | 903 ms | 70 ms | 1,633 | 1,672 | 2 ms | 230 MiB |
+| 6,325 | 1,014 ms (was 2,555) | 896 ms | 76 ms | 6,277 | 6,308 | 3 ms | 278 MiB |
+| 12,629 | 1,063 ms (was 4,705) | 929 ms | 88 ms | 12,574 | 12,612 | 5 ms | 344 MiB |
+
+1.4x, 2.5x and 4.4x faster; the cost left is the tier switch. Checks on the same server: with
+parking turned off through `POST /v1/memory/kv-park` and with a 100 MiB cap (smaller than the
+state), turn 3 prefilled everything again (cached 0); a temperature-0 answer after a restore was
+identical to the warm answer.
+
+Found on the way (not MEM-4): a byte-identical repeat of a prompt the slot has just answered
+(Regenerate) is prefilled in full even without a swap (cached 0, 1.2 s for 4.7k tokens), in
+memory as after a restore. Tracked as PERF-8.

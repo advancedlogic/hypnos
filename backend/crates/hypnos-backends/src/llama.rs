@@ -178,6 +178,7 @@ pub(crate) fn load_model(
             projector_ms,
             context_ms: 0.0,
             total_ms: 0.0,
+            ..LoadPhases::default()
         },
     })
 }
@@ -544,6 +545,21 @@ impl GgmlLlamaBackend {
     }
 }
 
+/// Asks a worker that is about to be dropped to save its slots into the park pool (MEM-4).
+/// Blocking; runs on the placement task, never on the async runtime.
+fn park_slots(cfg: &ModelConfig, opts: &EngineOptions, worker: &LlamaWorker) {
+    if !opts.kv_park.enabled() {
+        return;
+    }
+    let (tx, rx) = oneshot::channel();
+    if worker.handle.submit(LlamaJob::Park { reply: tx }).is_err() {
+        return;
+    }
+    if let Ok(Some(parked)) = rx.blocking_recv() {
+        opts.kv_park.put(&cfg.id, parked);
+    }
+}
+
 /// A chat answer: its text, the calls it made (with tools) and the engine's numbers.
 struct ChatOutput {
     content: String,
@@ -605,7 +621,8 @@ impl ModelBackend for GgmlLlamaBackend {
                 .map_err(|_| HypnosError::BackendError("worker mutex poisoned".into()))?;
             if !want_resident {
                 // Dropping the handle stops the worker, which frees the context and the weights.
-                if guard.take().is_some() {
+                if let Some(w) = guard.take() {
+                    park_slots(&cfg, &opts, &w);
                     info!(model = %cfg.id, to_tier = ?plan.primary_tier, "Released llama.cpp model from VRAM");
                 }
                 return Ok(None);
@@ -631,13 +648,17 @@ impl ModelBackend for GgmlLlamaBackend {
                 }
                 _ => {
                     // Stop the previous residency first so VRAM is free before the new split loads.
-                    *guard = None;
+                    if let Some(w) = guard.take() {
+                        park_slots(&cfg, &opts, &w);
+                    }
+                    let parked = opts.kv_park.take(&cfg.id);
                     let (handle, phases) = spawn_worker(WorkerSpec {
                         cfg: cfg.clone(),
                         gpu_layers: plan.gpu_layers,
                         n_ctx,
                         n_threads,
                         opts,
+                        parked,
                     })?;
                     *guard = Some(LlamaWorker {
                         handle,

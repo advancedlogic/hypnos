@@ -999,6 +999,35 @@ impl Client {
             .await
     }
 
+    /// `GET /v1/memory/kv-park`: whether KV parking is on, its cap and the parked states.
+    pub async fn kv_park(&self) -> Result<KvParkStatus> {
+        self.json(None, || self.request(Method::GET, "/v1/memory/kv-park"))
+            .await
+    }
+
+    /// `POST /v1/memory/kv-park`: turn KV parking on or off and/or change its cap;
+    /// [`Error::InvalidArgument`] when both are `None`.
+    pub async fn set_kv_park(
+        &self,
+        enabled: Option<bool>,
+        max_bytes: Option<u64>,
+    ) -> Result<KvParkStatus> {
+        if enabled.is_none() && max_bytes.is_none() {
+            return Err(Error::InvalidArgument(
+                "pass `enabled`, `max_bytes` or both".into(),
+            ));
+        }
+        let mut body = json!({});
+        if let Some(on) = enabled {
+            body["enabled"] = json!(on);
+        }
+        if let Some(cap) = max_bytes {
+            body["max_bytes"] = json!(cap);
+        }
+        self.json(None, self.post_json("/v1/memory/kv-park", &body))
+            .await
+    }
+
     // --- request log ---------------------------------------------------------------------
 
     /// `GET /v1/logs`, newest first.

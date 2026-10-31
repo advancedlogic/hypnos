@@ -60,6 +60,8 @@ class LoadPhases(TypedDict, total=False):
     projector_ms: float
     context_ms: float
     total_ms: float
+    kv_restore_ms: float
+    kv_restored_tokens: int
 
 
 class Telemetry(TypedDict):
@@ -434,6 +436,25 @@ class ModelStatus(TypedDict):
     total_requests_served: int
 
 
+class ParkedModel(TypedDict):
+    """One model's parked KV state (``kv_park.models``)."""
+
+    model: str
+    slots: int
+    tokens: int
+    bytes: int
+    parked_secs_ago: float
+
+
+class KvParkStatus(TypedDict):
+    """``GET``/``POST /v1/memory/kv-park`` and ``kv_park`` in ``/v1/memory/status``."""
+
+    enabled: bool
+    max_bytes: int
+    used_bytes: int
+    models: List[ParkedModel]
+
+
 class MemoryStatus(TypedDict):
     """``GET /v1/memory/status``; see docs/api.md section 14 for every field."""
 
@@ -445,6 +466,7 @@ class MemoryStatus(TypedDict):
     models: List[ModelStatus]
     recent_evictions: List[Eviction]
     gpu: NotRequired[Dict[str, Any]]
+    kv_park: NotRequired[KvParkStatus]
 
 
 class LogRecord(TypedDict, total=False):

@@ -365,6 +365,25 @@ async fn document_stream() {
 }
 
 #[tokio::test]
+async fn kv_parking() {
+    let server = MockServer::start();
+    let c = server.client();
+    let status = c.kv_park().await.unwrap();
+    assert!(!status.enabled);
+    assert_eq!(status.used_bytes, 0);
+    let on = c.set_kv_park(Some(true), Some(1 << 30)).await.unwrap();
+    assert!(on.enabled);
+    assert_eq!(on.max_bytes, 1_073_741_824);
+    assert!(on.models.is_empty());
+    let memory = c.memory_status().await.unwrap();
+    assert!(memory.kv_park.unwrap().enabled);
+    let err = c.set_kv_park(None, None).await.unwrap_err();
+    assert!(matches!(err, Error::InvalidArgument(_)), "{err:?}");
+    let off = c.set_kv_park(Some(false), None).await.unwrap();
+    assert!(!off.enabled);
+}
+
+#[tokio::test]
 async fn memory_and_placement() {
     let server = MockServer::start();
     let c = server.client();

@@ -16,6 +16,7 @@ mod engine;
 pub mod entities;
 pub mod gguf_inspector;
 pub mod kokoro;
+pub mod kv_park;
 pub mod llama;
 pub mod media;
 mod onnx;
@@ -148,12 +149,16 @@ pub struct EngineOptions {
     /// How long an execution slot keeps its KV cache after its last request before it is cleared
     /// (`server.kv_idle_timeout_secs`).
     pub kv_idle_timeout: std::time::Duration,
+    /// Where llama.cpp workers park their slots' KV state across a demotion (MEM-4); shared by
+    /// every model, off unless `hardware.kv_park`.
+    pub kv_park: Arc<kv_park::KvParkPool>,
 }
 
 impl Default for EngineOptions {
     fn default() -> Self {
         Self {
             kv_idle_timeout: std::time::Duration::from_secs(300),
+            kv_park: Arc::new(kv_park::KvParkPool::disabled()),
         }
     }
 }

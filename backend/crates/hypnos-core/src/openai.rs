@@ -573,6 +573,12 @@ pub struct LoadPhases {
     pub context_ms: f64,
     /// Everything the worker did from start to ready.
     pub total_ms: f64,
+    /// Restoring the slots parked when the model last left Tier 1 (`hardware.kv_park`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_restore_ms: Option<f64>,
+    /// Positions restored that way (a conversation that will not be prefilled again).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_restored_tokens: Option<u64>,
 }
 
 /// What happened between the lease being granted and the response being produced. Every field is

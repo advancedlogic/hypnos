@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 2  | 10  | 5   | 6   | 8    | 6   | 10    | 7   | 3    | 14   |
+| 2  | 10  | 5   | 6   | 9    | 6   | 10    | 7   | 3    | 14   |
 
 ---
 
@@ -78,7 +78,34 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       publishing, `NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`) and a publish job in release.yml after
       `ci`, versioned with the tag. Then point the README's quick start at the packages.
 
-- [ ] 🟫 **MEM-4** `P2` Keep each slot's KV state across a demotion
+- [ ] 🟫 **MEM-5** `P2` Expert offload for MoE models: experts on the CPU, the rest on the GPU
+      Design in docs/moe.md. Step 1, benchmark on the RTX 5090 laptop: the 26B full GPU, a layer
+      split, experts on the CPU for all 30 layers (`add_cpu_moe_override`) and for the last 15;
+      decode tok/s, 4-client aggregate, 8k prefill, TTFT, VRAM and host RAM. Stop if experts on
+      the CPU are not clearly better than the layer split at equal VRAM. Then a placement mode:
+      `cpu_expert_layers` in `LayerPlacementPlan`, expert bytes per layer from the GGUF
+      inspector, booked as host memory, per-layer `blk.N.ffn_*_exps` overrides in the llama
+      backend, preferred over a layer split or an eviction (config `moe_offload`), shown in
+      `/v1/memory/status` and telemetry. Gemma 4 26B: experts ~12.0 of ~13.6 GiB, ~0.8 GB read
+      per decoded token. Discrete GPUs only.
+
+- [ ] 🟧 **PERF-8** `P2` A repeated prompt (Regenerate) is prefilled in full
+      Sending a byte-identical prompt that a slot has just answered gets `cached_tokens: 0` and a
+      full prefill (1.2 s for 4.7k tokens on the 26B, Metal), with or without a swap; the next
+      turn of the same conversation reuses fine. The engine must re-evaluate the last prompt token
+      to get logits, so the divergence lands one position before the SWA checkpoint taken at the
+      prompt end, and the sliding-window rule refuses the reuse. Fix: checkpoint one position
+      earlier (or keep the last prompt token's logits), so Regenerate in the playground and the
+      desktop costs one token of prefill. Found while measuring MEM-4
+      (docs/bench/mem4-baseline-2026-10-30.md).
+
+## In Progress
+
+_No cards yet._
+
+## Done
+
+- [x] 🟫 **MEM-4** `P2` Keep each slot's KV state across a demotion
       Design in docs/pagination.md. On demotion the worker saves every slot's full sequence
       state (`state_seq_get`, flags 0) with its token keys, the SWA checkpoint and a context
       signature, outside the worker; on promotion, if the signature matches, the next request
@@ -92,23 +119,19 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       Baseline measured (docs/bench/mem4-baseline-2026-10-30.md, Metal, `mem4_bench.py`): turn
       after a swap 1.4 / 2.6 / 4.7 s for 1.7k / 6.3k / 12.6k tokens, ~0.95 s of it the tier switch,
       the rest re-prefill; expected ~1.1 s with the restore (2.4x at 6k, 4.3x at 12k).
-
-- [ ] 🟫 **MEM-5** `P2` Expert offload for MoE models: experts on the CPU, the rest on the GPU
-      Design in docs/moe.md. Step 1, benchmark on the RTX 5090 laptop: the 26B full GPU, a layer
-      split, experts on the CPU for all 30 layers (`add_cpu_moe_override`) and for the last 15;
-      decode tok/s, 4-client aggregate, 8k prefill, TTFT, VRAM and host RAM. Stop if experts on
-      the CPU are not clearly better than the layer split at equal VRAM. Then a placement mode:
-      `cpu_expert_layers` in `LayerPlacementPlan`, expert bytes per layer from the GGUF
-      inspector, booked as host memory, per-layer `blk.N.ffn_*_exps` overrides in the llama
-      backend, preferred over a layer split or an eviction (config `moe_offload`), shown in
-      `/v1/memory/status` and telemetry. Gemma 4 26B: experts ~12.0 of ~13.6 GiB, ~0.8 GB read
-      per decoded token. Discrete GPUs only.
-
-## In Progress
-
-_No cards yet._
-
-## Done
+      Done: optional, off by default: `hardware.kv_park` (bool) and `kv_park_bytes` (4 GiB
+      default) in the config, `GET` / `POST /v1/memory/kv-park` (`enabled`, `max_bytes`) at
+      runtime, `kv_park` in `/v1/memory/status`. `hypnos-backends/src/kv_park.rs`: a shared pool
+      with the cap and least-recently-parked eviction (off drops everything, a lower cap the
+      oldest, a disabled model its own). The llama worker parks each used idle slot
+      (`state_seq_get` + keys + SWA checkpoint) on `LlamaJob::Park` before it is dropped (demotion
+      or a new layer split) and restores them right after the context exists when the
+      `ParkSignature` matches; `tier_switch_phases.kv_restore_ms` / `kv_restored_tokens`.
+      Differences from the design: eager restore (prefix reuse then picks the slot), own cap
+      rather than the Tier 2 budget. Measured on Metal (26B): turn after a swap 1.40 / 2.56 /
+      4.71 s -> 1.01 / 1.01 / 1.06 s at 1.7k / 6.3k / 12.6k tokens, restore 2-5 ms; identical
+      answer at temperature 0; off and a too-small cap fall back to the full prefill. Docs: api.md
+      section 14, operating.md, example configs; SDKs `kv_park` / `set_kv_park`.
 
 - [x] 🩵 **DESK-13** `P2` Request log viewer, as in the playground
       A "Logs" view (a tab beside the stats panel, or its own window) over the server's request

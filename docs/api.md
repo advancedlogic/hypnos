@@ -206,7 +206,7 @@ stream) carries `hypnos_telemetry`:
 | `inference_latency_ms` | wall time of the engine call as the server measured it |
 | `evicted_models` | models demoted to make room for this one |
 | `engine` | engine timings; each field is present only when that modality measures it: `queue_ms`, `context_ms`, `prefill_ms`, `decode_ms`, `ttft_ms`, `prefill_tokens_per_s`, `decode_tokens_per_s`, `cached_tokens`, `concurrent_slots` (chat); `audio_secs`, `rtf`, `ttfa_ms` (audio); `pages`, `ms_per_page` (documents) |
-| `tier_switch_phases` | only when this request loaded a llama.cpp model into VRAM: `load_mode` (`mmap` or `read`), `weights_ms`, `projector_ms`, `context_ms`, `total_ms` |
+| `tier_switch_phases` | only when this request loaded a llama.cpp model into VRAM: `load_mode` (`mmap` or `read`), `weights_ms`, `projector_ms`, `context_ms`, `total_ms`, and with KV parking (`/v1/memory/kv-park`, section 14) `kv_restore_ms` and `kv_restored_tokens` when parked conversations were restored |
 
 Speech responses are audio, so the same facts travel as headers: `x-hypnos-previous-tier`
 (spelled as in the JSON, `tier2_pinned_ram`), `x-hypnos-gpu-layers`, `x-hypnos-switch-ms`,
@@ -750,6 +750,8 @@ Open during startup staging. The full snapshot of the three tiers (bytes unless 
 `tier1_vram_used_bytes` is what the planner has booked; `tier1_vram_real_free_bytes` is what the
 device reports; `tier1_vram_unaccounted_bytes` is the difference the planner subtracts from what it
 hands out; `tier1_vram_effective_free_bytes` is what a new promotion can use right now.
+`kv_park` is the state of KV parking (`/v1/memory/kv-park` below): `{"enabled", "max_bytes", "used_bytes", "models":
+[{"model", "slots", "tokens", "bytes", "parked_secs_ago"}]}`.
 `recent_evictions` lists the last automatic evictions with their `reason` (`memory_budget`,
 `full_gpu_placement`, `process_memory_cap`, `device_out_of_memory`). `gpu` is
 present on NVIDIA devices with `nvidia-smi` available and is sampled at most every few seconds.
@@ -767,6 +769,36 @@ Moves a model by hand.
 (optional) is the context to allocate when promoting to Tier 1. Refused with 429 `model_busy`
 while the model is leased, 507 when it does not fit, 404 when unknown or disabled. Response:
 `{"model": "…", "placement": {…}}`. A promotion blocks for as long as the load takes.
+
+### `GET /v1/memory/kv-park`, `POST /v1/memory/kv-park`
+
+**Hypnos extension.** KV parking keeps a llama.cpp model's conversations when it leaves
+Tier 1: each used slot's KV state is saved in host memory, and when the model comes back with
+the same context layout (same `allocated_context_len`, slot count, KV type and weights) the slots
+are restored before it takes requests. The next turn of a conversation then prefills only its new
+tokens instead of the whole history (on Apple Silicon, a 12.6k-token conversation: 4.7 s -> 1.1 s
+for the turn after a swap). Off by default (`hardware.kv_park`); `max_bytes` caps the host memory
+the parked states may hold, the least recently parked models going first.
+
+```json
+POST /v1/memory/kv-park
+{ "enabled": true, "max_bytes": 4294967296 }
+```
+
+Either field may be left out (an empty body is 400). Turning it off drops every parked state; a
+lower cap drops the oldest until the rest fits. The change is not written back to the config.
+Both routes answer the same object as `kv_park` in `/v1/memory/status`:
+
+```json
+{ "enabled": true, "max_bytes": 4294967296, "used_bytes": 360710144,
+  "models": [ { "model": "gemma4:26b-q4", "slots": 1, "tokens": 12612,
+                "bytes": 360710144, "parked_secs_ago": 4.2 } ] }
+```
+
+A parked state that does not fit the new context (the model came back with another window or
+slot count) is dropped and the conversation prefills as before; parking never changes an answer.
+A disabled model's parked state is dropped. Slots emptied by `server.kv_idle_timeout_secs` have
+nothing to park.
 
 ---
 

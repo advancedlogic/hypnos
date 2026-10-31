@@ -22,6 +22,7 @@ use axum::{
 use bytes::Bytes;
 use chrono::Utc;
 use futures::stream;
+use hypnos_backends::kv_park::{KvParkPool, KvParkStatus};
 use hypnos_backends::media::{encode_pcm16_raw, wav_stream_header};
 use hypnos_backends::{create_backend_for_model, EngineOptions};
 use hypnos_core::{
@@ -72,6 +73,9 @@ pub struct AppState {
     pub quota: Arc<quota::KeyLimiter>,
     /// Pictures kept for `return_pictures` document conversions (`/v1/documents/{id}/pictures`).
     pub pictures: Arc<pictures::PictureStore>,
+    /// Parked llama.cpp slot states across demotions (`hardware.kv_park`, MEM-4); shared with the
+    /// engines through `EngineOptions`.
+    pub kv_park: Arc<KvParkPool>,
     /// Flipped once startup tier initialization has finished (`/ready`).
     pub ready: Arc<AtomicBool>,
     pub started_at: Instant,
@@ -80,8 +84,13 @@ pub struct AppState {
 
 impl AppState {
     pub fn from_config(config: HypnosConfig) -> hypnos_core::error::Result<Self> {
+        let kv_park = Arc::new(KvParkPool::new(
+            config.hardware.kv_park,
+            config.hardware.kv_park_bytes,
+        ));
         let engine_opts = EngineOptions {
             kv_idle_timeout: Duration::from_secs(config.server.kv_idle_timeout_secs.max(1)),
+            kv_park: kv_park.clone(),
         };
         let backends = config
             .models
@@ -126,6 +135,7 @@ impl AppState {
             auth,
             quota,
             pictures: Arc::new(pictures),
+            kv_park,
             ready: Arc::new(AtomicBool::new(false)),
             started_at: Instant::now(),
             version: env!("CARGO_PKG_VERSION"),
@@ -241,6 +251,7 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
         // Hypnos 3-Tier Memory Observability & Control Endpoints
         .route("/v1/memory/status", get(memory_status))
         .route("/v1/memory/tier", post(set_model_tier))
+        .route("/v1/memory/kv-park", get(get_kv_park).post(set_kv_park))
         // Request log (playground "Request Logs" tab)
         .route("/v1/logs", get(list_logs).delete(clear_logs))
         .route("/v1/logs/level", post(set_log_level))
@@ -442,11 +453,42 @@ async fn list_models(State(state): State<AppState>) -> Json<OpenAiModelList> {
     })
 }
 
-async fn memory_status(
-    State(state): State<AppState>,
-) -> Json<hypnos_memory::MemoryHierarchyStatus> {
+async fn memory_status(State(state): State<AppState>) -> Json<serde_json::Value> {
     state.scheduler.memory().reconcile_vram();
-    Json(state.scheduler.status())
+    let mut status = serde_json::to_value(state.scheduler.status()).unwrap_or_default();
+    if let serde_json::Value::Object(map) = &mut status {
+        map.insert(
+            "kv_park".into(),
+            serde_json::to_value(state.kv_park.status()).unwrap_or_default(),
+        );
+    }
+    Json(status)
+}
+
+/// `POST /v1/memory/kv-park` body: either field may be left out.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct KvParkRequest {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub max_bytes: Option<u64>,
+}
+
+/// `GET /v1/memory/kv-park`: whether slot KV state is parked across demotions, and what is.
+async fn get_kv_park(State(state): State<AppState>) -> Json<KvParkStatus> {
+    Json(state.kv_park.status())
+}
+
+/// `POST /v1/memory/kv-park`: turns parking on or off and sets the cap at runtime (not written
+/// back to the config). Off drops every parked state; a lower cap drops the oldest.
+async fn set_kv_park(
+    State(state): State<AppState>,
+    Json(req): Json<KvParkRequest>,
+) -> std::result::Result<Json<KvParkStatus>, ApiError> {
+    if req.enabled.is_none() && req.max_bytes.is_none() {
+        return Err(HypnosError::InvalidRequest("give enabled and/or max_bytes".into()).into());
+    }
+    Ok(Json(state.kv_park.configure(req.enabled, req.max_bytes)))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -495,6 +537,10 @@ async fn set_model_enabled(
     enabled: bool,
 ) -> std::result::Result<Json<serde_json::Value>, ApiError> {
     let plan = state.scheduler.set_model_enabled(id, enabled).await?;
+    if !enabled {
+        // A disabled model's parked conversation would only hold memory.
+        state.kv_park.forget(id);
+    }
     Ok(Json(json!({
         "model": id,
         "enabled": enabled,

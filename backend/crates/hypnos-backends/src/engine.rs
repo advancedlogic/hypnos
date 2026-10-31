@@ -134,9 +134,64 @@ pub(crate) struct EmbedJob {
     pub reply: oneshot::Sender<Result<(Vec<Vec<f32>>, u32, EngineTiming)>>,
 }
 
+/// A slot's sequence state saved when its model left Tier 1 (MEM-4, `kv_park.rs`).
+pub(crate) struct ParkedSlot {
+    pub index: usize,
+    pub keys: Vec<CacheKey>,
+    pub n_past: i32,
+    /// `None` only in tests (a state cannot be made without a context).
+    pub state: Option<SeqState>,
+    pub bytes: u64,
+    pub checkpoint: Option<CheckpointAt>,
+    pub checkpoint_state: Option<SeqState>,
+}
+
+#[cfg(test)]
+impl ParkedSlot {
+    pub(crate) fn for_test(bytes: usize, tokens: i32) -> Self {
+        Self {
+            index: 0,
+            keys: Vec::new(),
+            n_past: tokens,
+            state: None,
+            bytes: bytes as u64,
+            checkpoint: None,
+            checkpoint_state: None,
+        }
+    }
+}
+
+/// What a context must match for parked states to be restored into it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ParkSignature {
+    pub weights: String,
+    pub n_ctx: u32,
+    pub slots: usize,
+    pub kv: String,
+}
+
+pub(crate) struct ParkedContext {
+    pub signature: ParkSignature,
+    pub slots: Vec<ParkedSlot>,
+}
+
+impl ParkedContext {
+    pub(crate) fn bytes(&self) -> u64 {
+        self.slots.iter().map(|s| s.bytes).sum()
+    }
+
+    pub(crate) fn tokens(&self) -> u64 {
+        self.slots.iter().map(|s| s.n_past.max(0) as u64).sum()
+    }
+}
+
 pub(crate) enum LlamaJob {
     Chat(ChatJob),
     Embed(EmbedJob),
+    /// Save every used, idle slot's state before the worker is dropped (MEM-4).
+    Park {
+        reply: oneshot::Sender<Option<ParkedContext>>,
+    },
     /// Rebuild the context for a new per-slot window (the scheduler re-planned the residency).
     Reconfigure {
         n_ctx: u32,
@@ -155,6 +210,9 @@ impl FailJob for LlamaJob {
             }
             LlamaJob::Reconfigure { reply, .. } => {
                 let _ = reply.send(Err(error));
+            }
+            LlamaJob::Park { reply } => {
+                let _ = reply.send(None);
             }
         }
     }
@@ -413,6 +471,8 @@ pub(crate) struct WorkerSpec {
     pub n_ctx: u32,
     pub n_threads: i32,
     pub opts: EngineOptions,
+    /// Slot states to restore once the context exists (MEM-4).
+    pub parked: Option<ParkedContext>,
 }
 
 /// Starts the worker thread, loads the weights on it and waits until the context exists.
@@ -441,6 +501,7 @@ fn run_worker(
         n_ctx,
         n_threads,
         opts,
+        parked,
     } = spec;
     let load_started = Instant::now();
     let mut loaded = match load_model(&cfg, gpu_layers, n_ctx, n_threads) {
@@ -479,6 +540,13 @@ fn run_worker(
         }
     };
     phases.context_ms = context_started.elapsed().as_secs_f64() * 1000.0;
+    if let Some(parked) = parked {
+        let (ms, tokens) = engine.restore(parked);
+        if tokens > 0 {
+            phases.kv_restore_ms = Some(ms);
+            phases.kv_restored_tokens = Some(tokens);
+        }
+    }
     phases.total_ms = load_started.elapsed().as_secs_f64() * 1000.0;
     let _ = ready.send(Ok(phases));
 
@@ -789,6 +857,110 @@ impl<'m> Engine<'m> {
         Ok(())
     }
 
+    // ---- parked KV state (MEM-4) --------------------------------------------------------
+
+    fn park_signature(&self) -> ParkSignature {
+        ParkSignature {
+            weights: self.cfg.weights_path.display().to_string(),
+            n_ctx: self.n_ctx,
+            slots: self.slots.slots.len(),
+            kv: format!("{:?}", self.cfg.arch.kv_dtype),
+        }
+    }
+
+    /// Copies out every slot that holds a conversation and is not running a request.
+    fn park(&mut self) -> Option<ParkedContext> {
+        if self.embeddings_mode || !self.cfg.prefix_cache {
+            return None;
+        }
+        let started = Instant::now();
+        let mut slots = Vec::new();
+        for (index, slot) in self.slots.slots.iter().enumerate() {
+            if slot.in_use || slot.n_past <= 0 || slot.keys.is_empty() {
+                continue;
+            }
+            match self
+                .ctx
+                .state_seq_get(slot.seq_id, LlamaStateSeqFlags::empty())
+            {
+                Ok(state) => {
+                    let bytes = state.byte_len() as u64
+                        + slot
+                            .checkpoint_state
+                            .as_ref()
+                            .map_or(0, |c| c.byte_len() as u64);
+                    slots.push(ParkedSlot {
+                        index,
+                        keys: slot.keys.clone(),
+                        n_past: slot.n_past,
+                        state: Some(state),
+                        bytes,
+                        checkpoint: slot.checkpoint,
+                        checkpoint_state: slot.checkpoint_state.clone(),
+                    });
+                }
+                Err(e) => {
+                    warn!(model = %self.cfg.id, slot = index, error = ?e, "could not save slot state")
+                }
+            }
+        }
+        if slots.is_empty() {
+            return None;
+        }
+        let parked = ParkedContext {
+            signature: self.park_signature(),
+            slots,
+        };
+        info!(
+            model = %self.cfg.id,
+            slots = parked.slots.len(),
+            tokens = parked.tokens(),
+            bytes = parked.bytes(),
+            ms = ms_since(started) as u64,
+            "saved slot KV state for parking"
+        );
+        Some(parked)
+    }
+
+    /// Restores parked slots into this (new) context; returns the time taken and the positions
+    /// restored. A different layout (window, slots, KV type, weights) restores nothing.
+    fn restore(&mut self, parked: ParkedContext) -> (f64, u64) {
+        let signature = self.park_signature();
+        if parked.signature != signature {
+            info!(model = %self.cfg.id, parked = ?parked.signature, now = ?signature, "parked KV state does not fit the new context; dropped");
+            return (0.0, 0);
+        }
+        let started = Instant::now();
+        let mut tokens = 0u64;
+        for p in parked.slots {
+            let Some(state) = p.state else { continue };
+            let Some(seq_id) = self.slots.slots.get(p.index).map(|s| s.seq_id) else {
+                continue;
+            };
+            match self.ctx.state_seq_set(&state, seq_id) {
+                Ok(()) => {
+                    let slot = &mut self.slots.slots[p.index];
+                    slot.keys = p.keys;
+                    slot.n_past = p.n_past;
+                    slot.checkpoint = p.checkpoint;
+                    slot.checkpoint_state = p.checkpoint_state;
+                    slot.last_used = Instant::now();
+                    tokens += p.n_past.max(0) as u64;
+                }
+                Err(e) => {
+                    warn!(model = %self.cfg.id, slot = p.index, error = ?e, "could not restore slot state; it will prefill");
+                    let _ = self.ctx.clear_kv_cache_seq(Some(seq_id as u32), None, None);
+                    self.slots.slots[p.index].forget();
+                }
+            }
+        }
+        let ms = ms_since(started);
+        if tokens > 0 {
+            info!(model = %self.cfg.id, tokens, ms = ms as u64, "restored parked slot KV state");
+        }
+        (ms, tokens)
+    }
+
     fn clear_slot(&mut self, i: usize) {
         let slot = &mut self.slots.slots[i];
         if !slot.keys.is_empty() {
@@ -835,6 +1007,9 @@ impl<'m> Engine<'m> {
             LlamaJob::Embed(job) => self.embed(job),
             LlamaJob::Reconfigure { n_ctx, reply } => {
                 let _ = reply.send(self.reconfigure(n_ctx));
+            }
+            LlamaJob::Park { reply } => {
+                let _ = reply.send(self.park());
             }
             LlamaJob::Chat(job) => self.waiting.push_back(job),
         }

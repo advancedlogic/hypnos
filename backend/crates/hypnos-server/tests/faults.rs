@@ -200,6 +200,7 @@ fn state_with(engines: Vec<Arc<MockEngine>>) -> AppState {
         lock_host_memory: Some(false),
         simulate_physical_memory_bytes: 0,
         max_process_memory_bytes: 0,
+        ..HardwareConfig::default()
     };
     let mut caps = DeviceMemoryCapabilities::detect(&hw);
     caps.physical_memory_bytes = 0;
@@ -243,6 +244,7 @@ fn state_with(engines: Vec<Arc<MockEngine>>) -> AppState {
         )),
         quota: Arc::new(quota::KeyLimiter::new([])),
         pictures: Arc::new(pictures),
+        kv_park: Arc::new(hypnos_backends::kv_park::KvParkPool::disabled()),
         ready: Arc::new(AtomicBool::new(true)),
         started_at: Instant::now(),
         version: "test",
@@ -439,4 +441,46 @@ async fn a_device_out_of_memory_evicts_idle_models_and_retries_once_then_answers
     assert_eq!(leases(&app, "m").await, (0, "tier1_gpu_vram".to_string()));
     let resp = post(&app, "/v1/chat/completions", CHAT).await;
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn kv_parking_is_off_by_default_and_switched_by_the_api() {
+    let engine = Arc::new(MockEngine {
+        config: model("m"),
+        resident: AtomicBool::new(false),
+        fail_loads: AtomicBool::new(false),
+        fail_generation: AtomicBool::new(false),
+        device_oom: AtomicUsize::new(0),
+        generations: AtomicUsize::new(0),
+        placements: Mutex::new(Vec::new()),
+    });
+    let app = build_router(state(engine), &[]);
+    let status: serde_json::Value =
+        serde_json::from_str(&text(get(&app, "/v1/memory/kv-park").await).await).unwrap();
+    assert_eq!(status["enabled"], false);
+    assert_eq!(status["used_bytes"], 0);
+
+    let on = post(
+        &app,
+        "/v1/memory/kv-park",
+        r#"{"enabled": true, "max_bytes": 1073741824}"#,
+    )
+    .await;
+    assert_eq!(on.status(), 200);
+    let on: serde_json::Value = serde_json::from_str(&text(on).await).unwrap();
+    assert_eq!(on["enabled"], true);
+    assert_eq!(on["max_bytes"], 1073741824u64);
+
+    let memory: serde_json::Value =
+        serde_json::from_str(&text(get(&app, "/v1/memory/status").await).await).unwrap();
+    assert_eq!(memory["kv_park"]["enabled"], true);
+    assert!(memory["kv_park"]["models"].as_array().unwrap().is_empty());
+
+    let empty = post(&app, "/v1/memory/kv-park", "{}").await;
+    assert_eq!(empty.status(), 400);
+    let off: serde_json::Value = serde_json::from_str(
+        &text(post(&app, "/v1/memory/kv-park", r#"{"enabled": false}"#).await).await,
+    )
+    .unwrap();
+    assert_eq!(off["enabled"], false);
 }

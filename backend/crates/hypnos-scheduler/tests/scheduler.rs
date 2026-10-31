@@ -127,6 +127,8 @@ fn hardware(vram_gb: u64, ram_gb: u64) -> HardwareConfig {
         lock_host_memory: Some(false),
         simulate_physical_memory_bytes: 0,
         max_process_memory_bytes: 0,
+        kv_park: false,
+        kv_park_bytes: 0,
     }
 }
 

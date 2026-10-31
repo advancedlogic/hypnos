@@ -170,7 +170,13 @@ weights, duplicate ids, impossible budgets, bad engine/modality combos; a model 
 `enabled = false` may have missing weights). A disabled model keeps its block but is skipped by
 `initialize_startup_tiers`, refused by `acquire_model` with `ModelDisabled` (404) and hidden from
 `/v1/models`; `POST /v1/models/{id}/enable|disable` flips the runtime switch held by
-`TieredMemoryManager` (disable evicts to Tier 3 first). If the config path does not
+`TieredMemoryManager` (disable evicts to Tier 3 first). `hardware.kv_park` / `kv_park_bytes` (off by default; `POST
+/v1/memory/kv-park` at runtime) is MEM-4: `hypnos-backends/src/kv_park.rs` holds a shared
+`KvParkPool` (in `EngineOptions` and `AppState`); before a llama worker is dropped
+(`apply_placement`: demotion or a new layer split) a `LlamaJob::Park` copies each used idle slot's
+`state_seq_get` plus its keys and SWA checkpoint into the pool, and `spawn_worker` restores them
+right after the context exists when the `ParkSignature` (weights, per-slot `n_ctx`, slots, KV type)
+matches; `tier_switch_phases` reports `kv_restore_ms` / `kv_restored_tokens`. If the config path does not
 exist, the server falls back to `default_profile::default_six_model_config()` in `hypnos-server`;
 keep that profile in sync with `hypnos.example.toml` when adding models or fields.
 

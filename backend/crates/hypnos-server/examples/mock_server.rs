@@ -704,6 +704,8 @@ async fn main() -> anyhow::Result<()> {
         lock_host_memory: Some(false),
         simulate_physical_memory_bytes: 0,
         max_process_memory_bytes: 0,
+        kv_park: false,
+        kv_park_bytes: 0,
     };
     let mut caps = DeviceMemoryCapabilities::detect(&hw);
     caps.physical_memory_bytes = 0;
@@ -759,6 +761,8 @@ async fn main() -> anyhow::Result<()> {
             Duration::from_secs(3600),
             0,
         )?),
+        // Mock engines have no KV state; the switch and its status still answer as the server's.
+        kv_park: Arc::new(hypnos_backends::kv_park::KvParkPool::disabled()),
         ready: ready.clone(),
         started_at: Instant::now(),
         version: env!("CARGO_PKG_VERSION"),

@@ -1,6 +1,13 @@
 # KV state preservation across tier switches (proposal)
 
-Status: proposal, tracked as MEM-4 in `TODO.md`. This replaces an earlier draft titled
+Status: implemented (MEM-4), off by default: `hardware.kv_park` / `kv_park_bytes`, or
+`POST /v1/memory/kv-park` at runtime (docs/api.md section 14). What was built differs from the
+proposal below in three points: the slots are restored eagerly when the worker starts (not
+matched per request: the existing prefix reuse then picks the right slot), the pool has its own
+cap instead of being booked in the Tier 2 budget, and a new layer split on promotion parks and
+restores too. Measured result in section 4.
+
+Original proposal: This replaces an earlier draft titled
 "Paginated KV Cache Offloading"; the mechanism below is per-sequence state save and restore,
 not paged attention (llama.cpp has no block tables, see "Out of scope").
 
@@ -90,10 +97,11 @@ platform) instead of prefilling 8k tokens (about 2.6 s at the 3,190 tok/s measur
 `docs/bench/after-B-2026-10-29.md`). The new turn's own tokens are still prefilled, so TTFT drops
 to the swap time plus a short prefill, not to the decode floor.
 
-Measured baseline (`docs/bench/mem4-baseline-2026-10-30.md`, Metal): the turn after a swap took
-1.4 s, 2.6 s and 4.7 s for 1.7k, 6.3k and 12.6k-token conversations, of which about 0.95 s was the
-tier switch and the rest the re-prefill (0.4 s, 1.6 s, 3.7 s). With the state restored that turn
-should land near 1.1 s at every size.
+Measured (`docs/bench/mem4-baseline-2026-10-30.md`, Metal, `gemma4:26b-q4`): the turn after a swap
+took 1.4 s, 2.6 s and 4.7 s for 1.7k, 6.3k and 12.6k-token conversations before (about 0.95 s
+tier switch plus the re-prefill); with parking on it took 1.01 s, 1.01 s and 1.06 s: the restore
+itself 2-5 ms for 230-344 MiB of state, then a 70-88 ms prefill of the new turn. A temperature-0
+answer after a restore is identical to the warm one.
 
 To measure the feature itself, extend `backend/scripts/mem4_bench.py` (or add the scenario to
 `backend/scripts/bench.sh`): build a conversation of N tokens on the 26B

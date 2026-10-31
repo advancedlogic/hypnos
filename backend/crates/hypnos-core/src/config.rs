@@ -360,6 +360,19 @@ pub struct HardwareConfig {
     /// letting the load cross the cap. Memory a resident model grows into later is not prevented.
     #[serde(default)]
     pub max_process_memory_bytes: u64,
+    /// Keep each llama.cpp slot's KV state in host memory when its model leaves Tier 1, and
+    /// restore it when the model comes back with the same context layout, so the next turn of a
+    /// conversation is not prefilled again (MEM-4). Off by default; `POST /v1/memory/kv-park`
+    /// switches it at runtime.
+    #[serde(default)]
+    pub kv_park: bool,
+    /// Host memory the parked states may hold in total; the least recently parked go first.
+    #[serde(default = "default_kv_park_bytes")]
+    pub kv_park_bytes: u64,
+}
+
+fn default_kv_park_bytes() -> u64 {
+    4 * 1024 * 1024 * 1024
 }
 
 impl HardwareConfig {
@@ -409,6 +422,8 @@ impl Default for HardwareConfig {
             lock_host_memory: None,
             simulate_physical_memory_bytes: 0,
             max_process_memory_bytes: 0,
+            kv_park: false,
+            kv_park_bytes: default_kv_park_bytes(),
         }
     }
 }

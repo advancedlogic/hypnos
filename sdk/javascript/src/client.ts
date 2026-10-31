@@ -17,6 +17,7 @@ import type {
   EntityResponse,
   Health,
   ImageResponse,
+  KvParkStatus,
   LogList,
   LogRecord,
   MemoryStatus,
@@ -683,6 +684,18 @@ export class Client {
       json: dropUndefined({ model, target_tier: targetTier, context_len: options.contextLen }),
       signal: options.signal,
     });
+  }
+
+  /** `GET /v1/memory/kv-park`: whether KV parking is on, its cap and the parked states. */
+  kvPark(opts: CallOptions = {}): Promise<KvParkStatus> {
+    return this.json("GET", "/v1/memory/kv-park", { signal: opts.signal });
+  }
+
+  /** `POST /v1/memory/kv-park`: turn KV parking on or off and/or change its cap. */
+  async setKvPark(options: CallOptions & { enabled?: boolean; max_bytes?: number } = {}): Promise<KvParkStatus> {
+    const body = dropUndefined({ enabled: options.enabled, max_bytes: options.max_bytes });
+    if (Object.keys(body).length === 0) throw new TypeError("pass `enabled`, `max_bytes` or both");
+    return this.json("POST", "/v1/memory/kv-park", { json: body, signal: options.signal });
   }
 
   // --- request log ---------------------------------------------------------------------------

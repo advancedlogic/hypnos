@@ -83,6 +83,10 @@ pub struct LoadPhases {
     pub projector_ms: Option<f64>,
     pub context_ms: Option<f64>,
     pub total_ms: Option<f64>,
+    /// With KV parking: time spent restoring the parked conversations.
+    pub kv_restore_ms: Option<f64>,
+    /// With KV parking: the tokens restored from the parked conversations.
+    pub kv_restored_tokens: Option<u64>,
 }
 
 /// `hypnos_telemetry`: where the model was, what loading it cost, engine timings.
@@ -921,6 +925,27 @@ pub struct ModelStatus {
     pub extra: Extra,
 }
 
+/// One model's parked KV state (`kv_park.models`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ParkedModel {
+    pub model: String,
+    pub slots: u32,
+    pub tokens: u64,
+    pub bytes: u64,
+    pub parked_secs_ago: f64,
+}
+
+/// `GET`/`POST /v1/memory/kv-park`, and `kv_park` in `GET /v1/memory/status`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KvParkStatus {
+    pub enabled: bool,
+    pub max_bytes: u64,
+    pub used_bytes: u64,
+    pub models: Vec<ParkedModel>,
+}
+
 /// `GET /v1/memory/status`; the fields not typed here are in `extra` (docs/api.md section 14).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct MemoryStatus {
@@ -940,6 +965,8 @@ pub struct MemoryStatus {
     pub recent_evictions: Vec<Eviction>,
     #[serde(default)]
     pub gpu: Option<Value>,
+    #[serde(default)]
+    pub kv_park: Option<KvParkStatus>,
     #[serde(flatten)]
     pub extra: Extra,
 }
