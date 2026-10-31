@@ -79,13 +79,18 @@ impl Speaker {
         Ok(tx)
     }
 
+    /// Stops the synthesis (if any) and silences the player. The session is gone once its last
+    /// sentence is synthesized while the audio still plays, so the player is cleared either way;
+    /// it reports the end of the answer it was finishing.
     fn stop_session(&self) -> Option<String> {
-        let session = self.session.lock().unwrap().take()?;
-        session.worker.abort();
+        let session = self.session.lock().unwrap().take();
+        if let Some(s) = &session {
+            s.worker.abort();
+        }
         if let Some(tx) = self.player.lock().unwrap().as_ref() {
             let _ = tx.send(PlayerCmd::Clear);
         }
-        Some(session.id)
+        session.map(|s| s.id)
     }
 }
 
@@ -117,7 +122,16 @@ fn play<R: Runtime>(
             Ok(PlayerCmd::End { id }) => ending = Some(id),
             Ok(PlayerCmd::Clear) => {
                 player.clear();
-                ending = None;
+                if let Some(id) = ending.take() {
+                    let _ = app.emit(
+                        "speech-state",
+                        SpeechState {
+                            id,
+                            playing: false,
+                            error: None,
+                        },
+                    );
+                }
             }
             Err(std_mpsc::RecvTimeoutError::Timeout) => {}
             Err(std_mpsc::RecvTimeoutError::Disconnected) => return,
