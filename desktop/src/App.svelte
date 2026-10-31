@@ -1,14 +1,21 @@
 <script>
   import { onMount } from 'svelte';
   import { createClient, probe, DEFAULT_SERVER_URL } from './lib/hypnos.js';
+  import { ChatStore } from './lib/chats.svelte.js';
+  import Sidebar from './lib/Sidebar.svelte';
+  import Chat from './lib/Chat.svelte';
 
   const POLL_MS = 3000;
+  const MODELS_MS = 10000;
   const PANEL_KEY = 'hypnos.desktop.panelOpen';
 
   const serverUrl = DEFAULT_SERVER_URL;
   const client = createClient({ baseUrl: serverUrl });
 
+  const store = new ChatStore(client);
+
   let status = $state({ state: 'connecting', health: null });
+  let models = $state([]);
   let panelOpen = $state(readPanelOpen());
 
   const STATES = {
@@ -17,7 +24,9 @@
     starting: { label: 'Warming up', dot: 'bg-amber-400 animate-pulse' },
     ready: { label: 'Ready', dot: 'bg-emerald-400' },
   };
-  let shown = $derived(STATES[status.state]);
+  // Derived so the effects below run on a state change, not on every poll.
+  let serverState = $derived(status.state);
+  let shown = $derived(STATES[serverState]);
 
   function readPanelOpen() {
     try {
@@ -35,13 +44,45 @@
   }
 
   function onKeydown(e) {
-    if ((e.metaKey || e.ctrlKey) && e.key === '.') {
+    if (!(e.metaKey || e.ctrlKey)) return;
+    if (e.key === '.') {
       e.preventDefault();
       togglePanel();
+    } else if (e.key === 'n') {
+      e.preventDefault();
+      store.newChat();
     }
   }
 
+  /** The enabled models that answer `/v1/chat/completions`, with their current tier. */
+  async function loadModels(signal) {
+    const [list, memory] = await Promise.all([client.models({ signal }), client.memoryStatus({ signal })]);
+    const modalities = new Map(memory.models.map((m) => [m.id, m.modalities ?? [m.modality]]));
+    models = list.data.filter((m) => (modalities.get(m.id) ?? [m.modality]).includes('text_generation'));
+  }
+
+  // The model list follows the server: loaded once it is ready, then refreshed for the tiers.
+  $effect(() => {
+    if (serverState !== 'ready') return;
+    const controller = new AbortController();
+    let timer;
+    const refresh = async () => {
+      try {
+        await loadModels(controller.signal);
+      } catch {
+        if (controller.signal.aborted) return;
+      }
+      timer = setTimeout(refresh, MODELS_MS);
+    };
+    refresh();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  });
+
   onMount(() => {
+    store.init().then(() => store.current ?? store.newChat());
     const controller = new AbortController();
     let timer;
     const tick = async () => {
@@ -95,8 +136,10 @@
   </header>
 
   <div class="flex-1 min-h-0 flex">
-    <main class="flex-1 min-w-0 flex items-center justify-center">
-      <p class="text-sm text-slate-500">Chat comes here (DESK-2).</p>
+    <Sidebar {store} />
+
+    <main class="flex-1 min-w-0">
+      <Chat {store} {models} {serverState} />
     </main>
 
     {#if panelOpen}
