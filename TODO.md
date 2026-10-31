@@ -90,6 +90,30 @@ _No cards yet._
 
 ## Done
 
+- [x] ⬛ **BUILD-9** `P3` Sign and notarize the desktop installers
+      The release's desktop installers are ad-hoc signed on macOS and unsigned on Windows
+      (BUILD-8), so users must confirm the first open. Add an Apple Developer ID certificate
+      + notarization (`APPLE_CERTIFICATE`, `APPLE_ID`, `APPLE_TEAM_ID`, app-specific password)
+      and a Windows code-signing certificate as repository secrets and wire them into the
+      `desktop` job of release.yml (Tauri reads them from the environment).
+      Done: `src-tauri/src/local_server.rs` (commands detect / start / stop / status / logs /
+      probe; output kept in a 2000-line ring without ANSI codes and pushed as events; the
+      config's folder is the working directory; loader paths as in run.sh; SIGTERM, then a
+      kill after 15 s; stopped on `RunEvent::Exit`; refuses a port where Hypnos already
+      answers, checked with `hypnos-client`). `LocalServer.svelte` from a header button (and
+      "Start a local server" when unreachable): binary, config, port, start with the app,
+      live log; starting it switches the connection to `http://127.0.0.1:<port>`. Ignored
+      test `starts_logs_and_stops_a_real_server` (Tauri mock app + real binary) passes.
+      (commit 5590302)
+      Done (wiring; needs the secrets to take effect): the `desktop` job of release.yml passes
+      `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
+      `APPLE_PASSWORD`, `APPLE_TEAM_ID` to the Tauri CLI (empty ones unset, so the ad-hoc path
+      stays as it is) and sets `bundle.macOS.signingIdentity`; on Windows it imports
+      `WINDOWS_CERTIFICATE` / `_PASSWORD` into the user store and passes the thumbprint, sha256
+      and a DigiCert timestamp URL as `bundle.windows`. The release notes say signed or not
+      from the secrets. Shell logic dry-run locally with and without fake secrets; nothing was
+      signed for real (no certificates here). Secrets listed in desktop/README.md.
+
 - [x] 🟥 **BUG-5** `P2` Release builds on macOS 27 / Xcode 27.2 cannot load stripped proc macros
       With Homebrew's rustc 1.98 and Xcode 27.2, `cargo build --release` fails with E0463
       "can't find crate for `rustversion`" (and `futures_macro`, `zerocopy_derive`): the
@@ -107,6 +131,7 @@ _No cards yet._
       only; shipped binaries stay stripped). Verified: desktop bundle builds; backend's
       engine-free crates build in release (the full engine build was not rerun). Still to do
       by hand: report it to Apple (Feedback Assistant) / rust-lang with the dlopen message.
+      (commit 27c0260)
 
 - [x] 🩵 **DESK-11** `P2` Image-generation tool in the chat
       The server ignores `tools`, so the app runs the tool loop: the system prompt describes
@@ -235,22 +260,6 @@ _No cards yet._
       Decided 2026-10-30: it does not bundle the server (GPU builds per platform, 30+ MB of
       engines, model downloads); it finds an installed `hypnos` (a path chosen in the
       settings, this repo's `backend/target/release`, or PATH) and manages that process.
-
-- [ ] ⬛ **BUILD-9** `P3` Sign and notarize the desktop installers
-      The release's desktop installers are ad-hoc signed on macOS and unsigned on Windows
-      (BUILD-8), so users must confirm the first open. Add an Apple Developer ID certificate
-      + notarization (`APPLE_CERTIFICATE`, `APPLE_ID`, `APPLE_TEAM_ID`, app-specific password)
-      and a Windows code-signing certificate as repository secrets and wire them into the
-      `desktop` job of release.yml (Tauri reads them from the environment).
-      Done: `src-tauri/src/local_server.rs` (commands detect / start / stop / status / logs /
-      probe; output kept in a 2000-line ring without ANSI codes and pushed as events; the
-      config's folder is the working directory; loader paths as in run.sh; SIGTERM, then a
-      kill after 15 s; stopped on `RunEvent::Exit`; refuses a port where Hypnos already
-      answers, checked with `hypnos-client`). `LocalServer.svelte` from a header button (and
-      "Start a local server" when unreachable): binary, config, port, start with the app,
-      live log; starting it switches the connection to `http://127.0.0.1:<port>`. Ignored
-      test `starts_logs_and_stops_a_real_server` (Tauri mock app + real binary) passes.
-      (commit 5590302)
 
 - [x] ⬜ **DOC-6** `P2` Document the desktop app
       `desktop/README.md` (prerequisites per OS, dev and build commands, connecting to a

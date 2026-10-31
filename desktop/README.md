@@ -85,9 +85,24 @@ app's commands.
 
 Each [GitHub release](https://github.com/advancedlogic/hypnos/releases) after v0.2.0 carries
 `hypnos-desktop-<version>-macos-arm64.dmg`, `-windows-x64.msi` / `.setup.exe` and
-`-linux-x64.deb` / `.AppImage`. They are not signed with a developer identity yet: on macOS
-allow the first open in System Settings > Privacy & Security > Open Anyway; on Windows choose
-More info > Run anyway.
+`-linux-x64.deb` / `.AppImage`. The release notes say whether they are signed. Unsigned, on
+macOS allow the first open in System Settings > Privacy & Security > Open Anyway; on Windows
+choose More info > Run anyway.
+
+Signing turns on in `release.yml` once these repository secrets exist (Settings > Secrets and
+variables > Actions):
+
+| Secret | What |
+| :--- | :--- |
+| `APPLE_CERTIFICATE` | the Developer ID Application certificate exported as .p12, base64 (`base64 -i cert.p12`) |
+| `APPLE_CERTIFICATE_PASSWORD` | the .p12 export password |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Your Name (TEAMID)` |
+| `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | notarization: the Apple ID, an app-specific password, the team id |
+| `WINDOWS_CERTIFICATE` | the code-signing certificate as .pfx, base64 |
+| `WINDOWS_CERTIFICATE_PASSWORD` | its password |
+
+Without the Apple secrets the macOS app keeps an ad-hoc signature; without the Windows ones the
+installers are unsigned.
 
 ## Building from source
 

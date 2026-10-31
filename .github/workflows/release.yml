@@ -141,9 +141,13 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
-  # The desktop app's installers, not signed with a developer identity yet (ad-hoc on macOS, so
-  # Gatekeeper offers "Open Anyway" instead of calling the app damaged; SmartScreen on Windows
-  # shows "More info > Run anyway").
+  # The desktop app's installers. Signing turns on with the repository secrets (BUILD-9):
+  #   macOS:   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY
+  #            ("Developer ID Application: Name (TEAMID)"); notarization also needs APPLE_ID,
+  #            APPLE_PASSWORD (an app-specific password) and APPLE_TEAM_ID.
+  #   Windows: WINDOWS_CERTIFICATE (base64 .pfx) and WINDOWS_CERTIFICATE_PASSWORD.
+  # Without them macOS gets an ad-hoc signature (Gatekeeper offers "Open Anyway" instead of
+  # calling the app damaged) and Windows none (SmartScreen: "More info > Run anyway").
   desktop:
     name: desktop ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
@@ -172,17 +176,55 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: desktop/package-lock.json
+      # Imports the code-signing certificate into the runner's store and passes its thumbprint
+      # to Tauri, which signs the .exe, the .msi and the NSIS installer with signtool.
+      - name: Windows signing certificate
+        id: wincert
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE) { Write-Host "No WINDOWS_CERTIFICATE secret: unsigned build."; exit 0 }
+          $pfx = Join-Path $env:RUNNER_TEMP "codesign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item $pfx
+          "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
       - name: Build the installers
         working-directory: desktop
         shell: bash
+        env:
+          # Read by the Tauri CLI; empty secrets leave the unsigned / ad-hoc path untouched.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WINDOWS_THUMBPRINT: ${{ steps.wincert.outputs.thumbprint }}
         run: |
           npm ci
+          # Tauri treats a set-but-empty variable as configured: drop the ones without a secret.
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!v}" ] || unset "$v"
+          done
           # The tag's version goes into the installers; a manual run keeps tauri.conf.json's.
-          args=(--bundles ${{ matrix.bundles }})
+          config='{}'
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            args+=(--config "{\"version\":\"${GITHUB_REF_NAME#v}\"}")
+            config=$(jq -c --arg v "${GITHUB_REF_NAME#v}" '.version = $v' <<<"$config")
           fi
-          npx tauri build "${args[@]}"
+          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            config=$(jq -c --arg id "$APPLE_SIGNING_IDENTITY" '.bundle.macOS.signingIdentity = $id' <<<"$config")
+          fi
+          if [ -n "$WINDOWS_THUMBPRINT" ]; then
+            config=$(jq -c --arg t "$WINDOWS_THUMBPRINT" \
+              '.bundle.windows.certificateThumbprint = $t | .bundle.windows.digestAlgorithm = "sha256" | .bundle.windows.timestampUrl = "http://timestamp.digicert.com"' <<<"$config")
+          fi
+          echo "tauri config overrides: $(jq -c 'if .bundle.windows then .bundle.windows.certificateThumbprint = "***" else . end' <<<"$config")"
+          npx tauri build --bundles ${{ matrix.bundles }} --config "$config"
       - name: Collect
         shell: bash
         run: |
@@ -261,8 +303,15 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
+          MAC_SIGNED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_ID != '' }}
+          WIN_SIGNED: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
         run: |
           cd dist
+          mac="The macOS app is not notarized: open it once with System Settings > Privacy & Security > Open Anyway."
+          win="The Windows installers are not signed: choose More info > Run anyway."
+          [ "$MAC_SIGNED" = true ] && mac="The macOS app is signed and notarized."
+          [ "$WIN_SIGNED" = true ] && win="The Windows installers are signed."
+          SIGNING_NOTE="$mac $win"
           files=(*.tar.gz *.zip hypnos-desktop-*)
           sha256sum -- "${files[@]}" > SHA256SUMS
           cat > notes.md <<EOF
@@ -277,9 +326,7 @@ jobs:
 
           Desktop app (a chat client with live server stats; it connects to a running Hypnos):
           \`hypnos-desktop-*-macos-arm64.dmg\`, \`-windows-x64.msi\` / \`.setup.exe\`,
-          \`-linux-x64.deb\` / \`.AppImage\`. The installers are not signed yet: on macOS open it
-          once with System Settings > Privacy & Security > Open Anyway, on Windows choose More info >
-          Run anyway.
+          \`-linux-x64.deb\` / \`.AppImage\`. ${SIGNING_NOTE}
 
           Document conversion on the GPU (docling with \`device = "gpu"\`, off by default) additionally
           needs driver 580+, the CUDA 13 runtime and cuDNN 9 for CUDA 13; see \`README.txt\` in the archive.
