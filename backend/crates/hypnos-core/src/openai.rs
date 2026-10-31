@@ -255,9 +255,14 @@ pub struct ChatCompletionRequest {
     /// Optional Hypnos extension: explicit context window reservation override
     #[serde(default)]
     pub num_ctx: Option<u32>,
-    /// Optional Hypnos extension: enable the model's thinking channel (Gemma 4). Default off.
+    /// Optional Hypnos extension: enable the model's thinking (Gemma 4, LFM3) without a budget.
+    /// Default off; `reasoning_effort` takes precedence.
     #[serde(default)]
     pub think: Option<bool>,
+    /// How much the model may think before it answers (OpenAI's `reasoning_effort`): `none`
+    /// turns thinking off, the other levels turn it on with a budget of thinking tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
     /// Functions the model may call (OpenAI tool calling).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<ToolSpec>>,
@@ -265,7 +270,40 @@ pub struct ChatCompletionRequest {
     pub tool_choice: Option<serde_json::Value>,
 }
 
+/// Thinking level of a chat request. `minimal` (an OpenAI value) is read as `low`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    None,
+    #[serde(alias = "minimal")]
+    Low,
+    Medium,
+    High,
+}
+
+impl ReasoningEffort {
+    /// Thinking tokens allowed before the engine closes the thinking block; `None` = unbounded.
+    pub fn budget(self) -> Option<u32> {
+        match self {
+            ReasoningEffort::None => Some(0),
+            ReasoningEffort::Low => Some(512),
+            ReasoningEffort::Medium => Some(2048),
+            ReasoningEffort::High => Some(6144),
+        }
+    }
+}
+
 impl ChatCompletionRequest {
+    /// Whether the model thinks, and its budget of thinking tokens (`None` = unbounded):
+    /// `reasoning_effort` first, else `think`.
+    pub fn thinking(&self) -> (bool, Option<u32>) {
+        match self.reasoning_effort {
+            Some(ReasoningEffort::None) => (false, None),
+            Some(effort) => (true, effort.budget()),
+            None => (self.think.unwrap_or(false), None),
+        }
+    }
+
     /// The tools in effect: none when absent, empty or `tool_choice: "none"`.
     pub fn active_tools(&self) -> Result<(&[ToolSpec], ToolChoice), String> {
         let choice = ToolChoice::parse(self.tool_choice.as_ref())?;
@@ -307,6 +345,9 @@ pub struct ChatResponseMessage {
     pub role: String,
     /// The answer's text; empty when the model only called tools.
     pub content: String,
+    /// The model's thoughts before the answer (with thinking on and a model that thinks).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
 }
@@ -334,6 +375,8 @@ pub struct PromptTokensDetails {
 pub enum ChatStreamEvent {
     /// A new piece of generated text.
     Delta(String),
+    /// A new piece of the model's thoughts (`delta.reasoning_content`).
+    ReasoningDelta(String),
     /// A complete tool call (sent as one `tool_calls` delta, arguments whole).
     ToolCall(ToolCall),
     /// Generation finished; carries final usage, finish reason and engine timings.
@@ -908,4 +951,42 @@ pub struct OpenAiModelInfo {
     pub current_tier: MemoryTier,
     pub placement: LayerPlacementPlan,
     pub active_leases: usize,
+}
+
+#[cfg(test)]
+mod reasoning_tests {
+    use super::{ChatCompletionRequest, ReasoningEffort};
+
+    fn req(json: &str) -> ChatCompletionRequest {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn reasoning_effort_takes_precedence_over_think() {
+        let base = r#""model":"m","messages":[]"#;
+        assert_eq!(req(&format!("{{{base}}}")).thinking(), (false, None));
+        assert_eq!(
+            req(&format!(r#"{{{base},"think":true}}"#)).thinking(),
+            (true, None)
+        );
+        assert_eq!(
+            req(&format!(
+                r#"{{{base},"think":true,"reasoning_effort":"none"}}"#
+            ))
+            .thinking(),
+            (false, None)
+        );
+        assert_eq!(
+            req(&format!(r#"{{{base},"reasoning_effort":"minimal"}}"#)).reasoning_effort,
+            Some(ReasoningEffort::Low)
+        );
+        assert_eq!(
+            req(&format!(r#"{{{base},"reasoning_effort":"medium"}}"#)).thinking(),
+            (true, Some(2048))
+        );
+        assert!(serde_json::from_str::<ChatCompletionRequest>(&format!(
+            r#"{{{base},"reasoning_effort":"max"}}"#
+        ))
+        .is_err());
+    }
 }

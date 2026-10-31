@@ -39,7 +39,8 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::engine::{
-    spawn_worker, ChatJob, EmbedJob, GenParams, GenStats, LlamaJob, PromptSpec, WorkerSpec,
+    spawn_worker, ChatJob, ChatReply, EmbedJob, GenParams, GenStats, LlamaJob, PromptSpec,
+    WorkerSpec,
 };
 use crate::media::load_media;
 use crate::worker::{FailJob, WorkerHandle};
@@ -316,12 +317,74 @@ fn gemma4_prompt(
     out
 }
 
+/// LFM3's ChatML turns, as its GGUF chat template renders them (the Jinja template itself is not
+/// run: llama.cpp's basic template call cannot evaluate it). The GGUF does not add a BOS token, so
+/// `<|startoftext|>` is written here. `think` is `None` for a model without a thinking block
+/// (LFM3-Audio); otherwise the generation prompt opens one (`<think>`, the engine keeps the
+/// thoughts out of the answer) or closes it empty, and earlier answers carry an empty block with
+/// any thoughts stripped, as the template does. Images and audio are the media marker alone:
+/// libmtmd adds `<|vision_start|>` / `<|vision_end|>` around them.
+fn lfm3_prompt(messages: &[ChatMessage], marker: &str, think: Option<bool>) -> String {
+    let mut out = String::from("<|startoftext|>");
+    let system_text: Vec<String> = messages
+        .iter()
+        .filter(|m| m.role == "system" || m.role == "developer")
+        .map(|m| {
+            m.content
+                .render_with_media_marker(marker)
+                .trim()
+                .to_string()
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !system_text.is_empty() {
+        out.push_str("<|im_start|>system\n");
+        out.push_str(&system_text.join("\n"));
+        out.push_str("<|im_end|>\n");
+    }
+    for m in messages
+        .iter()
+        .filter(|m| m.role != "system" && m.role != "developer")
+    {
+        let content = m.content.render_with_media_marker(marker);
+        let content = content.trim();
+        match m.role.as_str() {
+            "assistant" | "model" => {
+                out.push_str("<|im_start|>assistant\n");
+                let answer = content.rsplit("</think>").next().unwrap_or(content).trim();
+                if think.is_some() {
+                    out.push_str("<think></think>");
+                }
+                out.push_str(answer);
+            }
+            "tool" => {
+                out.push_str("<|im_start|>tool\n<tool_response>\n");
+                out.push_str(content);
+                out.push_str("\n</tool_response>");
+            }
+            _ => {
+                out.push_str("<|im_start|>user\n");
+                out.push_str(content);
+            }
+        }
+        out.push_str("<|im_end|>\n");
+    }
+    out.push_str("<|im_start|>assistant\n");
+    match think {
+        Some(true) => out.push_str("<think>"),
+        Some(false) => out.push_str("<think></think>"),
+        None => {}
+    }
+    out
+}
+
 /// Whether the model's native tool format is implemented (Gemma 4, `tools.rs`).
 pub(crate) fn supports_tools(arch: &str) -> bool {
     arch.starts_with("gemma4")
 }
 
-/// Generic fallback for non-Gemma models: the GGUF's own template through llama.cpp, else ChatML.
+/// Gemma 4 and LFM3 have their own renderers; other models get the GGUF's own template through
+/// llama.cpp, else ChatML.
 pub(crate) fn build_prompt(
     model: &LlamaModel,
     arch: &str,
@@ -333,6 +396,15 @@ pub(crate) fn build_prompt(
 ) -> String {
     if supports_tools(arch) || arch.starts_with("gemma-embedding") {
         return gemma4_prompt(messages, marker, think, tools, prefill);
+    }
+    if arch == "lfm3" {
+        // The chat models' template has a thinking switch; the audio model's has none.
+        let thinks = model
+            .chat_template(None)
+            .ok()
+            .and_then(|t| t.to_str().ok().map(|t| t.contains("enable_thinking")))
+            .unwrap_or(false);
+        return lfm3_prompt(messages, marker, thinks.then_some(think));
     }
     if let Ok(tmpl) = model.chat_template(None) {
         let chat: Vec<LlamaChatMessage> = messages
@@ -356,6 +428,85 @@ pub(crate) fn build_prompt(
     }
     out.push_str("<|im_start|>assistant\n");
     out
+}
+
+/// The single-turn transcription prompt, as each model family was trained for it. LFM audio
+/// models take the task as a system prompt (`Perform ASR in <language>.`) and the audio alone as
+/// the user turn; the others (Gemma 4) get the audio followed by the instruction.
+pub(crate) fn transcription_prompt(
+    model: &LlamaModel,
+    arch: &str,
+    prompt: Option<&str>,
+    language: Option<&str>,
+) -> String {
+    let marker = mtmd_default_marker();
+    build_prompt(
+        model,
+        arch,
+        &transcription_messages(arch, marker, prompt, language),
+        marker,
+        false,
+        &[],
+        "",
+    )
+}
+
+fn transcription_messages(
+    arch: &str,
+    marker: &str,
+    prompt: Option<&str>,
+    language: Option<&str>,
+) -> Vec<ChatMessage> {
+    let text = |role: &str, t: String| ChatMessage {
+        role: role.to_string(),
+        content: hypnos_core::openai::ChatMessageContent::Text(t),
+        ..ChatMessage::default()
+    };
+    let prompt = prompt.map(str::trim).filter(|p| !p.is_empty());
+    let language = language.map(str::trim).filter(|l| !l.is_empty());
+    if arch.starts_with("lfm") {
+        let system = match (prompt, language) {
+            (Some(p), _) => p.to_string(),
+            (None, Some(l)) => format!("Perform ASR in {}.", language_name(l)),
+            (None, None) => "Perform ASR.".to_string(),
+        };
+        return vec![text("system", system), text("user", marker.to_string())];
+    }
+    let mut instruction = prompt
+        .unwrap_or("Transcribe this audio exactly. Output only the transcript.")
+        .to_string();
+    if let Some(lang) = language {
+        instruction.push_str(&format!(" The speech is in '{lang}'."));
+    }
+    vec![text("user", format!("{marker}\n{instruction}"))]
+}
+
+/// English name of an ISO 639-1 code (the API's `language`), for prompts that name the language;
+/// anything else is passed through as given.
+fn language_name(code: &str) -> &str {
+    match code.to_ascii_lowercase().as_str() {
+        "ar" => "Arabic",
+        "da" => "Danish",
+        "de" => "German",
+        "el" => "Greek",
+        "en" => "English",
+        "es" => "Spanish",
+        "fi" => "Finnish",
+        "fr" => "French",
+        "he" => "Hebrew",
+        "hi" => "Hindi",
+        "it" => "Italian",
+        "ja" => "Japanese",
+        "ko" => "Korean",
+        "nl" => "Dutch",
+        "pl" => "Polish",
+        "pt" => "Portuguese",
+        "ru" => "Russian",
+        "sv" => "Swedish",
+        "tr" => "Turkish",
+        "zh" => "Chinese",
+        _ => code,
+    }
 }
 
 /// Best-effort duration of a RIFF/WAV payload, for the transcription response.
@@ -523,11 +674,15 @@ impl GgmlLlamaBackend {
             }
             (tx, _) => (tx, None),
         };
+        let (think, think_budget) = req.thinking();
+        // Thinking off: a block the model opens anyway (small LFM3 models do) is closed at once.
+        let think_budget = if think { think_budget } else { Some(0) };
         let (reply_tx, reply_rx) = oneshot::channel();
         self.submit(LlamaJob::Chat(ChatJob {
+            think_budget,
             prompt: PromptSpec::Messages {
                 messages: req.messages.clone(),
-                think: req.think.unwrap_or(false),
+                think,
                 tools: tools.to_vec(),
                 prefill: prefill.clone(),
             },
@@ -539,7 +694,11 @@ impl GgmlLlamaBackend {
             stream: engine_tx,
             reply: reply_tx,
         }))?;
-        let (raw, mut stats) = reply_rx
+        let ChatReply {
+            text: raw,
+            reasoning,
+            mut stats,
+        } = reply_rx
             .await
             .map_err(|_| HypnosError::BackendError("engine worker dropped the request".into()))??;
         let (content, tool_calls) = match forward {
@@ -571,6 +730,7 @@ impl GgmlLlamaBackend {
         }
         Ok(ChatOutput {
             content,
+            reasoning: (!reasoning.is_empty()).then_some(reasoning),
             tool_calls,
             stats,
         })
@@ -592,9 +752,11 @@ fn park_slots(cfg: &ModelConfig, opts: &EngineOptions, worker: &LlamaWorker) {
     }
 }
 
-/// A chat answer: its text, the calls it made (with tools) and the engine's numbers.
+/// A chat answer: its text, the thoughts before it, the calls it made (with tools) and the
+/// engine's numbers.
 struct ChatOutput {
     content: String,
+    reasoning: Option<String>,
     tool_calls: Vec<ToolCall>,
     stats: GenStats,
 }
@@ -730,6 +892,7 @@ impl ModelBackend for GgmlLlamaBackend {
     ) -> Result<ChatCompletionResponse> {
         let ChatOutput {
             content,
+            reasoning,
             tool_calls,
             stats,
         } = self.generate_chat(req, ctx, None).await?;
@@ -743,6 +906,7 @@ impl ModelBackend for GgmlLlamaBackend {
                 message: ChatResponseMessage {
                     role: "assistant".to_string(),
                     content,
+                    reasoning_content: reasoning,
                     tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
                 },
                 finish_reason: stats.finish_reason.to_string(),
@@ -794,36 +958,15 @@ impl ModelBackend for GgmlLlamaBackend {
                 rctx.limits.max_audio_bytes
             )));
         }
-        let mut instruction = match req.prompt.as_deref().map(str::trim) {
-            Some(p) if !p.is_empty() => p.to_string(),
-            _ => "Transcribe this audio exactly. Output only the transcript.".to_string(),
-        };
-        if let Some(lang) = req
-            .language
-            .as_deref()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-        {
-            instruction.push_str(&format!(" The speech is in '{lang}'."));
-        }
-        let marker = mtmd_default_marker();
-        let user_text = format!("{marker}\n{instruction}");
-        let prompt = gemma4_prompt(
-            &[ChatMessage {
-                role: "user".to_string(),
-                content: hypnos_core::openai::ChatMessageContent::Text(user_text),
-                ..ChatMessage::default()
-            }],
-            marker,
-            false,
-            &[],
-            "",
-        );
         let duration = wav_duration_secs(&req.audio_bytes);
         let started = Instant::now();
         let (reply_tx, reply_rx) = oneshot::channel();
         self.submit(LlamaJob::Chat(ChatJob {
-            prompt: PromptSpec::Raw(prompt),
+            think_budget: None,
+            prompt: PromptSpec::Transcription {
+                prompt: req.prompt.clone(),
+                language: req.language.clone(),
+            },
             tool_markers: false,
             media: vec![req.audio_bytes.clone()],
             params: GenParams {
@@ -838,7 +981,7 @@ impl ModelBackend for GgmlLlamaBackend {
             stream: None,
             reply: reply_tx,
         }))?;
-        let (text, stats) = reply_rx
+        let ChatReply { text, stats, .. } = reply_rx
             .await
             .map_err(|_| HypnosError::BackendError("engine worker dropped the request".into()))??;
 
@@ -909,7 +1052,62 @@ impl ModelBackend for GgmlLlamaBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{cpu_expert_pattern, gemma4_prompt};
+    use super::{cpu_expert_pattern, gemma4_prompt, lfm3_prompt, transcription_messages};
+
+    #[test]
+    fn lfm3_renders_like_its_chat_template() {
+        let conversation = [
+            msg("system", "Be brief."),
+            msg("user", "Hi <__media__>"),
+            msg("assistant", "<think>greet back</think>Hello!"),
+            msg("user", "Bye"),
+        ];
+        let expected_turns = "<|startoftext|><|im_start|>system\nBe brief.<|im_end|>\n\
+             <|im_start|>user\nHi <__media__><|im_end|>\n\
+             <|im_start|>assistant\n<think></think>Hello!<|im_end|>\n\
+             <|im_start|>user\nBye<|im_end|>\n<|im_start|>assistant\n";
+        assert_eq!(
+            lfm3_prompt(&conversation, "<__media__>", Some(false)),
+            format!("{expected_turns}<think></think>")
+        );
+        assert_eq!(
+            lfm3_prompt(&conversation, "<__media__>", Some(true)),
+            format!("{expected_turns}<think>")
+        );
+        // LFM3-Audio: no thinking block anywhere.
+        assert_eq!(
+            lfm3_prompt(&[msg("user", "Hi"), msg("assistant", "Yo")], "<m>", None),
+            "<|startoftext|><|im_start|>user\nHi<|im_end|>\n\
+             <|im_start|>assistant\nYo<|im_end|>\n<|im_start|>assistant\n"
+        );
+    }
+
+    #[test]
+    fn transcription_prompts_follow_the_model_family() {
+        let as_json = |m: Vec<ChatMessage>| serde_json::to_value(m).unwrap();
+        assert_eq!(
+            as_json(transcription_messages("lfm3", "<m>", None, Some("de"))),
+            as_json(vec![
+                msg("system", "Perform ASR in German."),
+                msg("user", "<m>")
+            ])
+        );
+        assert_eq!(
+            as_json(transcription_messages("lfm3", "<m>", Some("  "), None))[0],
+            as_json(vec![msg("system", "Perform ASR.")])[0]
+        );
+        assert_eq!(
+            as_json(transcription_messages("lfm3", "<m>", None, Some("tlh")))[0],
+            as_json(vec![msg("system", "Perform ASR in tlh.")])[0]
+        );
+        assert_eq!(
+            as_json(transcription_messages("gemma4", "<m>", None, Some("de"))),
+            as_json(vec![msg(
+                "user",
+                "<m>\nTranscribe this audio exactly. Output only the transcript. The speech is in 'de'."
+            )])
+        );
+    }
 
     #[test]
     fn the_expert_pattern_covers_all_or_the_last_layers() {

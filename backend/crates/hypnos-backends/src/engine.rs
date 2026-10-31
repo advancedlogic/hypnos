@@ -42,7 +42,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 
-use crate::llama::{build_prompt, llama_backend, load_model, supports_tools};
+use crate::llama::{build_prompt, llama_backend, load_model, supports_tools, transcription_prompt};
 use crate::tools::{PASS_THROUGH, RESPONSE_OPEN};
 use crate::worker::{FailJob, WorkerHandle, WorkerInbox, WorkerMsg};
 use crate::EngineOptions;
@@ -111,12 +111,27 @@ pub(crate) enum PromptSpec {
         /// Appended after the generation prompt (a forced tool call's opening).
         prefill: String,
     },
-    /// Already rendered (transcription builds its own single-turn prompt).
+    /// Already rendered.
     Raw(String),
+    /// Single-turn transcription, rendered for the model family (`transcription_prompt`).
+    Transcription {
+        prompt: Option<String>,
+        language: Option<String>,
+    },
+}
+
+/// A finished chat request: the answer, the thoughts before it (empty without thinking) and the
+/// engine's numbers.
+pub(crate) struct ChatReply {
+    pub text: String,
+    pub reasoning: String,
+    pub stats: GenStats,
 }
 
 pub(crate) struct ChatJob {
     pub prompt: PromptSpec,
+    /// Thinking tokens allowed before the engine closes the thinking block (`None` = unbounded).
+    pub think_budget: Option<u32>,
     /// Pass the tool-call markers through as text and stop at `<|tool_response>`.
     pub tool_markers: bool,
     pub media: Vec<Vec<u8>>,
@@ -124,7 +139,7 @@ pub(crate) struct ChatJob {
     pub rctx: RequestContext,
     pub started: Instant,
     pub stream: Option<mpsc::Sender<ChatStreamEvent>>,
-    pub reply: oneshot::Sender<Result<(String, GenStats)>>,
+    pub reply: oneshot::Sender<Result<ChatReply>>,
 }
 
 pub(crate) struct EmbedJob {
@@ -321,16 +336,18 @@ pub(crate) fn common_prefix(a: &[CacheKey], b: &[CacheKey]) -> Reuse {
 ///   always re-evaluated.
 /// * The remainder after the reused prefix must be plain text: media chunks are evaluated by
 ///   libmtmd as a whole prompt, so a prompt whose new part contains an image starts over.
-/// * With sliding-window attention (`swa`) the local layers only hold the last window of the
-///   sequence, so a state at an earlier position cannot be reconstructed by trimming. A pure
-///   extension of what the slot holds needs no trimming; a divergence at or after the slot's
+/// * With sliding-window attention the local layers only hold the last window of the sequence,
+///   and recurrent layers (Mamba, LFM conv blocks: hybrid models) only their latest state, so
+///   with either (`trim_limited`) a state at an earlier position cannot be reconstructed by
+///   trimming. A pure extension of what the slot holds needs no trimming; a divergence at or
+///   after the slot's
 ///   checkpoint (the end of the previous prompt) is served by restoring that checkpoint; anything
 ///   earlier is a miss.
 pub(crate) fn plan_cache(
     slot: &Slot,
     prompt: &[CacheKey],
     prefix_cache: bool,
-    swa: Option<u32>,
+    trim_limited: bool,
 ) -> CachePlan {
     if slot.keys.is_empty() || !prefix_cache || prompt.is_empty() {
         return CachePlan::Clear;
@@ -346,7 +363,7 @@ pub(crate) fn plan_cache(
     if reuse.keys == 0 {
         return CachePlan::Clear;
     }
-    if swa.is_some() && reuse.positions < slot.n_past {
+    if trim_limited && reuse.positions < slot.n_past {
         match slot.checkpoint {
             Some(ck)
                 if ck.keys >= 1 && ck.keys <= reuse.keys && ck.positions <= reuse.positions =>
@@ -373,11 +390,12 @@ pub(crate) fn plan_cache(
 pub(crate) struct SlotTable {
     pub slots: Vec<Slot>,
     prefix_cache: bool,
-    swa: Option<u32>,
+    /// Sliding-window or recurrent layers: diverging prompts resume from a checkpoint only.
+    trim_limited: bool,
 }
 
 impl SlotTable {
-    pub(crate) fn new(n: u32, prefix_cache: bool, swa: Option<u32>) -> Self {
+    pub(crate) fn new(n: u32, prefix_cache: bool, trim_limited: bool) -> Self {
         let now = Instant::now();
         Self {
             slots: (0..n.max(1) as i32)
@@ -392,7 +410,7 @@ impl SlotTable {
                 })
                 .collect(),
             prefix_cache,
-            swa,
+            trim_limited,
         }
     }
 
@@ -409,7 +427,12 @@ impl SlotTable {
             if slot.in_use {
                 continue;
             }
-            let plan = plan_cache(slot, prompt, self.prefix_cache && allow_reuse, self.swa);
+            let plan = plan_cache(
+                slot,
+                prompt,
+                self.prefix_cache && allow_reuse,
+                self.trim_limited,
+            );
             let reused = match plan {
                 CachePlan::Keep(r) => r.positions,
                 CachePlan::Clear => 0,
@@ -608,7 +631,7 @@ struct Active {
     started: Instant,
     admitted: Instant,
     stream: Option<mpsc::Sender<ChatStreamEvent>>,
-    reply: Option<oneshot::Sender<Result<(String, GenStats)>>>,
+    reply: Option<oneshot::Sender<Result<ChatReply>>>,
     n_prompt: usize,
     cached_tokens: u32,
     /// Prompt tokens still to evaluate and how many of them have been decoded so far.
@@ -629,6 +652,13 @@ struct Active {
     completion: u32,
     in_channel: bool,
     channel_header_pending: bool,
+    /// The thoughts so far, the part the client has not accepted yet, and their token count.
+    reasoning: String,
+    unsent_reasoning: String,
+    thought_tokens: u32,
+    think_budget: Option<u32>,
+    /// Gemma's channel starts with a `thought` line, held here until its newline.
+    reasoning_head: Option<String>,
     /// Tools are declared: tool-call markers are output, `<|tool_response>` ends the answer.
     tool_markers: bool,
     /// The SWA checkpoint was taken one position before the prompt end (see `step`).
@@ -644,6 +674,9 @@ struct Engine<'m> {
     backend: &'static LlamaBackend,
     model: &'m LlamaModel,
     arch: String,
+    /// The token that closes the thinking block (Gemma 4 `<channel|>`, LFM3 `</think>`), forced
+    /// when a request's thinking budget runs out.
+    think_close: Option<LlamaToken>,
     cfg: ModelConfig,
     gpu_layers: u32,
     n_threads: i32,
@@ -687,6 +720,32 @@ fn decode_err(model: &str, what: &str, e: &DecodeError) -> HypnosError {
     }
 }
 
+/// Adds decoded thought text: Gemma's leading `thought` line and leading whitespace are dropped.
+fn push_reasoning(a: &mut Active, mut out: String) {
+    if let Some(head) = a.reasoning_head.as_mut() {
+        head.push_str(&out);
+        match head.find('\n') {
+            Some(i) if head[..i].trim() == "thought" => out = head[i + 1..].to_string(),
+            Some(_) => out = std::mem::take(head),
+            // Still waiting for the header line's end (it is a word or two).
+            None if head.len() < 32 => return,
+            None => out = std::mem::take(head),
+        }
+        a.reasoning_head = None;
+    }
+    if a.reasoning.is_empty() {
+        out = out.trim_start().to_string();
+    }
+    if out.is_empty() {
+        return;
+    }
+    a.ttft_ms.get_or_insert_with(|| ms_since(a.started));
+    a.reasoning.push_str(&out);
+    if a.stream.is_some() {
+        a.unsent_reasoning.push_str(&out);
+    }
+}
+
 fn ms_since(t: Instant) -> f64 {
     t.elapsed().as_secs_f64() * 1000.0
 }
@@ -696,6 +755,12 @@ fn is_special_marker(piece: &[u8]) -> bool {
     let is_open = piece.starts_with(b"<|") && piece.ends_with(b">");
     let is_close = piece.starts_with(b"<") && piece.ends_with(b"|>");
     (is_open || is_close) && piece.len() <= 24 && !piece.contains(&b' ')
+}
+
+/// `text`'s token when the vocabulary has it as one (special markers).
+fn single_token(model: &LlamaModel, text: &str) -> Option<LlamaToken> {
+    let tokens = model.vocab().tokenize(text.as_bytes(), false, true);
+    (tokens.len() == 1).then(|| tokens[0])
 }
 
 fn l2_normalize(v: &[f32]) -> Vec<f32> {
@@ -742,24 +807,33 @@ impl<'m> Engine<'m> {
             slots,
         )?;
         let batch = LlamaBatch::new(n_batch as usize, 1);
-        let swa = if embeddings_mode {
-            None
-        } else {
-            cfg.arch.sliding_window_len
-        };
+        // Sliding-window layers forget old positions and recurrent layers (hybrid models such
+        // as LFM) keep only their latest state: neither can be trimmed back, so a slot is
+        // checkpointed at its prompt's end and a diverging request resumes from there.
+        let trim_limited = !embeddings_mode
+            && (cfg.arch.sliding_window_len.is_some() || model.is_hybrid() || model.is_recurrent());
         info!(
             model = %cfg.id,
             slots,
             n_ctx_per_slot = n_ctx,
             n_batch,
             prefix_cache = cfg.prefix_cache && !embeddings_mode,
+            checkpoints = trim_limited,
             "llama.cpp engine worker ready"
         );
+        let think_close = if arch.starts_with("gemma4") {
+            single_token(model, "<channel|>")
+        } else if arch == "lfm3" {
+            single_token(model, "</think>")
+        } else {
+            None
+        };
         Ok(Self {
             backend,
             model,
             arch,
-            slots: SlotTable::new(slots, cfg.prefix_cache, swa),
+            think_close,
+            slots: SlotTable::new(slots, cfg.prefix_cache, trim_limited),
             cfg,
             gpu_layers,
             n_threads,
@@ -1060,6 +1134,7 @@ impl<'m> Engine<'m> {
     fn admit(&mut self, mtmd: &mut Option<MtmdContext>, job: ChatJob) {
         let ChatJob {
             prompt,
+            think_budget,
             tool_markers,
             media,
             params,
@@ -1098,6 +1173,12 @@ impl<'m> Engine<'m> {
                 )
             }
             PromptSpec::Raw(s) => s,
+            PromptSpec::Transcription { prompt, language } => transcription_prompt(
+                self.model,
+                &self.arch,
+                prompt.as_deref(),
+                language.as_deref(),
+            ),
         };
         debug!(model = %self.cfg.id, prompt_chars = text.len(), media = media.len(), "chat prefill");
         let tokenized = match self.tokenize(mtmd, &text, &media) {
@@ -1120,6 +1201,7 @@ impl<'m> Engine<'m> {
             // Raced with another admission; wait for the next free slot.
             self.waiting.push_front(ChatJob {
                 prompt: PromptSpec::Raw(text),
+                think_budget,
                 tool_markers,
                 media,
                 params,
@@ -1166,8 +1248,14 @@ impl<'m> Engine<'m> {
             decoder: encoding_rs::UTF_8.new_decoder(),
             text: String::new(),
             completion: 0,
-            in_channel: false,
-            channel_header_pending: false,
+            // A prompt that opens a thinking block (LFM3 with `think`) starts the reply in it.
+            in_channel: text.ends_with("<think>"),
+            channel_header_pending: text.ends_with("<think>"),
+            reasoning: String::new(),
+            unsent_reasoning: String::new(),
+            thought_tokens: 0,
+            think_budget,
+            reasoning_head: None,
             tool_markers,
             checkpointed: false,
             ttft_ms: None,
@@ -1406,12 +1494,11 @@ impl<'m> Engine<'m> {
                 }
             }
         }
-        // With sliding-window attention the checkpoint is taken one position before the prompt
-        // end: a repeated prompt (Regenerate) must re-evaluate its last token for the logits, so
-        // that is where a later request can resume. The prompt stops short of its last token
-        // here, the checkpoint is taken, and the last token goes into the next step.
-        let checkpoint_before_last =
-            self.cfg.prefix_cache && self.cfg.arch.sliding_window_len.is_some();
+        // With sliding-window or recurrent layers the checkpoint is taken one position before the
+        // prompt end: a repeated prompt (Regenerate) must re-evaluate its last token for the
+        // logits, so that is where a later request can resume. The prompt stops short of its last
+        // token here, the checkpoint is taken, and the last token goes into the next step.
+        let checkpoint_before_last = self.cfg.prefix_cache && self.slots.trim_limited;
         if checkpoint_before_last {
             for i in 0..self.active.len() {
                 let a = &self.active[i];
@@ -1508,15 +1595,16 @@ impl<'m> Engine<'m> {
     /// checkpointed one position before its end (`step`); a multimodal one, evaluated by libmtmd
     /// in one go, is checkpointed here at its end.
     fn finish_prefill(&mut self, a: &mut Active) {
-        if !a.checkpointed && self.cfg.prefix_cache && self.cfg.arch.sliding_window_len.is_some() {
+        if !a.checkpointed && self.cfg.prefix_cache && self.slots.trim_limited {
             self.checkpoint_slot(a.slot, 0);
             a.checkpointed = true;
         }
         a.prefill_done = Some(Instant::now());
     }
 
-    /// Snapshots the sliding-window state of slot `i`, whose KV cache holds its keys but the last
-    /// `keys_ahead` (not evaluated yet). Sliding-window layers forget old positions as generation
+    /// Snapshots the sliding-window and recurrent state of slot `i` (`PARTIAL_ONLY`: full
+    /// attention KV is trimmed in place instead), whose KV cache holds its keys but the last
+    /// `keys_ahead` (not evaluated yet). Those layers forget old positions as generation
     /// proceeds; the snapshot lets a later request resume from here even if it diverges inside
     /// the reply.
     fn checkpoint_slot(&mut self, i: usize, keys_ahead: usize) {
@@ -1540,10 +1628,15 @@ impl<'m> Engine<'m> {
         }
     }
 
-    /// Handles one sampled token: stop conditions, the Gemma thinking channel, text decoding.
+    /// Handles one sampled token: stop conditions, the Gemma / LFM3 thinking block, text decoding.
     /// Sets `next_token` when generation continues.
     fn take_token(&mut self, a: &mut Active, token: LlamaToken) {
         let vocab = self.model.vocab();
+        // The thinking budget is spent: close the block instead, and the model answers.
+        let token = match (self.think_close, a.think_budget) {
+            (Some(close), Some(budget)) if a.in_channel && a.thought_tokens >= budget => close,
+            _ => token,
+        };
         a.sampler.accept(token);
         if vocab.is_eog(token) {
             a.finish = Some("stop");
@@ -1579,11 +1672,28 @@ impl<'m> Engine<'m> {
             }
         }
         let is_marker = is_special_marker(&piece);
-        if piece.as_slice() == b"<|channel>" {
+        if a.in_channel {
+            a.thought_tokens += 1;
+        }
+        if piece.as_slice() == b"<|channel>" || piece.as_slice() == b"<think>" {
             a.in_channel = true;
             a.channel_header_pending = true;
-        } else if piece.as_slice() == b"<channel|>" {
+            if piece.as_slice() == b"<|channel>" {
+                a.reasoning_head = Some(String::new());
+            }
+        } else if piece.as_slice() == b"<channel|>" || piece.as_slice() == b"</think>" {
+            // The answer that follows starts after the block's newline(s).
             a.in_channel = false;
+            a.channel_header_pending = true;
+            a.reasoning_head = None;
+        } else if a.in_channel && !vocab.is_control(token) && !is_marker {
+            let mut out = String::with_capacity(
+                a.decoder
+                    .max_utf8_buffer_length(piece.len())
+                    .unwrap_or(piece.len() * 3),
+            );
+            let _ = a.decoder.decode_to_string(&piece, &mut out, false);
+            push_reasoning(a, out);
         } else if !vocab.is_control(token) && !is_marker && !a.in_channel {
             let mut out = String::with_capacity(
                 a.decoder
@@ -1616,24 +1726,45 @@ impl<'m> Engine<'m> {
         a.next_token = Some(token);
     }
 
-    /// Pushes buffered text to the client without blocking the step: a full channel keeps the
-    /// text for the next step, a closed one ends the request.
+    /// Pushes buffered thoughts, then text, to the client without blocking the step: a full
+    /// channel keeps the rest for the next step, a closed one ends the request.
     fn flush_stream(&mut self, a: &mut Active) {
         let Some(tx) = &a.stream else {
             return;
         };
-        if a.unsent.is_empty() {
-            return;
-        }
-        let delta = std::mem::take(&mut a.unsent);
-        match tx.try_send(ChatStreamEvent::Delta(delta)) {
-            Ok(()) => {}
-            Err(TrySendError::Full(ChatStreamEvent::Delta(delta))) => a.unsent = delta,
-            Err(TrySendError::Full(_)) => {}
-            Err(TrySendError::Closed(_)) => {
-                a.unsent.clear();
-                if a.finish.is_none() {
-                    a.finish = Some("stop");
+        for reasoning in [true, false] {
+            let buf = if reasoning {
+                &mut a.unsent_reasoning
+            } else {
+                &mut a.unsent
+            };
+            if buf.is_empty() {
+                continue;
+            }
+            let delta = std::mem::take(buf);
+            let event = if reasoning {
+                ChatStreamEvent::ReasoningDelta(delta)
+            } else {
+                ChatStreamEvent::Delta(delta)
+            };
+            match tx.try_send(event) {
+                Ok(()) => {}
+                Err(TrySendError::Full(ChatStreamEvent::ReasoningDelta(d))) => {
+                    a.unsent_reasoning = d;
+                    return;
+                }
+                Err(TrySendError::Full(ChatStreamEvent::Delta(d))) => {
+                    a.unsent = d;
+                    return;
+                }
+                Err(TrySendError::Full(_)) => return,
+                Err(TrySendError::Closed(_)) => {
+                    a.unsent.clear();
+                    a.unsent_reasoning.clear();
+                    if a.finish.is_none() {
+                        a.finish = Some("stop");
+                    }
+                    return;
                 }
             }
         }
@@ -1641,9 +1772,15 @@ impl<'m> Engine<'m> {
 
     /// Answers the request and frees its slot.
     fn complete(&mut self, mut a: Active) {
-        if let (Some(tx), false) = (&a.stream, a.unsent.is_empty()) {
+        if let Some(tx) = &a.stream {
             // The client was slow; wait for it now that nothing else depends on this slot.
-            let _ = tx.blocking_send(ChatStreamEvent::Delta(std::mem::take(&mut a.unsent)));
+            if !a.unsent_reasoning.is_empty() {
+                let reasoning = std::mem::take(&mut a.unsent_reasoning);
+                let _ = tx.blocking_send(ChatStreamEvent::ReasoningDelta(reasoning));
+            }
+            if !a.unsent.is_empty() {
+                let _ = tx.blocking_send(ChatStreamEvent::Delta(std::mem::take(&mut a.unsent)));
+            }
         }
         let slot = &mut self.slots.slots[a.slot];
         slot.in_use = false;
@@ -1675,7 +1812,11 @@ impl<'m> Engine<'m> {
             "generation timings"
         );
         if let Some(reply) = a.reply.take() {
-            let _ = reply.send(Ok((std::mem::take(&mut a.text), stats)));
+            let _ = reply.send(Ok(ChatReply {
+                text: std::mem::take(&mut a.text),
+                reasoning: std::mem::take(&mut a.reasoning),
+                stats,
+            }));
         }
     }
 
@@ -1783,6 +1924,11 @@ impl Active {
             completion: 0,
             in_channel: false,
             channel_header_pending: false,
+            reasoning: String::new(),
+            unsent_reasoning: String::new(),
+            thought_tokens: 0,
+            think_budget: None,
+            reasoning_head: None,
             tool_markers: false,
             checkpointed: false,
             ttft_ms: None,
@@ -1796,6 +1942,23 @@ impl Active {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thoughts_drop_gemmas_header_line_and_leading_space() {
+        let mut a = Active::placeholder();
+        a.reasoning_head = Some(String::new());
+        for piece in ["thou", "ght", "\n", "Let me", " count."] {
+            push_reasoning(&mut a, piece.to_string());
+        }
+        assert_eq!(a.reasoning, "Let me count.");
+        assert!(a.unsent_reasoning.is_empty(), "no stream, nothing buffered");
+
+        let mut b = Active::placeholder();
+        for piece in ["\n", "Hmm", ", yes."] {
+            push_reasoning(&mut b, piece.to_string());
+        }
+        assert_eq!(b.reasoning, "Hmm, yes.");
+    }
 
     fn tok(ids: &[i32]) -> Vec<CacheKey> {
         ids.iter()
@@ -1850,7 +2013,7 @@ mod tests {
         // Cache: prompt + the reply the model generated. New prompt: the same plus a new turn.
         let slot = slot_with(tok(&[1, 2, 3, 4, 5]));
         let prompt = tok(&[1, 2, 3, 4, 5, 6, 7]);
-        let plan = plan_cache(&slot, &prompt, true, Some(1024));
+        let plan = plan_cache(&slot, &prompt, true, true);
         assert_eq!(plan, CachePlan::Keep(reuse(5, 5)));
     }
 
@@ -1859,14 +2022,11 @@ mod tests {
         let slot = slot_with(tok(&[1, 2, 3]));
         let prompt = tok(&[1, 2, 3]);
         assert_eq!(
-            plan_cache(&slot, &prompt, true, None),
+            plan_cache(&slot, &prompt, true, false),
             CachePlan::Keep(reuse(2, 2))
         );
         // The same request on a sliding-window model without a checkpoint is a miss.
-        assert_eq!(
-            plan_cache(&slot, &prompt, true, Some(512)),
-            CachePlan::Clear
-        );
+        assert_eq!(plan_cache(&slot, &prompt, true, true), CachePlan::Clear);
     }
 
     #[test]
@@ -1874,13 +2034,10 @@ mod tests {
         let slot = slot_with(tok(&[1, 2, 3, 4]));
         let prompt = tok(&[1, 2, 9, 9]);
         assert_eq!(
-            plan_cache(&slot, &prompt, true, None),
+            plan_cache(&slot, &prompt, true, false),
             CachePlan::Keep(reuse(2, 2))
         );
-        assert_eq!(
-            plan_cache(&slot, &prompt, true, Some(1024)),
-            CachePlan::Clear
-        );
+        assert_eq!(plan_cache(&slot, &prompt, true, true), CachePlan::Clear);
     }
 
     #[test]
@@ -1894,7 +2051,7 @@ mod tests {
         // The client re-sends the reply tokenised differently (9, 9) plus a new turn (7).
         let diverging = tok(&[1, 2, 3, 4, 9, 9, 7]);
         assert_eq!(
-            plan_cache(&slot, &diverging, true, Some(1024)),
+            plan_cache(&slot, &diverging, true, true),
             CachePlan::Keep(Reuse {
                 keys: 4,
                 positions: 4,
@@ -1904,7 +2061,7 @@ mod tests {
         // Divergence after the checkpoint still resumes from the checkpoint, not from the match.
         let later = tok(&[1, 2, 3, 4, 5, 9, 7]);
         assert_eq!(
-            plan_cache(&slot, &later, true, Some(1024)),
+            plan_cache(&slot, &later, true, true),
             CachePlan::Keep(Reuse {
                 keys: 4,
                 positions: 4,
@@ -1913,14 +2070,11 @@ mod tests {
         );
         // Divergence before the checkpoint cannot be served.
         let early = tok(&[1, 2, 8, 8]);
-        assert_eq!(
-            plan_cache(&slot, &early, true, Some(1024)),
-            CachePlan::Clear
-        );
+        assert_eq!(plan_cache(&slot, &early, true, true), CachePlan::Clear);
         // A pure extension never needs the checkpoint.
         let extension = tok(&[1, 2, 3, 4, 5, 6, 7]);
         assert_eq!(
-            plan_cache(&slot, &extension, true, Some(1024)),
+            plan_cache(&slot, &extension, true, true),
             CachePlan::Keep(reuse(6, 6))
         );
     }
@@ -1935,7 +2089,7 @@ mod tests {
             positions: 3,
         });
         assert_eq!(
-            plan_cache(&slot, &tok(&[1, 2, 3, 4]), true, Some(1024)),
+            plan_cache(&slot, &tok(&[1, 2, 3, 4]), true, true),
             CachePlan::Keep(Reuse {
                 keys: 3,
                 positions: 3,
@@ -1944,7 +2098,7 @@ mod tests {
         );
         // The next turn (the reply re-tokenised differently) resumes there too.
         assert_eq!(
-            plan_cache(&slot, &tok(&[1, 2, 3, 4, 9, 7]), true, Some(1024)),
+            plan_cache(&slot, &tok(&[1, 2, 3, 4, 9, 7]), true, true),
             CachePlan::Keep(Reuse {
                 keys: 3,
                 positions: 3,
@@ -1957,7 +2111,7 @@ mod tests {
             positions: 4,
         });
         assert_eq!(
-            plan_cache(&slot, &tok(&[1, 2, 3, 4]), true, Some(1024)),
+            plan_cache(&slot, &tok(&[1, 2, 3, 4]), true, true),
             CachePlan::Clear
         );
     }
@@ -1973,14 +2127,14 @@ mod tests {
         let mut next_turn = slot.keys.clone();
         next_turn.extend(tok(&[4, 5]));
         assert_eq!(
-            plan_cache(&slot, &next_turn, true, Some(1024)),
+            plan_cache(&slot, &next_turn, true, true),
             CachePlan::Keep(reuse(4, 679))
         );
         let mut with_new_image = slot.keys.clone();
         with_new_image.push(media("img2", 676));
         with_new_image.push(CacheKey::Token(LlamaToken(4)));
         assert_eq!(
-            plan_cache(&slot, &with_new_image, true, None),
+            plan_cache(&slot, &with_new_image, true, false),
             CachePlan::Clear
         );
     }
@@ -1989,22 +2143,22 @@ mod tests {
     fn disabled_cache_empty_slot_and_no_overlap_clear() {
         let slot = slot_with(tok(&[1, 2, 3]));
         assert_eq!(
-            plan_cache(&slot, &tok(&[1, 2, 3, 4]), false, None),
+            plan_cache(&slot, &tok(&[1, 2, 3, 4]), false, false),
             CachePlan::Clear
         );
         assert_eq!(
-            plan_cache(&slot_with(vec![]), &tok(&[1]), true, None),
+            plan_cache(&slot_with(vec![]), &tok(&[1]), true, false),
             CachePlan::Clear
         );
         assert_eq!(
-            plan_cache(&slot, &tok(&[7, 8]), true, None),
+            plan_cache(&slot, &tok(&[7, 8]), true, false),
             CachePlan::Clear
         );
     }
 
     #[test]
     fn select_prefers_longest_prefix_then_least_recently_used_and_skips_busy_slots() {
-        let mut table = SlotTable::new(3, true, None);
+        let mut table = SlotTable::new(3, true, false);
         table.slots[0].keys = tok(&[1, 2]);
         table.slots[0].n_past = 2;
         table.slots[1].keys = tok(&[1, 2, 3, 4]);
@@ -2034,7 +2188,7 @@ mod tests {
 
     #[test]
     fn idle_slots_expire_unless_busy() {
-        let mut table = SlotTable::new(3, true, None);
+        let mut table = SlotTable::new(3, true, false);
         table.slots[0].keys = tok(&[1]);
         table.slots[0].last_used = Instant::now() - Duration::from_secs(10);
         table.slots[1].keys = tok(&[1]);

@@ -138,6 +138,22 @@ fn mock_tool_call(req: &ChatCompletionRequest) -> Result<Option<ToolCall>> {
     }))
 }
 
+/// With thinking on (`reasoning_effort` other than `none`, or `think`), the thoughts the mock
+/// "had": `Mock thoughts (<level>).`, where the level is `unbounded` for `think` alone.
+fn mock_reasoning(req: &ChatCompletionRequest) -> Option<String> {
+    let (think, _) = req.thinking();
+    think.then(|| {
+        let level = match req.reasoning_effort {
+            Some(effort) => serde_json::to_value(effort)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+                .unwrap_or_default(),
+            None => "unbounded".to_string(),
+        };
+        format!("Mock thoughts ({level}).")
+    })
+}
+
 /// The words a chat request produces (see the module docs).
 fn reply_words(req: &ChatCompletionRequest) -> Vec<String> {
     if let Some(result) = req.messages.last().filter(|m| m.role == "tool") {
@@ -246,6 +262,7 @@ impl ModelBackend for MockEngine {
                     message: ChatResponseMessage {
                         role: "assistant".into(),
                         content: String::new(),
+                        reasoning_content: None,
                         tool_calls: Some(vec![call]),
                     },
                     finish_reason: "tool_calls".into(),
@@ -270,6 +287,7 @@ impl ModelBackend for MockEngine {
                 message: ChatResponseMessage {
                     role: "assistant".into(),
                     content: words.join(" "),
+                    reasoning_content: mock_reasoning(req),
                     tool_calls: None,
                 },
                 finish_reason: finish.into(),
@@ -296,6 +314,22 @@ impl ModelBackend for MockEngine {
                 })
                 .await;
             return Ok(());
+        }
+        if let Some(reasoning) = mock_reasoning(req) {
+            for (i, word) in reasoning.split(' ').enumerate() {
+                let piece = if i == 0 {
+                    word.to_string()
+                } else {
+                    format!(" {word}")
+                };
+                if tx
+                    .send(ChatStreamEvent::ReasoningDelta(piece))
+                    .await
+                    .is_err()
+                {
+                    return Err(HypnosError::Cancelled);
+                }
+            }
         }
         let words = reply_words(req);
         for (i, word) in words.iter().enumerate() {

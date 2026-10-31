@@ -96,6 +96,7 @@ impl ModelBackend for MockEngine {
                 message: ChatResponseMessage {
                     role: "assistant".into(),
                     content: "mock reply".into(),
+                    reasoning_content: None,
                     tool_calls: None,
                 },
                 finish_reason: "stop".into(),

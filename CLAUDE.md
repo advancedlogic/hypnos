@@ -201,7 +201,16 @@ keep that profile in sync with `hypnos.example.toml` when adding models or field
   Gemma 4's native format, rendered by `gemma4_prompt` as its GGUF template does; with tools the
   engine passes `<|tool_call>` / `<tool_call|>` / `<|"|>` through and stops at `<|tool_response>`,
   and a `CallParser` turns the raw text into OpenAI `tool_calls`; `tool_choice` required / named
-  is forced by prefilling the call's opening; other architectures refuse `tools` with 400). `engine.rs` /
+  is forced by prefilling the call's opening; other architectures refuse `tools` with 400).
+  `lfm3_prompt` renders LFM3 (Liquid AI; `hypnos.lfm3.macos.example.toml`) the same way: `think`
+  opens `<think>`, which the engine hides like Gemma's channel, and transcription uses its
+  `Perform ASR in <language>.` system prompt. Hybrid / recurrent models (`is_hybrid`) take the
+  sliding-window checkpoint path in `plan_cache`, since their conv state cannot be trimmed back.
+  Thinking: `reasoning_effort` (none / low / medium / high = 0 / 512 / 2048 / 6144 thinking tokens,
+  `ChatCompletionRequest::thinking`) wins over `think`; the engine collects the channel / `<think>`
+  text as `reasoning_content` (`delta.reasoning_content` when streaming) and, when the budget is
+  spent, forces the block's closing token (`Engine::think_close`); thinking off is a budget of 0.
+  `engine.rs` /
   `worker.rs`: one worker thread per resident model owns a persistent context with `slots`
   execution slots (KV prefix reuse, continuous batching); `docs/execution-efficiency-plan.md`
   is the reference for that area. Loading (PERF-6): `models.use_mmap` unset means the weights

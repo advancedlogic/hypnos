@@ -330,7 +330,8 @@ model's `moe_offload`, `expert_bytes` (0 for a dense model) and `placement.cpu_e
 | `temperature`, `top_p`, `top_k`, `seed` | number | engine defaults | sampling; `seed` makes a run reproducible on the same build |
 | `stream` | bool | false | SSE response, see 7.4 |
 | `num_ctx` | int | estimated | **Hypnos extension**: context window to reserve for this request (prompt plus generation). Unset, the server estimates it from the prompt length, the media and `max_tokens`, with a floor of 2048. Ask for more when the conversation will grow; a value above the model's `allocated_context_len` forces a context rebuild |
-| `think` | bool | false | **Hypnos extension**: turns on Gemma 4's thinking channel. The thoughts are not returned (they are consumed server-side) but they count in `completion_tokens` and in latency |
+| `think` | bool | false | **Hypnos extension**: turns on the model's thinking (Gemma 4's thinking channel, LFM3's `<think>` block; other models ignore it) without a budget. The thoughts come back as `reasoning_content` (7.2, 7.4) and count in `completion_tokens` and in latency. `reasoning_effort` takes precedence when both are sent |
+| `reasoning_effort` | string | unset (`think` decides) | the thinking level: `"none"` turns thinking off (a thinking block the model opens anyway is closed at once), `"low"`, `"medium"`, `"high"` turn it on with a budget of 512, 2048 or 6144 thinking tokens; when the budget is spent the server closes the thinking block and the model answers. `"minimal"` is read as `"low"`. Only models with a thinking format use it (Gemma 4, LFM3 chat models); others ignore it. `max_tokens` covers thoughts plus answer, and the thoughts count in `completion_tokens` |
 | `tools` | array | none | functions the model may call, see 7.5 |
 | `tool_choice` | string or object | `"auto"` | `"none"`, `"auto"`, `"required"`, or `{"type": "function", "function": {"name": "..."}}`, see 7.5 |
 
@@ -372,6 +373,10 @@ estimate budgets 576 tokens per image and 1024 per audio clip; pass `num_ctx` wh
 }
 ```
 
+With thinking on (`reasoning_effort` other than `"none"`, or `think`) and a model that thinks,
+`message.reasoning_content` holds the thoughts that came before the answer; the field is omitted
+when there were none. `content` is the answer alone.
+
 `finish_reason` is `stop` (end of turn), `length` (`max_tokens` reached) or `tool_calls` (the
 model called tools; `message.tool_calls` lists them and `content` is usually empty, see 7.5).
 `choices` always has one element. `prompt_tokens_details.cached_tokens` is present only when part of the prompt was
@@ -403,14 +408,16 @@ data: [DONE]
 Sequence:
 
 1. One chunk with `delta.role = "assistant"` and empty content (the OpenAI convention).
-2. Zero or more chunks with `delta.content` (a token or a few characters; special markers and the
-   thinking channel are never emitted).
-3. With tools, one chunk per call with `delta.tool_calls` (7.5).
-4. One final chunk with an empty `delta`, `finish_reason` `stop`, `length` or `tool_calls`, plus
+2. With thinking on, zero or more chunks with `delta.reasoning_content` (pieces of the thoughts),
+   all before the first `delta.content`.
+3. Zero or more chunks with `delta.content` (a token or a few characters; special markers and the
+   thinking block's delimiters are never emitted).
+4. With tools, one chunk per call with `delta.tool_calls` (7.5).
+5. One final chunk with an empty `delta`, `finish_reason` `stop`, `length` or `tool_calls`, plus
    `usage` and `hypnos_telemetry` (no `stream_options.include_usage` needed; usage always comes).
-5. `[DONE]`.
+6. `[DONE]`.
 
-If generation fails after the stream started, step 4 is instead a chunk with
+If generation fails after the stream started, step 5 is instead a chunk with
 `finish_reason: "error"` and an `error` object at the top level
 (`{"message": "...", "type": "server_error"}`), followed by `[DONE]`. A client must treat that
 chunk as a failure even though the HTTP status was 200.
@@ -895,8 +902,9 @@ once. Never retry a request whose stream already produced output; surface the pa
 the error.
 
 **Streaming.** Parse SSE by lines: `data:` payload, blank line ends an event; ignore `:` comment
-lines; stop on `[DONE]`. Deliver `delta.content` pieces as they arrive; collect `usage` and
-`hypnos_telemetry` from the final chunk; map `finish_reason: "error"` to an exception. Cancel by
+lines; stop on `[DONE]`. Deliver `delta.content` pieces as they arrive (and the thoughts in
+`delta.reasoning_content` apart from them); collect `usage` and `hypnos_telemetry` from the
+final chunk; map `finish_reason: "error"` to an exception. Cancel by
 closing the connection, nothing else is needed. For document streams dispatch on `object`.
 
 **Cancellation.** Closing the socket cancels any in-flight request at the next token, chunk, step

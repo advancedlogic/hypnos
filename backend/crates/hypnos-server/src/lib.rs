@@ -809,6 +809,15 @@ async fn chat_completions_inner(
                     );
                     Some((Ok(ev), st))
                 }
+                Some(ChatStreamEvent::ReasoningDelta(text)) => {
+                    let ev = sse_chunk(
+                        &st,
+                        json!({"reasoning_content": text}),
+                        serde_json::Value::Null,
+                        Default::default(),
+                    );
+                    Some((Ok(ev), st))
+                }
                 Some(ChatStreamEvent::ToolCall(call)) => {
                     if st.capture_text {
                         st.text.push_str(&format!(
