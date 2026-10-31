@@ -144,6 +144,18 @@ impl From<Error> for ErrorPayload {
     }
 }
 
+/// A local failure (a file, a download) in a command that also calls the server.
+impl From<String> for ErrorPayload {
+    fn from(message: String) -> Self {
+        ErrorPayload {
+            kind: "error".into(),
+            message,
+            detail: None,
+            retry_after_secs: None,
+        }
+    }
+}
+
 type CmdResult<T> = Result<T, ErrorPayload>;
 
 fn build_client(url: &str, api_key: Option<String>) -> CmdResult<Client> {

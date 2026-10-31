@@ -227,6 +227,16 @@
     };
   });
 
+  /** Right after the Models dialog changed the server's pool, not at the next refresh. */
+  async function reloadModels() {
+    if (serverState !== 'ready') return;
+    try {
+      allModels = await api.models();
+    } catch (e) {
+      console.warn(api.errorMessage(e));
+    }
+  }
+
   let models = $derived(allModels.filter((m) => m.modalities.includes('text_generation')));
 
   /** The port of the server the app uses when it runs on this machine, else null. */
@@ -438,6 +448,7 @@
 
 {#if modelsOpen && localSettings?.config}
   <Models config={localSettings.config} binary={localSettings.binary} firstRun={modelsFirstRun} tab={modelsTab} onchanged={restartLocal}
+    onpool={reloadModels}
     onclose={() => (modelsOpen = false)} />
 {/if}
 

@@ -113,6 +113,8 @@ pub fn run() {
             catalog::models_catalog_entries,
             catalog::models_catalog_block,
             catalog::models_catalog_add,
+            catalog::models_pool_put,
+            catalog::models_pool_remove,
         ])
         // Closing the window hides it into the tray unless the settings say to quit.
         .on_window_event(|window, event| {

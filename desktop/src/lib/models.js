@@ -20,9 +20,12 @@ export function download(config, ids, onEvent) {
 export const cancel = () => invoke('models_cancel');
 
 /**
- * The curated catalog's models the config has no block for (API-10): `[{ id, name, publisher,
- * license, modality, additionalModalities, engine, capabilities, summary, lineup,
- * variants: [{ quant, default, note, size, have, installed }] }]`.
+ * The curated catalog's models (API-10, API-11): `{ live, offline, entries }`. `live`: the app is
+ * connected to a server that uses this config's models folder, so `entries[].inPool` is its pool
+ * and `poolPut` / `poolRemove` change it; else `offline` says why and the pool is read from the
+ * config and its overlay. Entries: `{ id, name, publisher, license, modality,
+ * additionalModalities, engine, capabilities, summary, lineup, inPool, enabled, currentQuant,
+ * variants: [{ quant, default, note, size, have, installed }] }`.
  */
 export const catalogEntries = (config) => invoke('models_catalog_entries', { config });
 
@@ -30,14 +33,30 @@ export const catalogEntries = (config) => invoke('models_catalog_entries', { con
 export const catalogBlock = (binary, id, quant) => invoke('models_catalog_block', { binary, id, quant });
 
 /**
- * Downloads a catalog variant (events as `download`) and appends its block to the app's own
- * config. Resolves true when added, false when stopped.
+ * Without a live server: downloads a catalog variant (events as `download`) and appends its block
+ * to the app's own config; the caller starts the server. Resolves true when added, false when
+ * stopped.
  */
 export function addFromCatalog(config, binary, id, quant, onEvent) {
   const channel = new Channel();
   channel.onmessage = onEvent;
   return invoke('models_catalog_add', { config, binary, id, quant, onEvent: channel });
 }
+
+/**
+ * Adds a catalog variant to the running server's pool, or with `replace` puts it in place of the
+ * pool's model with that id: downloads its missing files first (events as `download`). Resolves
+ * to `{ model, action, persisted }`, or null when the download was stopped. Rejects with
+ * `{ kind, message }` (`permission`, `busy`, `bad_request`, ...).
+ */
+export function poolPut(config, id, quant, replace, onEvent) {
+  const channel = new Channel();
+  channel.onmessage = onEvent;
+  return invoke('models_pool_put', { config, id, quant, replace, onEvent: channel });
+}
+
+/** Takes a model out of the running server's pool; its files stay. */
+export const poolRemove = (id) => invoke('models_pool_remove', { id });
 
 /** Points the app's own config at `dir`, moving the old folder's files when `moveFiles`. */
 export function setDir(config, dir, moveFiles, onEvent) {

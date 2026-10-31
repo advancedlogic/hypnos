@@ -411,8 +411,8 @@
   });
 
   // ---- Model catalog (GET /v1/models/catalog) -----------------------------
-  // The playground cannot write the server's config or its models folder: per entry it shows the
-  // download command and the [[models]] block to add, then the server needs a restart.
+  // The playground cannot download into the server's models folder: per entry it shows the
+  // download command; an installed variant can be added, swapped in or removed live (API-11).
   let catalog = $state(null);
   let catalogError = $state('');
   let catalogMissing = $state(false);
@@ -542,6 +542,62 @@
       isLoading = false;
     }
   }
+
+  // ---- Model pool (API-11): POST /v1/models, PUT / DELETE /v1/models/{id} ----------------
+  // Live changes; the server keeps them in `<config>.models.toml` next to its config.
+  let poolBusy = $state(''); // key of the change in flight
+  let poolAction = $state(''); // its method: POST | PUT | DELETE
+  let poolConfirm = $state(''); // key of the removal awaiting confirmation
+  let poolResult = $state({}); // key -> { ok, text }
+
+  function poolErrorText(status, err) {
+    const msg = err?.message || `HTTP ${status}`;
+    if (status === 403 || err?.type === 'permission_denied')
+      return `Admin key needed: changing the model pool needs an admin API key (a plain server.api_keys entry, or [[server.keys]] with admin = true). ${msg}`;
+    if (status === 429 || err?.type === 'model_busy')
+      return `Model busy: requests were still running after the drain time, nothing changed. Retry when it is idle. ${msg}`;
+    if (status === 401) return `API key missing or wrong (set it at the top). ${msg}`;
+    return msg;
+  }
+
+  /** One pool change; `key` scopes the busy flag and the inline result (catalog entry or model). */
+  async function changePool(key, method, path, body) {
+    poolBusy = key;
+    poolAction = method;
+    poolConfirm = '';
+    const { [key]: _, ...rest } = poolResult;
+    poolResult = rest;
+    try {
+      const res = await apiFetch(path, {
+        method,
+        ...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(poolErrorText(res.status, data?.error));
+      const verb = { added: 'Added', replaced: 'Replaced', removed: 'Removed' }[data.action] || data.action;
+      const where = data.placement?.primary_tier ? ` (${data.placement.primary_tier})` : '';
+      poolResult = {
+        ...poolResult,
+        [key]: {
+          ok: true,
+          text: `${verb} ${data.model}${where}. ${data.persisted
+            ? 'Saved in the overlay next to the server config.'
+            : 'Not saved: the overlay could not be written, the change lasts until the next restart.'}`,
+        },
+      };
+      await Promise.all([fetchMemoryStatus(), catalog ? fetchCatalog() : null]);
+    } catch (err) {
+      poolResult = { ...poolResult, [key]: { ok: false, text: err.message } };
+    } finally {
+      poolBusy = '';
+    }
+  }
+
+  const addCatalogModel = (m, v) =>
+    changePool(`catalog:${m.id}`, 'POST', '/v1/models', { catalog: `${m.id}:${v.quant}` });
+  const replaceCatalogModel = (m, v) =>
+    changePool(`catalog:${m.id}`, 'PUT', `/v1/models/${encodeURIComponent(m.id)}`, { catalog: `${m.id}:${v.quant}` });
+  const removeModel = (key, id) => changePool(key, 'DELETE', `/v1/models/${encodeURIComponent(id)}`);
 
   // KV parking (MEM-4): keep a model's conversations in host memory across a swap.
   // GET / POST /v1/memory/kv-park; the state also comes with /v1/memory/status as `kv_park`.
@@ -1563,8 +1619,44 @@
                     >
                       Evict SSD
                     </button>
+                    <button
+                      onclick={() => (poolConfirm = `model:${m.id}`)}
+                      disabled={!!poolBusy || poolConfirm === `model:${m.id}`}
+                      title="Remove the model from the server (files stay on disk); running requests finish first"
+                      class="px-2 py-0.5 rounded bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 transition disabled:opacity-50"
+                    >
+                      {poolBusy === `model:${m.id}` ? 'Removing…' : 'Remove'}
+                    </button>
                   </div>
                 </div>
+                {#if poolConfirm === `model:${m.id}`}
+                  <div class="flex flex-wrap items-center justify-end gap-2 text-[11px]">
+                    <span class="text-rose-300">Remove <span class="font-mono">{m.id}</span> from the server? The files stay on disk.</span>
+                    <button
+                      onclick={() => removeModel(`model:${m.id}`, m.id)}
+                      class="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-semibold"
+                    >
+                      Yes, remove
+                    </button>
+                    <button
+                      onclick={() => (poolConfirm = '')}
+                      class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                {/if}
+                {#if poolResult[`model:${m.id}`] && !poolResult[`model:${m.id}`].ok}
+                  <div class="flex items-start justify-between gap-2 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-[11px] text-rose-200">
+                    <span class="break-words min-w-0">{poolResult[`model:${m.id}`].text}</span>
+                    <button
+                      onclick={() => { const { [`model:${m.id}`]: _, ...rest } = poolResult; poolResult = rest; }}
+                      class="shrink-0 opacity-70 hover:opacity-100"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                {/if}
               </div>
             {/each}
           </div>
@@ -2333,9 +2425,12 @@
             </div>
 
             <div class="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-slate-400 leading-relaxed">
-              Models Hypnos has been tested with. The playground cannot change the server: to add one,
-              run its download command from the repository root (or the release folder), append its
-              config block to the server's config file, then <strong class="text-slate-200">restart the server</strong>.
+              Models Hypnos has been tested with. A variant whose files are on disk can be added to the
+              running server, swapped in for the configured one or removed, <strong class="text-slate-200">no restart needed</strong>:
+              the server serves the change at once and keeps it in an overlay next to its config
+              (<span class="font-mono text-slate-300">&lt;config&gt;.models.toml</span>, applied at the next start; the config itself
+              is not rewritten). With API keys on, this needs an admin key. A variant that is not downloaded yet
+              needs its download command first, run from the repository root (or the release folder).
               {#if catalog?.tested_architectures?.length}
                 Tested GGUF architectures:
                 <span class="font-mono text-slate-300">{catalog.tested_architectures.join(', ')}</span>.
@@ -2406,6 +2501,19 @@
                       </div>
                     {/if}
 
+                    {#if poolResult[`catalog:${m.id}`]}
+                      {@const r = poolResult[`catalog:${m.id}`]}
+                      <div class="rounded border px-2 py-1.5 flex items-start justify-between gap-2 {r.ok ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-rose-500/40 bg-rose-500/10 text-rose-200'}">
+                        <span class="whitespace-pre-wrap break-words min-w-0">{r.text}</span>
+                        <button
+                          onclick={() => { const { [`catalog:${m.id}`]: _, ...rest } = poolResult; poolResult = rest; }}
+                          class="shrink-0 opacity-70 hover:opacity-100"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    {/if}
+
                     <button
                       onclick={() => (catalogOpen = { ...catalogOpen, [m.id]: !open })}
                       class="text-indigo-300 hover:text-indigo-200 font-semibold"
@@ -2436,6 +2544,65 @@
                         </div>
                         {#if v?.note}
                           <div class="text-slate-400 italic">{v.note}</div>
+                        {/if}
+
+                        <!-- Live pool changes (API-11) -->
+                        {#if v}
+                          {@const key = `catalog:${m.id}`}
+                          <div class="flex flex-wrap items-center gap-2">
+                            {#if v.installed}
+                              {#if !m.configured}
+                                <button
+                                  onclick={() => addCatalogModel(m, v)}
+                                  disabled={!!poolBusy}
+                                  class="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-semibold disabled:opacity-50"
+                                >
+                                  {poolBusy === key && poolAction === 'POST' ? 'Adding…' : `Add ${v.quant} to server`}
+                                </button>
+                              {:else}
+                                <button
+                                  onclick={() => replaceCatalogModel(m, v)}
+                                  disabled={!!poolBusy}
+                                  title="Swap the configured model for this variant under the same id; running requests finish first"
+                                  class="px-2.5 py-1 rounded bg-indigo-600/80 hover:bg-indigo-500 text-white font-semibold disabled:opacity-50"
+                                >
+                                  {poolBusy === key && poolAction === 'PUT' ? 'Replacing…' : `Replace with ${v.quant}`}
+                                </button>
+                              {/if}
+                            {:else}
+                              <span class="text-slate-400">
+                                {m.configured ? 'Replacing with' : 'Adding'} this variant needs its files on disk first:
+                                run the download command below (the server refuses it with 400 until then).
+                              </span>
+                            {/if}
+                            {#if m.configured}
+                              {#if poolConfirm === key}
+                                <span class="text-rose-300">Remove <span class="font-mono">{m.id}</span> from the server?</span>
+                                <button
+                                  onclick={() => removeModel(key, m.id)}
+                                  disabled={!!poolBusy}
+                                  class="px-2 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-semibold disabled:opacity-50"
+                                >
+                                  Yes, remove
+                                </button>
+                                <button
+                                  onclick={() => (poolConfirm = '')}
+                                  class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200"
+                                >
+                                  Cancel
+                                </button>
+                              {:else}
+                                <button
+                                  onclick={() => (poolConfirm = key)}
+                                  disabled={!!poolBusy}
+                                  title="Remove the model from the server (files stay on disk); running requests finish first"
+                                  class="px-2 py-1 rounded bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 disabled:opacity-50"
+                                >
+                                  {poolBusy === key && poolAction === 'DELETE' ? 'Removing…' : 'Remove'}
+                                </button>
+                              {/if}
+                            {/if}
+                          </div>
                         {/if}
 
                         {#if v}
@@ -2473,7 +2640,7 @@
                           <div>
                             <div class="flex items-center justify-between mb-1">
                               <span class="text-slate-400">
-                                Config block {m.configured ? '(already in the config)' : '(append to the config, then restart the server)'}
+                                Config block {m.configured ? '(configured on the server)' : '(or append it to the config file by hand)'}
                               </span>
                               <button
                                 onclick={() => copyText(`${m.id}:block`, v.config_block)}
