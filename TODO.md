@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 2  | 10  | 5   | 5   | 8    | 6   | 10    | 7   | 3    | 14   |
+| 2  | 10  | 5   | 6   | 8    | 6   | 10    | 7   | 3    | 14   |
 
 ---
 
@@ -89,6 +89,17 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       ~360 MiB for an 8k conversation on the 26B (20 KiB/token + <=200 MiB SWA). Bench: N-token
       conversation, swap, next turn TTFT with and without (N = 2k, 8k, 16k). Not paged attention,
       no Tier 3 spill at first.
+
+- [ ] 🟫 **MEM-5** `P2` Expert offload for MoE models: experts on the CPU, the rest on the GPU
+      Design in docs/moe.md. Step 1, benchmark on the RTX 5090 laptop: the 26B full GPU, a layer
+      split, experts on the CPU for all 30 layers (`add_cpu_moe_override`) and for the last 15;
+      decode tok/s, 4-client aggregate, 8k prefill, TTFT, VRAM and host RAM. Stop if experts on
+      the CPU are not clearly better than the layer split at equal VRAM. Then a placement mode:
+      `cpu_expert_layers` in `LayerPlacementPlan`, expert bytes per layer from the GGUF
+      inspector, booked as host memory, per-layer `blk.N.ffn_*_exps` overrides in the llama
+      backend, preferred over a layer split or an eviction (config `moe_offload`), shown in
+      `/v1/memory/status` and telemetry. Gemma 4 26B: experts ~12.0 of ~13.6 GiB, ~0.8 GB read
+      per decoded token. Discrete GPUs only.
 
 ## In Progress
 
