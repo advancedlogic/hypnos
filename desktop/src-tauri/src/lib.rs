@@ -3,6 +3,7 @@ mod hypnos;
 mod images;
 mod local_server;
 mod mic;
+mod models;
 mod tray;
 mod tts;
 mod web;
@@ -57,6 +58,7 @@ pub fn run() {
         .setup(|app| {
             app.manage(hypnos::Hypnos::default());
             app.manage(local_server::LocalServer::default());
+            app.manage(models::ModelFiles::default());
             app.manage(mic::Mic::default());
             app.manage(tts::Speaker::default());
             app.manage(tray::TraySettings::default());
@@ -103,6 +105,10 @@ pub fn run() {
             local_server::local_server_logs,
             local_server::local_server_probe,
             local_server::local_server_stop_port,
+            models::models_catalog,
+            models::models_download,
+            models::models_cancel,
+            models::models_set_dir,
         ])
         // Closing the window hides it into the tray unless the settings say to quit.
         .on_window_event(|window, event| {

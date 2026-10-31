@@ -68,6 +68,10 @@ log_format = "pretty"
 # request_log_redact = ["sk-[A-Za-z0-9]+", "(?i)password\\S*"]
 # Built playground served at /. Unset: frontend/ beside the executable, if present (release archives).
 # frontend_dir = "../frontend/dist"
+# Folder the model paths below are relative to (itself relative to the working directory, i.e.
+# backend/). HYPNOS_MODELS_DIR overrides it, e.g. for files on another drive. The file names
+# match the `local` column of models.manifest, which `./run.sh models` downloads into it.
+models_dir = "models"
 # Pictures kept for `return_pictures` document conversions (GET /v1/documents/{id}/pictures): one
 # JSON file per picture (base64 image + mime, size, page, bounding box, caption). Unset dir =
 # hypnos-pictures under the OS temp directory; leftovers of an earlier run are removed at startup.
@@ -123,8 +127,8 @@ id = "gemma4:26b-q4"
 modality = "text_generation"
 additional_modalities = ["vision"]
 engine = "ggml_llama"
-weights_path = "models/gemma-4-26B-A4B-it-Q4_0.gguf"
-aux_weights_path = "models/mmproj-gemma-4-26B-A4B-it-BF16.gguf"
+weights_path = "gemma-4-26B-A4B-it-Q4_0.gguf"
+aux_weights_path = "mmproj-gemma-4-26B-A4B-it-BF16.gguf"
 total_weight_bytes = 15814641056        # 13.6 GiB weights + 1.1 GiB vision projector
 min_gpu_layer_ratio = 1.0               # unified memory: all layers or none
 initial_tier = "tier2_pinned_ram"       # Pre-stage in pinned RAM on boot for fast promotion
@@ -160,8 +164,8 @@ id = "gemma4:e4b-q4"
 modality = "speech_to_text"
 additional_modalities = ["text_generation", "vision"]
 engine = "ggml_llama"
-weights_path = "models/gemma-4-E4B-it-Q4_0.gguf"
-aux_weights_path = "models/mmproj-gemma-4-E4B-it-BF16.gguf"
+weights_path = "gemma-4-E4B-it-Q4_0.gguf"
+aux_weights_path = "mmproj-gemma-4-E4B-it-BF16.gguf"
 total_weight_bytes = 5582359648         # 4.3 GiB weights + 0.9 GiB audio/vision projector
 min_gpu_layer_ratio = 1.0               # unified memory: all layers or none
 initial_tier = "tier2_pinned_ram"
@@ -193,8 +197,8 @@ modality = "text_to_speech"
 engine = "onnx_runtime"
 # fp32 graph (onnx-community/Kokoro-82M-v1.0-ONNX, onnx/model.onnx). The fp16 graph overflows to an
 # all-NaN waveform for some voice/text pairs on Apple Silicon (16 of 110 in a scan) and is slower.
-weights_path = "models/kokoro/model.onnx"
-voices_path = "models/kokoro/voices"
+weights_path = "kokoro/model.onnx"
+voices_path = "kokoro/voices"
 total_weight_bytes = 0                  # auto-detected from the file (~82 MiB)
 min_gpu_layer_ratio = 1.0
 initial_tier = "tier1_gpu_vram"
@@ -219,7 +223,7 @@ activation_workspace_bytes = 67108864
 id = "gemmaembedding2"
 modality = "embeddings"
 engine = "ggml_llama"
-weights_path = "models/embeddinggemma-2-Q8_0.gguf"
+weights_path = "embeddinggemma-2-Q8_0.gguf"
 total_weight_bytes = 0                  # auto-detected (~296 MiB)
 min_gpu_layer_ratio = 1.0
 initial_tier = "tier1_gpu_vram"         # Always hot in Tier 1 VRAM
@@ -247,10 +251,10 @@ activation_workspace_bytes = 134217728
 id = "moss-image"
 modality = "image_generation"
 engine = "ggml_diffusion"
-weights_path = "models/MOSS-Image-SFT-Q4_K.gguf"
-text_encoder_path = "models/Qwen3.5-9B-Q4_K_M.gguf"
-aux_weights_path = "models/flux2-vae.safetensors"
-tokenizer_path = "models/moss_tokenizer.json"
+weights_path = "MOSS-Image-SFT-Q4_K.gguf"
+text_encoder_path = "Qwen3.5-9B-Q4_K_M.gguf"
+aux_weights_path = "flux2-vae.safetensors"
+tokenizer_path = "moss_tokenizer.json"
 total_weight_bytes = 9344134556         # 3.3 GiB DiT + 5.7 GiB Qwen3.5-9B + 0.3 GiB VAE
 min_gpu_layer_ratio = 1.0               # unified memory: all layers or none
 initial_tier = "tier3_nvme_ssd"
@@ -287,7 +291,7 @@ id = "docling"
 modality = "document_conversion"
 engine = "docling"
 device = "cpu"                          # Tier 1 books host RAM, not VRAM
-weights_path = "models/docling/layout_heron_int8.onnx"
+weights_path = "docling/layout_heron_int8.onnx"
 total_weight_bytes = 335544320          # every docling model file (~310 MiB)
 initial_tier = "tier3_nvme_ssd"
 keep_warm_in_ram = false                # unloading frees the models; reloading takes ~0.3 s
@@ -308,7 +312,7 @@ id = "gliner2.5-multi"
 modality = "entity_extraction"
 engine = "gliner"
 device = "cpu"                          # Tier 1 books host RAM, not VRAM
-weights_path = "models/gliner2.5-multi/encoder_fp32.onnx"
+weights_path = "gliner2.5-multi/encoder_fp32.onnx"
 total_weight_bytes = 1228931072         # every file in the folder (~1.15 GiB)
 initial_tier = "tier3_nvme_ssd"
 keep_warm_in_ram = false                # reloading takes under a second

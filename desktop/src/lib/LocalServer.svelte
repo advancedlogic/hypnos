@@ -3,7 +3,7 @@
   import * as server from './localServer.js';
 
   /** `settings`: `{ binary, config, port, autoStart }`; `running`: the process status. */
-  let { settings, running, onstart, onstop, onsettings, onclose } = $props();
+  let { settings, running, onstart, onstop, onsettings, onmodels, onclose } = $props();
 
   // The form starts from the saved settings and is saved back on Start.
   const initial = untrack(() => ({ ...settings }));
@@ -133,8 +133,12 @@
           <button class="px-2 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-40" onclick={redetect} disabled={isRunning}>Detect</button>
         </div>
         <label for="ls-config" class="text-xs text-slate-400">Config</label>
-        <input id="ls-config" bind:value={config} disabled={isRunning} spellcheck="false" placeholder="hypnos.toml beside the binary"
-          class="rounded-lg bg-slate-950 border border-slate-700 px-3 py-1.5 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-60" />
+        <div class="flex gap-2">
+          <input id="ls-config" bind:value={config} disabled={isRunning} spellcheck="false" placeholder="hypnos.toml beside the binary"
+            class="flex-1 min-w-0 rounded-lg bg-slate-950 border border-slate-700 px-3 py-1.5 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-60" />
+          <button class="px-2 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-40" onclick={async () => { await onsettings(current()); onmodels?.(); }}
+            disabled={!config.trim()} title="Download models and choose their folder">Models…</button>
+        </div>
         <label for="ls-port" class="text-xs text-slate-400">Port</label>
         <div class="flex items-center gap-4">
           <input id="ls-port" type="number" min="1" max="65535" bind:value={port} disabled={isRunning}

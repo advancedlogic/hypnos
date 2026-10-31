@@ -5,6 +5,8 @@
   import { connectionFor, loadConnection, saveConnection } from './lib/connection.js';
   import * as localServer from './lib/localServer.js';
   import LocalServer from './lib/LocalServer.svelte';
+  import Models from './lib/Models.svelte';
+  import * as modelFiles from './lib/models.js';
   import { ChatStore } from './lib/chats.svelte.js';
   import Sidebar from './lib/Sidebar.svelte';
   import Chat from './lib/Chat.svelte';
@@ -45,6 +47,10 @@
   /** `{ binary, config, port, autoStart }` and the process status (DESK-5). */
   let localSettings = $state(null);
   let localStatus = $state(null);
+  /** The Models dialog (DESK-17); `modelsFirstRun` adds the welcome line. */
+  let modelsOpen = $state(false);
+  let modelsFirstRun = $state(false);
+  const MODELS_PROMPTED_KEY = 'modelsPrompted';
 
   const STATES = {
     connecting: { label: 'Connecting', dot: 'bg-slate-500' },
@@ -113,6 +119,34 @@
     localStatus = await localServer.stop();
   }
 
+  /**
+   * After model files arrived or their folder moved: restart the local server so it picks them
+   * up (its start enables the models whose files are there), or start it if it is not running.
+   */
+  async function restartLocal() {
+    if (!localSettings?.binary) return;
+    try {
+      if (localStatus?.running) await stopLocal();
+      await startLocal(localSettings);
+    } catch (e) {
+      serverError = `Local server: ${e?.message ?? e}`;
+    }
+  }
+
+  /** First launch with the bundled server and no models: offer the download, once. */
+  async function promptForModels() {
+    if (!localSettings?.config || (await load(MODELS_PROMPTED_KEY, false))) return;
+    try {
+      const cat = await modelFiles.catalog(localSettings.config);
+      if (!cat.managed || cat.models.some((m) => m.installed)) return;
+      await save(MODELS_PROMPTED_KEY, true);
+      modelsFirstRun = true;
+      modelsOpen = true;
+    } catch (e) {
+      console.warn('models catalog', e);
+    }
+  }
+
   async function initLocalServer() {
     localSettings = await localServer.loadLocalSettings();
     localStatus = await localServer.status();
@@ -120,6 +154,7 @@
       () => {},
       (s) => (localStatus = s),
     );
+    promptForModels();
     const { binary, port, autoStart } = localSettings;
     if (!autoStart || !binary) return;
     const [up] = await localServer.probe(Number(port));
@@ -370,8 +405,18 @@
     onstart={startLocal}
     onstop={stopLocal}
     onsettings={saveLocalSettings}
+    onmodels={() => {
+      localOpen = false;
+      modelsFirstRun = false;
+      modelsOpen = true;
+    }}
     onclose={() => (localOpen = false)}
   />
+{/if}
+
+{#if modelsOpen && localSettings?.config}
+  <Models config={localSettings.config} firstRun={modelsFirstRun} onchanged={restartLocal}
+    onclose={() => (modelsOpen = false)} />
 {/if}
 
 {#if settingsOpen && connection}

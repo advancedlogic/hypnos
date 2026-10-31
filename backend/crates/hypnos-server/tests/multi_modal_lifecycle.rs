@@ -9,6 +9,12 @@ use hypnos_server::{default_profile::default_six_model_config, AppState};
 #[ignore = "loads the real Gemma 4 / Kokoro / MOSS-Image weights from backend/models and needs a CUDA GPU; run with `cargo test -- --ignored`"]
 async fn test_gemma4_kokoro_moss_multi_modal_lifecycle_24gb_vram() {
     let mut cfg = default_six_model_config();
+    // models_dir = "models" against backend/, where `./run.sh models` puts the weights (cargo
+    // runs tests in the crate's folder).
+    cfg.apply_models_dir(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+        None,
+    );
     cfg.hardware.vram_budget_bytes = 24 * 1024 * 1024 * 1024;
     cfg.hardware.vram_safety_margin_bytes = 512 * 1024 * 1024; // 23.5 GB usable VRAM
     cfg.hardware.pinned_ram_budget_bytes = 32 * 1024 * 1024 * 1024;

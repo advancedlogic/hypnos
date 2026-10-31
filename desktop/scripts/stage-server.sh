@@ -15,6 +15,7 @@
 #   Contents/Frameworks/libstable-diffusion.dylib  sd.cpp (rpath @executable_path/../Frameworks)
 #   Contents/Resources/espeak-ng-data/, frontend/  found by the server through ../Resources
 #   Contents/Resources/server/hypnos.toml        the template of the app's own config
+#   Contents/Resources/server/models.manifest    the lineup the app downloads (Models dialog)
 #   Contents/Resources/server/LICENSE-*, licenses/, THIRD-PARTY-NOTICES.md, SOURCE.txt
 set -euo pipefail
 
@@ -41,15 +42,16 @@ if [ -n "$ARCHIVE" ]; then
     tar -xzf "$ARCHIVE" -C "$work"
     SRC="$(find "$work" -mindepth 1 -maxdepth 1 -type d | head -1)"
     BIN="$SRC/hypnos"; LIB="$SRC/libstable-diffusion.dylib"; ESPEAK="$SRC/espeak-ng-data"
-    FRONTEND="$SRC/frontend"; CONFIG="$SRC/hypnos.toml"; LEGAL="$SRC"
+    FRONTEND="$SRC/frontend"; CONFIG="$SRC/hypnos.toml"; LEGAL="$SRC"; MANIFEST="$SRC/models.manifest"
     VERSION="$(basename "$SRC" | sed -E 's/^hypnos-(.*)-macos-arm64-metal$/\1/')"
 else
     T="$ROOT/backend/target/release"
     BIN="$T/hypnos"; LIB="$T/libstable-diffusion.dylib"; ESPEAK="$T/espeak-ng-data"
     FRONTEND="$ROOT/frontend/dist"; CONFIG="$ROOT/backend/hypnos.macos.example.toml"; LEGAL="$ROOT"
+    MANIFEST="$ROOT/backend/models.manifest"
     VERSION="$(git -C "$ROOT" describe --tags --always 2>/dev/null || echo dev)"
 fi
-for f in "$BIN" "$LIB" "$ESPEAK" "$FRONTEND/index.html" "$CONFIG"; do
+for f in "$BIN" "$LIB" "$ESPEAK" "$FRONTEND/index.html" "$CONFIG" "$MANIFEST"; do
     [ -e "$f" ] || { echo "missing $f" >&2; exit 1; }
 done
 # The binary must find the dylib in Contents/Frameworks (hypnos-server/build.rs adds the rpath).
@@ -61,6 +63,7 @@ cp "$LIB" "$STAGE/"
 cp -R "$ESPEAK" "$STAGE/resources/espeak-ng-data"
 cp -R "$FRONTEND" "$STAGE/resources/frontend"
 cp "$CONFIG" "$STAGE/resources/server/hypnos.toml"
+cp "$MANIFEST" "$STAGE/resources/server/models.manifest"   # the app's model downloader (DESK-17)
 cp "$LEGAL/LICENSE-MIT" "$LEGAL/LICENSE-APACHE" "$LEGAL/THIRD-PARTY-NOTICES.md" "$STAGE/resources/server/"
 cp "$LEGAL/licenses/GPL-3.0.txt" "$STAGE/resources/server/licenses/"
 

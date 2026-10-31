@@ -167,7 +167,10 @@ reason in `/v1/memory/status`).
 ### Configuration
 
 `HypnosConfig` (`hypnos-core/src/config.rs`): `[server]`, `[limits]`, `[hardware]`, `[[models]]` with
-nested `[models.arch]`. `config_version` (absent = 1, `CONFIG_VERSION` in `config.rs`): a newer file is refused by
+nested `[models.arch]`. `server.models_dir` (or `HYPNOS_MODELS_DIR`) is the folder relative model
+paths resolve against: `main.rs` calls `apply_models_dir` before the GGUF detection and
+`validate`, which reports a missing folder once (`models_dir not found`); the example configs
+and the default profile use `"models"` with bare file names (the manifest's `local` column). `config_version` (absent = 1, `CONFIG_VERSION` in `config.rs`): a newer file is refused by
 `from_toml_str`, an older one goes through `HypnosConfig::migrate` (add a step per bump); keys no
 field consumes are collected in `unknown_keys` and reported as warnings. `hypnos --check-config
 [file]` runs detection and validation and exits. `HypnosConfig::validate` runs at startup and aborts on any error (missing
@@ -273,7 +276,12 @@ it in `Contents/MacOS` (sidecar), `Contents/Frameworks` (dylib, found through th
 `@executable_path/../Frameworks` rpath) and `Contents/Resources` (espeak data and playground,
 found by the server through `hypnos_core::config::beside_executable`). The bundled server runs
 with a config the app writes to `~/Library/Application Support/Hypnos/`; `sync_models`
-disables models with missing files before each start and enables them again later. Ad-hoc
+disables models with missing files before each start and enables them again later (it resolves
+paths through `[server] models_dir` and changes nothing when that folder is missing).
+`src-tauri/src/models.rs` + `Models.svelte` (DESK-17) download the manifest's models (sizes and
+SHA-256 from the Hugging Face tree API and the GitHub release API, `.part` + `Range` resume,
+`models_set_dir` writes `models_dir` into the app's own config and moves the files); the
+bundle carries `Resources/server/models.manifest`. Ad-hoc
 builds have no hardened runtime (`hardenedRuntime: false`; its library validation refuses an
 ad-hoc dylib); a Developer ID build turns it on. Every server call is a command in `src-tauri/src/hypnos.rs` on `hypnos-client`
 (chat tokens over a `tauri::ipc::Channel`, cancel by request id); the webview has no HTTP

@@ -87,12 +87,26 @@ app's commands.
   (`Contents/Frameworks`), the espeak data, the playground and a config template
   (`Contents/Resources`). On first launch the app writes `~/Library/Application
   Support/Hypnos/hypnos.toml` from that template and starts the server with it (Start with the app
-  is on by default). Model files go in `~/Library/Application Support/Hypnos/models/` with the
-  names the config uses (`./run.sh models` downloads them into `backend/models/`; copy or link
-  them). Before each start the app disables the models whose files are missing, since the server
+  is on by default). Model files go in its models folder, `~/Library/Application
+  Support/Hypnos/models/` unless you choose another (see Models). Before each start the app disables the models whose files are missing, since the server
   refuses a config with missing weights, and enables them again once the files are there; the
   log view lists both. A model you disable yourself in that config stays disabled. Edit the config
   freely, it is never overwritten; delete it to get the template back.
+
+- **Models** (Local server dialog > Models…; opens by itself on the first launch of the bundled
+  server while it has no models): the lineup from `models.manifest` (the one `./run.sh models`
+  reads) with each model's modality, size and state. Tick the ones to download: files go to
+  `<file>.part` first and resume where they stopped (Stop keeps them; `fetch-models.sh` uses the
+  same names), each is checked against the SHA-256 the host publishes (Hugging Face LFS, GitHub
+  release assets) or its size, and the app then restarts the local server, which enables the
+  models whose files arrived. The download is refused when it needs more than the free space.
+  For the app's own config, Change… picks another models folder (an external drive, say) and
+  writes it as `[server] models_dir`, moving the files there when "Move the files" is ticked
+  (a rename on the same volume, a copy with progress across volumes). A missing folder, such as
+  an unplugged drive, is shown as such in the dialog and in the server's one startup error,
+  without touching which models are enabled. For another config the folder is its `models_dir`
+  (or `<config folder>/models`) and is changed in the file. Entries no `[[models]]` block uses
+  (`docling-gpu`) are hidden.
 
 - **Menu bar / tray icon**: the logo with a dot for the server's state (green ready, amber
   loading, red unreachable or key refused, grey connecting). A left click shows or hides the

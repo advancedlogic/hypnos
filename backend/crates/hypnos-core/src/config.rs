@@ -518,6 +518,13 @@ pub struct ServerConfig {
     /// `index.html` (release archives and the Docker image ship it there), otherwise nothing.
     #[serde(default)]
     pub frontend_dir: Option<PathBuf>,
+    /// The folder that relative model paths (`weights_path`, `aux_weights_path`,
+    /// `text_encoder_path`, `tokenizer_path`, `voices_path`) resolve against, itself relative to
+    /// the working directory. `HYPNOS_MODELS_DIR` overrides it. Unset: the working directory,
+    /// as before this key existed. The example configs set `"models"` with bare file names, the
+    /// layout `models.manifest` downloads; the desktop app points it at its models folder.
+    #[serde(default)]
+    pub models_dir: Option<PathBuf>,
     /// Where `/v1/documents/convert` keeps the pictures a `return_pictures` conversion cut out
     /// (one JSON file per picture: base64 image plus its metadata). Unset: `hypnos-pictures`
     /// under the OS temporary directory. Documents left from an earlier run are removed at
@@ -652,6 +659,7 @@ impl Default for ServerConfig {
             api_key_defaults: ApiKeyLimits::default(),
             request_log_redact: Vec::new(),
             frontend_dir: None,
+            models_dir: None,
             document_pictures_dir: None,
             document_pictures_ttl_secs: default_document_pictures_ttl_secs(),
             document_pictures_max_bytes: default_document_pictures_max_bytes(),
@@ -860,6 +868,48 @@ impl HypnosConfig {
         notes
     }
 
+    /// Applies `server.models_dir` (or `env_override`, `HYPNOS_MODELS_DIR`): the folder becomes
+    /// absolute against `base_dir` and every relative model path is joined onto it, so the
+    /// engines, the GGUF detection and `validate` all see the final paths. Without a folder the
+    /// paths stay relative to `base_dir`, as before. Returns the folder that was applied.
+    pub fn apply_models_dir(
+        &mut self,
+        base_dir: &std::path::Path,
+        env_override: Option<&str>,
+    ) -> Option<PathBuf> {
+        let configured = env_override
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| self.server.models_dir.clone())?;
+        let dir = if configured.is_absolute() {
+            configured
+        } else {
+            base_dir.join(configured)
+        };
+        let rebase = |p: &mut PathBuf| {
+            if p.is_relative() {
+                *p = dir.join(&*p);
+            }
+        };
+        for m in &mut self.models {
+            rebase(&mut m.weights_path);
+            for p in [
+                &mut m.aux_weights_path,
+                &mut m.text_encoder_path,
+                &mut m.tokenizer_path,
+                &mut m.voices_path,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                rebase(p);
+            }
+        }
+        self.server.models_dir = Some(dir.clone());
+        Some(dir)
+    }
+
     /// Fills `[models.arch]` fields the config left unset from each model's GGUF metadata
     /// (`block_count`, `head_count_kv`, `key_length`, `context_length`, sliding window). Explicit
     /// values are kept. Returns one line per model describing what was detected, for the log.
@@ -986,6 +1036,20 @@ impl HypnosConfig {
                 "unknown key `{key}` is ignored (a typo, or a key this version no longer has; see README \"Config versions\")"
             ));
         }
+        // A missing models_dir (an unplugged drive, a moved folder) is one problem, reported once
+        // below, not one "not found" per model file.
+        let missing_models_dir = self
+            .server
+            .models_dir
+            .as_deref()
+            .map(resolve)
+            .filter(|d| !d.is_dir());
+        let in_missing_dir = |full: &std::path::Path| {
+            missing_models_dir
+                .as_deref()
+                .is_some_and(|d| full.starts_with(d))
+        };
+        let mut stranded: Vec<String> = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for m in &self.models {
             let id = &m.id;
@@ -1012,7 +1076,11 @@ impl HypnosConfig {
                 if let Some(p) = path {
                     let full = resolve(p);
                     if !full.is_file() {
-                        if m.enabled {
+                        if in_missing_dir(&full) {
+                            if m.enabled && !stranded.contains(id) {
+                                stranded.push(id.clone());
+                            }
+                        } else if m.enabled {
                             r.errors
                                 .push(format!("'{id}': {label} not found: {}", full.display()));
                         } else {
@@ -1027,7 +1095,11 @@ impl HypnosConfig {
             if let Some(v) = &m.voices_path {
                 let full = resolve(v);
                 if !full.is_dir() {
-                    if m.enabled {
+                    if in_missing_dir(&full) {
+                        if m.enabled && !stranded.contains(id) {
+                            stranded.push(id.clone());
+                        }
+                    } else if m.enabled {
                         r.errors.push(format!(
                             "'{id}': voices_path is not a directory: {}",
                             full.display()
@@ -1260,6 +1332,20 @@ impl HypnosConfig {
             r.errors
                 .push("limits.request_timeout_secs must be >= 1".into());
         }
+        if let Some(dir) = &missing_models_dir {
+            if stranded.is_empty() {
+                r.warnings.push(format!(
+                    "models_dir not found: {} (an unplugged drive or a moved folder?)",
+                    dir.display()
+                ));
+            } else {
+                r.errors.push(format!(
+                    "models_dir not found: {} (an unplugged drive or a moved folder?); enabled models with their files there: {}",
+                    dir.display(),
+                    stranded.join(", ")
+                ));
+            }
+        }
         r
     }
 }
@@ -1396,6 +1482,68 @@ max_queue = 4
         let cfg = HypnosConfig::from_toml_str(&minimal_toml("w.gguf")).unwrap();
         let report = cfg.validate(&dir);
         assert!(report.is_ok(), "{:?}", report.errors);
+    }
+
+    #[test]
+    fn models_dir_rebases_relative_model_paths() {
+        let base = std::env::temp_dir().join(format!("hypnos-cfg-md-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("store")).unwrap();
+        std::fs::write(base.join("store/w.gguf"), b"GGUF").unwrap();
+        let toml = format!(
+            "[server]\nmodels_dir = \"store\"\n{}",
+            minimal_toml("w.gguf").replace(
+                "[models.arch]",
+                "aux_weights_path = \"/abs/mmproj.gguf\"\n[models.arch]"
+            )
+        );
+        let mut cfg = HypnosConfig::from_toml_str(&toml).unwrap();
+        assert_eq!(cfg.apply_models_dir(&base, None), Some(base.join("store")));
+        assert_eq!(cfg.models[0].weights_path, base.join("store/w.gguf"));
+        // Absolute paths are left alone.
+        assert_eq!(
+            cfg.models[0].aux_weights_path.as_deref(),
+            Some(std::path::Path::new("/abs/mmproj.gguf"))
+        );
+
+        // HYPNOS_MODELS_DIR wins over the file; an absolute folder is taken as is.
+        let mut cfg = HypnosConfig::from_toml_str(&toml).unwrap();
+        cfg.apply_models_dir(&base, Some("/elsewhere"));
+        assert_eq!(
+            cfg.models[0].weights_path,
+            PathBuf::from("/elsewhere/w.gguf")
+        );
+
+        // No folder: paths stay relative to the working directory, as before the key existed.
+        let mut cfg = HypnosConfig::from_toml_str(&minimal_toml("w.gguf")).unwrap();
+        assert_eq!(cfg.apply_models_dir(&base, Some("  ")), None);
+        assert_eq!(cfg.models[0].weights_path, PathBuf::from("w.gguf"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_missing_models_dir_is_one_error_not_one_per_file() {
+        let base = std::env::temp_dir().join(format!("hypnos-cfg-gone-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        let toml = format!(
+            "[server]\nmodels_dir = \"/Volumes/unplugged-{}\"\n{}",
+            std::process::id(),
+            minimal_toml("w.gguf")
+        );
+        let mut cfg = HypnosConfig::from_toml_str(&toml).unwrap();
+        cfg.apply_models_dir(&base, None);
+        let report = cfg.validate(&base);
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        assert!(report.errors[0].starts_with("models_dir not found"));
+        assert!(report.errors[0].contains("unplugged"));
+        // With the model disabled nothing needs the folder: a warning, and the server starts.
+        cfg.models[0].enabled = false;
+        let report = cfg.validate(&base);
+        assert!(report.is_ok(), "{:?}", report.errors);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("models_dir not found")));
     }
 
     #[test]

@@ -262,6 +262,11 @@ const AUTO_DISABLED_FILE: &str = "auto-disabled.json";
 struct ModelSync {
     disabled: Vec<String>,
     enabled: Vec<String>,
+    /// The folder the model paths resolve against.
+    models_dir: PathBuf,
+    /// `models_dir` is set but not there (an unplugged drive): nothing was changed, and the
+    /// server reports it as one error.
+    missing_dir: bool,
 }
 
 /// Matches `enabled` in the app's own config to the model files on disk, as the server's
@@ -282,7 +287,25 @@ fn sync_models(config: &Path) -> Result<ModelSync, String> {
         .unwrap_or_default();
     let before = auto.clone();
 
-    let mut sync = ModelSync::default();
+    // Model paths resolve against [server] models_dir (relative to the config's folder), as
+    // the server resolves them (it runs in that folder).
+    let base = match doc
+        .get("server")
+        .and_then(|s| s.get("models_dir"))
+        .and_then(|v| v.as_str())
+    {
+        Some(m) => dir.join(m),
+        None => dir.to_path_buf(),
+    };
+    let mut sync = ModelSync {
+        models_dir: base.clone(),
+        ..ModelSync::default()
+    };
+    if !base.is_dir() {
+        // Disabling everything would only hide the real problem.
+        sync.missing_dir = true;
+        return Ok(sync);
+    }
     let mut ids = std::collections::BTreeSet::new();
     if let Some(models) = doc
         .get_mut("models")
@@ -296,7 +319,7 @@ fn sync_models(config: &Path) -> Result<ModelSync, String> {
             let present = MODEL_PATH_KEYS
                 .iter()
                 .filter_map(|k| model.get(k).and_then(|v| v.as_str()))
-                .all(|p| dir.join(p).is_file());
+                .all(|p| base.join(p).is_file());
             let enabled = model
                 .get("enabled")
                 .and_then(|v| v.as_bool())
@@ -365,7 +388,13 @@ pub async fn local_server_start<R: Runtime>(
     let mut notes = Vec::new();
     if let Some(c) = config.filter(|c| is_managed(&app, Path::new(c))) {
         let sync = sync_models(Path::new(c))?;
-        let models = Path::new(c).with_file_name("models");
+        let models = &sync.models_dir;
+        if sync.missing_dir {
+            notes.push(format!(
+                "[app] the models folder {} is not there (an unplugged drive?): connect it, or choose another in Models",
+                models.display()
+            ));
+        }
         if !sync.disabled.is_empty() {
             notes.push(format!(
                 "[app] disabled until their files are in {}: {}",
@@ -460,7 +489,7 @@ pub async fn local_server_start<R: Runtime>(
     Ok(server.0.lock().await.status.clone())
 }
 
-fn is_managed<R: Runtime>(app: &AppHandle<R>, config: &Path) -> bool {
+pub fn is_managed<R: Runtime>(app: &AppHandle<R>, config: &Path) -> bool {
     let Ok(dir) = managed_dir(app) else {
         return false;
     };
@@ -652,20 +681,21 @@ mod tests {
     const CONFIG: &str = r#"# the user's comment survives
 [server]
 port = 9999
+models_dir = "models"
 
 [[models]]
 id = "chat"
-weights_path = "models/chat.gguf"
-aux_weights_path = "models/mmproj.gguf"
+weights_path = "chat.gguf"
+aux_weights_path = "mmproj.gguf"
 
 [[models]]
 id = "tts"
-weights_path = "models/kokoro/model.onnx"
+weights_path = "kokoro/model.onnx"
 
 [[models]]
 id = "off-by-user"
 enabled = false
-weights_path = "models/gone.gguf"
+weights_path = "gone.gguf"
 "#;
 
     fn scratch(name: &str) -> PathBuf {
@@ -707,7 +737,9 @@ weights_path = "models/gone.gguf"
             .starts_with("# the user's comment survives"));
 
         // Nothing changed on disk: nothing to do.
-        assert_eq!(sync_models(&config).unwrap(), ModelSync::default());
+        let sync = sync_models(&config).unwrap();
+        assert!(sync.disabled.is_empty() && sync.enabled.is_empty());
+        assert_eq!(sync.models_dir, dir.join("models"));
 
         // The projector arrives: chat is back; off-by-user still off although never auto-disabled.
         std::fs::write(dir.join("models/mmproj.gguf"), b"x").unwrap();
@@ -720,6 +752,22 @@ weights_path = "models/gone.gguf"
             serde_json::from_str(&std::fs::read_to_string(dir.join(AUTO_DISABLED_FILE)).unwrap())
                 .unwrap();
         assert!(auto.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_models_folder_changes_nothing() {
+        let dir = scratch("unplugged");
+        let config = dir.join("hypnos.toml");
+        let unplugged = CONFIG.replace(
+            "models_dir = \"models\"",
+            "models_dir = \"/Volumes/hypnos-test-unplugged\"",
+        );
+        std::fs::write(&config, &unplugged).unwrap();
+        let sync = sync_models(&config).unwrap();
+        assert!(sync.missing_dir);
+        assert!(sync.disabled.is_empty());
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), unplugged);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

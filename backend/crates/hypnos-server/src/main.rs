@@ -153,8 +153,16 @@ async fn run() -> Result<()> {
         config.server.port = port;
     }
 
-    // Fill unset [models.arch] fields from the GGUF headers before validating them.
     let base_dir = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+    // Relative model paths resolve against models_dir (HYPNOS_MODELS_DIR, then the file).
+    if let Some(dir) = config.apply_models_dir(
+        &base_dir,
+        std::env::var("HYPNOS_MODELS_DIR").ok().as_deref(),
+    ) {
+        info!(models_dir = %dir.display(), "Model files");
+    }
+
+    // Fill unset [models.arch] fields from the GGUF headers before validating them.
     for note in config.detect_arch_from_gguf(&base_dir) {
         info!(config = %note);
     }

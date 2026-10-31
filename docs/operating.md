@@ -55,6 +55,7 @@ booking; `/v1/memory/status` right after `/ready` shows the pre-staged models in
 | 507 `process_memory_cap` | `process_footprint_bytes`, `process_memory_cap_bytes` | Raise `hardware.max_process_memory_bytes`, or accept it as the guard it is |
 | 507 `device_out_of_memory` | log line "Retrying after the engine ran out of device memory" or "no idle model holds VRAM"; `recent_evictions` with reason `device_out_of_memory`; `tier1_vram_unaccounted_bytes` | A placed model's engine found the device full mid-request (runtime buffers beyond the booking). Idle models were evicted and the request retried once; a 507 means nothing was left to evict. Raise that model's `activation_workspace_bytes` so the booking covers its real peak, or `vram_safety_margin_bytes` |
 | Machine paging, everything slow | `free RAM` on the host; `tier2_pinned_ram_used_bytes` close to the budget | Lower `pinned_ram_budget_bytes`, `keep_warm_in_ram = false` on models that reload fast (the image model), fewer pre-staged models |
+| Startup refused: `models_dir not found: … (an unplugged drive or a moved folder?)` | the one config error, listing the enabled models with files there | The folder in `server.models_dir` (or `HYPNOS_MODELS_DIR`) is missing: connect the drive, point the key at the folder, or disable those models. A missing folder is reported once instead of one "not found" per file |
 | 503 `model_not_available` right after start | `/ready` says 503 | Startup pre-staging is running (minutes with a large model); wait for `/ready` |
 | GPU hot or throttling | `gpu.throttled`, `hypnos_gpu_temperature_celsius`, `hypnos_gpu_throttled` | Cooling, power limits; Hypnos only reports it |
 | Document conversion slow | `hypnos_document_ms_per_page` | Table-heavy pages are CPU-bound (TableFormer); `device = "gpu"` helps layout- and OCR-heavy documents only (`docs/bench/docling-cuda-2026-10-30.md`) |
@@ -134,6 +135,12 @@ their usual exceptions.
   terminal. Startup prints every config warning and error, the device and the budgets.
 - The port is `server.port` (9999 by default), overridden by `HYPNOS_PORT` and, above that, by
   `--port N` on the command line, so one config file can serve several instances.
+- Model files: relative `weights_path`, `aux_weights_path`, `text_encoder_path`,
+  `tokenizer_path` and `voices_path` resolve against `server.models_dir` (itself relative to the
+  working directory; the example configs set `"models"` with bare file names, the layout of
+  `models.manifest`), overridden by `HYPNOS_MODELS_DIR`, e.g. to keep 31 GB on another drive.
+  Without the key they resolve against the working directory, as configs written before it do.
+  Startup logs the folder in use (`Model files models_dir=…`).
 - `server.request_log_level`: `info` keeps metadata only and is the right level for anything
   exposed beyond a trusted group; `debug` stores prompts and completions; `trace` stores payloads
   with media replaced by placeholders. `POST /v1/logs/level` changes it at runtime.
@@ -170,7 +177,8 @@ docker run --gpus all -p 9999:9999 -v ./models:/opt/hypnos/models \
 ```
 
 Mount your own `hypnos.toml` over `/opt/hypnos/hypnos.toml` or point `HYPNOS_CONFIG` at a
-mounted file. The image has a `HEALTHCHECK` on `/health` with a 10-minute start period for the
+mounted file. The models volume is `/opt/hypnos/models` (`models_dir = "models"` from the working
+directory); mount it elsewhere and set `HYPNOS_MODELS_DIR` to match. The image has a `HEALTHCHECK` on `/health` with a 10-minute start period for the
 pre-staging. `--build-arg DOCLING_CUDA=1` adds the CUDA 13 runtime for docling on the GPU.
 
 **systemd** (Linux archive unpacked in `/opt/hypnos`):

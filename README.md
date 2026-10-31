@@ -226,6 +226,10 @@ default_context_len = 8192           # context reserved per load (layers, KV hea
 kv_dtype = "q8_0"                    # f16 | q8_0 | q4_0
 ```
 
+Relative model paths resolve against the working directory (`backend/` here), or against
+`[server] models_dir` when the config sets one: the example configs use `models_dir = "models"`
+with bare file names, and `HYPNOS_MODELS_DIR` overrides it (models on another drive).
+
 ```bash
 HYPNOS_CONFIG=my.toml ./run.sh start backend     # or: cd backend && ./target/release/hypnos my.toml
 ```
