@@ -1490,11 +1490,15 @@ max_queue = 4
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(base.join("store")).unwrap();
         std::fs::write(base.join("store/w.gguf"), b"GGUF").unwrap();
+        // Absolute on every OS ("/abs" is not on Windows: it has no drive). TOML literal strings
+        // keep Windows backslashes as they are.
+        let abs_aux = base.join("abs").join("mmproj.gguf");
+        let elsewhere = base.join("elsewhere");
         let toml = format!(
             "[server]\nmodels_dir = \"store\"\n{}",
             minimal_toml("w.gguf").replace(
                 "[models.arch]",
-                "aux_weights_path = \"/abs/mmproj.gguf\"\n[models.arch]"
+                &format!("aux_weights_path = '{}'\n[models.arch]", abs_aux.display())
             )
         );
         let mut cfg = HypnosConfig::from_toml_str(&toml).unwrap();
@@ -1503,16 +1507,13 @@ max_queue = 4
         // Absolute paths are left alone.
         assert_eq!(
             cfg.models[0].aux_weights_path.as_deref(),
-            Some(std::path::Path::new("/abs/mmproj.gguf"))
+            Some(abs_aux.as_path())
         );
 
         // HYPNOS_MODELS_DIR wins over the file; an absolute folder is taken as is.
         let mut cfg = HypnosConfig::from_toml_str(&toml).unwrap();
-        cfg.apply_models_dir(&base, Some("/elsewhere"));
-        assert_eq!(
-            cfg.models[0].weights_path,
-            PathBuf::from("/elsewhere/w.gguf")
-        );
+        cfg.apply_models_dir(&base, Some(&elsewhere.display().to_string()));
+        assert_eq!(cfg.models[0].weights_path, elsewhere.join("w.gguf"));
 
         // No folder: paths stay relative to the working directory, as before the key existed.
         let mut cfg = HypnosConfig::from_toml_str(&minimal_toml("w.gguf")).unwrap();
