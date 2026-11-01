@@ -58,9 +58,15 @@ jobs:
             echo "CMAKE_C_COMPILER_LAUNCHER=sccache"
             echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache"
           } >> "$GITHUB_ENV"
-          # nvcc through sccache only on Linux: on Windows CMake's CUDA test compile uses MSVC's
-          # shared-PDB debug flags, which sccache refuses with an error instead of compiling.
-          [ "$RUNNER_OS" = Linux ] && echo "CMAKE_CUDA_COMPILER_LAUNCHER=sccache" >> "$GITHUB_ENV" || true
+          # nvcc through sccache on Linux and Windows (BUILD-12: without it Windows recompiled
+          # every CUDA kernel, 2h43m against Linux's 39 min). CMake's compiler checks build in
+          # Debug, which on Windows adds MSVC's shared-PDB flags that sccache refuses for nvcc:
+          # they build in Release instead (llama-cpp-sys forwards every CMAKE_* variable, the
+          # diffusion-rs patch this one). macOS builds no CUDA.
+          if [ "$RUNNER_OS" != macOS ]; then
+            echo "CMAKE_CUDA_COMPILER_LAUNCHER=sccache" >> "$GITHUB_ENV"
+            echo "CMAKE_TRY_COMPILE_CONFIGURATION=Release" >> "$GITHUB_ENV"
+          fi
 
       - name: CUDA architectures
         if: runner.os != 'macOS'

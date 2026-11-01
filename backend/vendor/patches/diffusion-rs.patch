@@ -1,5 +1,5 @@
 diff --git a/sys/build.rs b/sys/build.rs
-index 22b9b8a..9a11353 100644
+index 22b9b8a..d1fe307 100644
 --- a/sys/build.rs
 +++ b/sys/build.rs
 @@ -1,6 +1,6 @@
@@ -10,7 +10,21 @@ index 22b9b8a..9a11353 100644
      path::{Path, PathBuf},
  };
  
-@@ -66,7 +66,10 @@ fn main() {
+@@ -56,6 +56,13 @@ fn main() {
+ 
+     // Configure cmake for building
+     let mut config = Config::new(&diffusion_root);
++    // CMake's compiler checks build in Debug unless told otherwise; on Windows that adds MSVC's
++    // shared-PDB flags, which sccache refuses for nvcc. CI sets this to Release (as llama-cpp-sys
++    // forwards every CMAKE_* variable, this forwards the one the cache needs).
++    println!("cargo:rerun-if-env-changed=CMAKE_TRY_COMPILE_CONFIGURATION");
++    if let Ok(config_name) = env::var("CMAKE_TRY_COMPILE_CONFIGURATION") {
++        config.define("CMAKE_TRY_COMPILE_CONFIGURATION", config_name);
++    }
+ 
+     if target.contains("msvc") {
+         config.generator("Ninja");
+@@ -66,7 +73,10 @@ fn main() {
      }
      config
          .profile("Release")
@@ -22,7 +36,7 @@ index 22b9b8a..9a11353 100644
          .define("SD_BUILD_EXAMPLES", "OFF")
          .define("SD_BUILD_SERVER", "OFF")
          .define("GGML_OPENMP", "OFF")
-@@ -123,6 +126,12 @@ fn main() {
+@@ -123,6 +133,12 @@ fn main() {
          if let Ok(target) = env::var("CUDA_COMPUTE_CAP") {
              config.define("CUDA_COMPUTE_CAP", target);
          }
@@ -35,7 +49,7 @@ index 22b9b8a..9a11353 100644
      }
  
      #[cfg(feature = "hipblas")]
-@@ -228,43 +237,74 @@ fn main() {
+@@ -228,43 +244,74 @@ fn main() {
      // Build stable-diffusion
      let destination = config.build();
  

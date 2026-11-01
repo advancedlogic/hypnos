@@ -76,16 +76,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       `POST /v1/agents/{id}/runs` with streamed steps) so the SDKs and the playground get it, the
       tools running against the server's own models. `docs/api.md`, mock server, the three SDKs.
 
-- [ ] ⬛ **BUILD-12** `P1` Cut the Windows CUDA release build (3h10m) to the Linux one's time
-      After BUILD-11 Windows CUDA is the release's critical path: 3h10m in run 41273996212 against
-      1h31m on Linux, because nvcc does not go through sccache on Windows (CMake's CUDA test compile
-      uses MSVC's shared-PDB flags, which sccache refuses). Options, measure each: (1) make nvcc
-      cacheable on Windows (`CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded` / `/Z7`, policy CMP0141,
-      so no shared PDB, then `CMAKE_CUDA_COMPILER_LAUNCHER=sccache`); (2) cache the CMake build
-      folders of llama.cpp and sd.cpp between runs keyed on the vendor pins (`actions/cache`);
-      (3) a narrower Windows target list (drop the PTX entries or 75/80) if (1) and (2) fall short.
-      Done when the Windows CUDA job takes under 1h30m on a warm cache; record the timings here.
-
 - [ ] 🟨 **TEST-5** `P2` Starvation under sustained load; real-engine drills and reproducible releases
       From TEST-4. (1) The stress test showed that when two resident models stay busy, a third
       model's requests all get 507 `insufficient_vram_or_ram` (neither can be evicted while
@@ -139,7 +129,22 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## In Progress
 
-_No cards yet._
+- [ ] ⬛ **BUILD-12** `P1` Cut the Windows CUDA release build (3h10m) to the Linux one's time
+      After BUILD-11 Windows CUDA is the release's critical path: 3h10m in run 41273996212 against
+      1h31m on Linux, because nvcc does not go through sccache on Windows (CMake's CUDA test compile
+      uses MSVC's shared-PDB flags, which sccache refuses). Options, measure each: (1) make nvcc
+      cacheable on Windows (`CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded` / `/Z7`, policy CMP0141,
+      so no shared PDB, then `CMAKE_CUDA_COMPILER_LAUNCHER=sccache`); (2) cache the CMake build
+      folders of llama.cpp and sd.cpp between runs keyed on the vendor pins (`actions/cache`);
+      (3) a narrower Windows target list (drop the PTX entries or 75/80) if (1) and (2) fall short.
+      Done when the Windows CUDA job takes under 1h30m on a warm cache; record the timings here.
+      Cause (v0.6.0 run): the Build step took 2h43m on Windows against 39 min on Linux, and only
+      111 C/C++ compiles went through sccache: every CUDA kernel of llama.cpp and sd.cpp was
+      rebuilt. The failure that kept nvcc out was CMake's compiler check, built in Debug, whose
+      shared-PDB flags sccache refuses. Now: `CMAKE_CUDA_COMPILER_LAUNCHER=sccache` on Windows
+      too, with `CMAKE_TRY_COMPILE_CONFIGURATION=Release` (llama-cpp-sys forwards every CMAKE_*
+      variable; the diffusion-rs patch forwards this one). To measure: the first run fills the
+      cache, the second shows the time.
 
 ## Done
 
