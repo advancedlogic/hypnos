@@ -868,7 +868,7 @@ async fn chat_completions_inner(
             if let Some(backend) = state.scheduler.backend(&req.model) {
                 if !backend.supports_tool_calls() {
                     return Err(HypnosError::InvalidRequest(format!(
-                        "{} has no tool-calling format in Hypnos; tools work with Gemma 4 models",
+                        "{} has no tool-calling format in Hypnos; tools work with Gemma 4 and Qwen 3.5+ models",
                         req.model
                     ))
                     .into());

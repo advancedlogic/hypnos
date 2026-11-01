@@ -400,26 +400,53 @@ pub fn advise(catalog: &ModelCatalog, req: &AdvisorRequest) -> Result<Advice, St
         ));
     }
 
+    // Every (entry, variant) that serves a need, per need. A lineup the advisor accepts has each
+    // model as the largest for some need (below), so choosing one server per need and taking the
+    // union reaches every such lineup: the search grows with the needs, not the catalog.
+    let options: Vec<(usize, usize)> = candidates
+        .iter()
+        .enumerate()
+        .flat_map(|(i, e)| (0..e.variants.len()).map(move |v| (i, v)))
+        .collect();
+    let needs: Vec<ModalityKey> = needed.iter().copied().collect();
+    let per_need: Vec<Vec<(usize, usize)>> = needs
+        .iter()
+        .map(|m| {
+            options
+                .iter()
+                .copied()
+                .filter(|(i, _)| serves(candidates[*i], *m))
+                .collect()
+        })
+        .collect();
+    let weight = |v: &CatalogVariant| v.files.iter().map(|f| f.size).sum::<u64>();
+
     let mut best: Option<Scored> = None;
     for tight in [false, true] {
-        // Every choice of (entry -> one of its variants, or none).
-        let mut choice = vec![0usize; candidates.len()];
+        // Each model is placed once per pass, not once per lineup.
+        let mut sized: std::collections::HashMap<(usize, usize), Option<Pick>> =
+            std::collections::HashMap::new();
+        let mut seen: BTreeSet<Vec<(usize, usize)>> = BTreeSet::new();
+        let mut choice = vec![0usize; needs.len()];
         loop {
-            let chosen: Vec<(&CatalogEntry, &CatalogVariant)> = candidates
+            let mut lineup: Vec<(usize, usize)> = choice
                 .iter()
-                .zip(&choice)
-                .filter(|(_, c)| **c > 0)
-                .map(|(e, c)| (*e, &e.variants[*c - 1]))
+                .enumerate()
+                .map(|(n, c)| per_need[n][*c])
                 .collect();
-            let covers = needed
-                .iter()
-                .all(|m| chosen.iter().any(|(e, _)| serves(e, *m)));
-            // Every model must be the lineup's largest for at least one need (a big chat model
-            // next to a small multimodal one is fine; a second, smaller model for the same needs
-            // is not).
-            let weight = |v: &CatalogVariant| v.files.iter().map(|f| f.size).sum::<u64>();
-            let minimal = covers
-                && chosen.iter().enumerate().all(|(i, (e, v))| {
+            lineup.sort_unstable();
+            lineup.dedup();
+            // One variant per entry.
+            let one_variant = lineup.windows(2).all(|w| w[0].0 != w[1].0);
+            if one_variant && seen.insert(lineup.clone()) {
+                let chosen: Vec<(&CatalogEntry, &CatalogVariant)> = lineup
+                    .iter()
+                    .map(|(i, v)| (candidates[*i], &candidates[*i].variants[*v]))
+                    .collect();
+                // Every model must be the lineup's largest for at least one need (a big chat
+                // model next to a small multimodal one is fine; a second, smaller model for the
+                // same needs is not).
+                let minimal = chosen.iter().enumerate().all(|(i, (e, v))| {
                     needed.iter().any(|m| {
                         serves(e, *m)
                             && chosen.iter().enumerate().all(|(j, (o, ov))| {
@@ -427,30 +454,38 @@ pub fn advise(catalog: &ModelCatalog, req: &AdvisorRequest) -> Result<Advice, St
                             })
                     })
                 });
-            if minimal {
-                let picks: Option<Vec<Pick>> =
-                    chosen.iter().map(|(e, v)| size(e, v, &b, tight)).collect();
-                if let Some(picks) = picks {
-                    let s = score(picks, &needed, &b);
-                    if best.as_ref().is_none_or(|x| s.score > x.score + 1e-9) {
-                        best = Some(s);
+                if minimal {
+                    let picks: Option<Vec<Pick>> = lineup
+                        .iter()
+                        .map(|key| {
+                            sized
+                                .entry(*key)
+                                .or_insert_with(|| {
+                                    let e = candidates[key.0];
+                                    size(e, &e.variants[key.1], &b, tight)
+                                })
+                                .clone()
+                        })
+                        .collect();
+                    if let Some(picks) = picks {
+                        let s = score(picks, &needed, &b);
+                        if best.as_ref().is_none_or(|x| s.score > x.score + 1e-9) {
+                            best = Some(s);
+                        }
                     }
                 }
             }
-            // Next combination (mixed radix).
-            let mut i = 0;
-            loop {
-                if i == choice.len() {
+            // Next combination (mixed radix over the needs).
+            let mut n = 0;
+            while n < choice.len() {
+                choice[n] += 1;
+                if choice[n] < per_need[n].len() {
                     break;
                 }
-                choice[i] += 1;
-                if choice[i] <= candidates[i].variants.len() {
-                    break;
-                }
-                choice[i] = 0;
-                i += 1;
+                choice[n] = 0;
+                n += 1;
             }
-            if i == choice.len() {
+            if n == choice.len() {
                 break;
             }
         }
@@ -794,11 +829,13 @@ mod tests {
     fn a_large_machine_gets_the_largest_chat_model() {
         let a = ask(0, 128, true, &[Need::Chat, Need::Images]).unwrap();
         covers(&a, &[Need::Chat, Need::Images]);
-        assert!(
-            a.models.iter().any(|m| m.id == "gemma4:31b-q4"),
-            "{:?}",
-            a.models.iter().map(|m| &m.id).collect::<Vec<_>>()
-        );
+        // One of the catalog's largest chat models (the catalog grows; the id is not pinned).
+        let chat = a
+            .models
+            .iter()
+            .find(|m| m.serves.contains(&Need::Chat))
+            .unwrap();
+        assert!(chat.weights_bytes > 15 * GIB, "{} is small", chat.id);
         let image = a
             .models
             .iter()

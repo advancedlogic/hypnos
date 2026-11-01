@@ -21,7 +21,14 @@ pub const CATALOG_VERSION: u32 = 1;
 
 /// `general.architecture` values of GGUF models Hypnos runs properly through llama.cpp: prompt
 /// format, media markers, thinking and memory handling are implemented and checked for them.
-pub const TESTED_GGUF_ARCHITECTURES: &[&str] = &["gemma4", "gemma-embedding2", "lfm3"];
+pub const TESTED_GGUF_ARCHITECTURES: &[&str] = &[
+    "gemma4",
+    "gemma-embedding2",
+    "lfm3",
+    "qwen35",
+    "qwen35moe",
+    "qwen3vl",
+];
 
 /// Keys the rendered block writes itself; an entry's `config` may not set them.
 const GENERATED_KEYS: &[&str] = &[

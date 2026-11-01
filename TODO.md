@@ -107,13 +107,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       probably makes llama.cpp b11982 re-capture its CUDA graph every step again. Check with the
       graph counters / `GGML_CUDA_DISABLE_GRAPHS`, try 2 slots and 4 x 8k, and ship the shape that
       batches well (on Metal 4 slots gave 1.43x).
-- [ ] 🟩 **ENG-6** `P1` Qwen chat format: Qwen 3.5 / 3.6 / 3.8 and the models built on them
-      One renderer (`qwen_prompt`: ChatML, `<think>` thinking with the budget/close logic of
-      `lfm3_prompt`, Qwen's `<tool_call>` JSON tool format in `tools.rs`, vision markers) and
-      `qwen35`, `qwen35moe`, `qwen3vl` in `TESTED_GGUF_ARCHITECTURES`. Catalog: Qwen3.8-27B (19 GB
-      Q4_K_M, vision, 256k, Apache-2.0), Qwen3.6-35B-A3B (20 GB, MoE: `moe_offload`), Qwen3.5
-      0.8B / 2B / 4B / 9B, MiniCPM-V 4.6 (0.5 GB vision), Qwen3-ASR 0.6B / 1.7B (transcription,
-      `qwen3vl`). Check Clef / Clef-Flash (Cloudflare, own `clef` arch) against the same renderer.
 - [ ] 🟩 **ENG-7** `P1` Image models on the existing sd.cpp file set; per-model sampling defaults
       `diffusion.rs` uses one `DEFAULT_STEPS` / CFG for every model; turbo models want ~4-8 steps
       and CFG 1. Add `[models.arch]`-style `default_steps` / `default_cfg_scale` (sample method,
@@ -153,6 +146,22 @@ _No cards yet._
 
 ## Done
 
+- [x] 🟩 **ENG-6** `P1` Qwen chat format: Qwen 3.5 / 3.6 / 3.8 and the models built on them
+      One renderer (`qwen_prompt`: ChatML, `<think>` thinking with the budget/close logic of
+      `lfm3_prompt`, Qwen's `<tool_call>` JSON tool format in `tools.rs`, vision markers) and
+      `qwen35`, `qwen35moe`, `qwen3vl` in `TESTED_GGUF_ARCHITECTURES`. Catalog: Qwen3.8-27B (19 GB
+      Q4_K_M, vision, 256k, Apache-2.0), Qwen3.6-35B-A3B (20 GB, MoE: `moe_offload`), Qwen3.5
+      0.8B / 2B / 4B / 9B, MiniCPM-V 4.6 (0.5 GB vision), Qwen3-ASR 0.6B / 1.7B (transcription,
+      `qwen3vl`). Check Clef / Clef-Flash (Cloudflare, own `clef` arch) against the same renderer.
+      Done: `qwen_prompt` + `QwenTemplate` and Qwen's XML tool calls (`ToolFormat::QwenXml`),
+      byte-identical to the real templates (11 cases rendered with jinja2, `testdata/`); thinking
+      starts after `<think>\n` and closes with `</think>` for every `<think>` model; GGUF detection
+      books KV only for the full-attention layers of hybrids. Catalog: Qwen3.8 27B, Qwen3.6
+      35B-A3B, Qwen3.5 0.8B / 2B / 4B / 9B, MiniCPM-V 4.6, Qwen3-ASR 0.6B / 1.7B (language
+      detection, forced language by prefill), all tested on the M5 Max (chat, thinking, vision,
+      tool round trip, forced and streamed calls, transcription) and measured. Clef is a decision
+      model, not a chat model: left out. The advisor's search now picks one server per need
+      (201 s -> 0.02 s with 24 entries); `measure-memory` transcribes only for ASR-only models.
 - [x] 🟩 **ENG-5** `P1` Catalog: the other Gemma 4 sizes, Nemotron 3.5 Bolt E4B, LFM3-Omni 2B
       Architectures Hypnos already runs (`gemma4`, `lfm3`), so catalog entries + `[models.estimate]`
       + a smoke run each: `ggml-org/gemma-4-E2B-it-GGUF` (2.8 GB Q4_0, vision + audio in),

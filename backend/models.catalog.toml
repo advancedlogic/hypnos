@@ -537,6 +537,446 @@ files = [
   { role = "aux", repo = "ggml-org/LFM3-Omni-2B-GGUF", remote = "mmproj-LFM3-Omni-2B-Q8_0.gguf", local = "mmproj-LFM3-Omni-2B-Q8_0.gguf", size = 506842432 },
 ]
 
+[[models]]
+id = "qwen3.8:27b"
+name = "Qwen3.8 27B"
+publisher = "Qwen (Alibaba)"
+license = "apache-2.0"
+architecture = "qwen35"
+modality = "text_generation"
+additional_modalities = ["vision"]
+engine = "ggml_llama"
+capabilities = ["thinking", "tools"]
+summary = "Dense hybrid-attention chat and vision model with 256k context, thinking and tool calling; for machines with 32 GB or more."
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = true
+priority = "high"
+slots = 2
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 536870912
+activation_workspace_bytes = 2281701376 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 64
+num_kv_heads = 4
+head_dim = 256
+max_context_len = 262144
+global_kv_layers = 16
+global_num_kv_heads = 4
+swa_kv_layers = 0
+swa_num_kv_heads = 0
+swa_head_dim = 256
+
+[[models.variants]]
+quant = "Q4_K_M"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/Qwen3.8-27B-GGUF", remote = "Qwen3.8-27B-Q4_K_M.gguf", local = "Qwen3.8-27B-Q4_K_M.gguf", size = 18973870528 },
+  { role = "aux", repo = "ggml-org/Qwen3.8-27B-GGUF", remote = "mmproj-Qwen3.8-27B-BF16.gguf", local = "mmproj-Qwen3.8-27B-BF16.gguf", size = 931145888 },
+]
+
+[[models.variants]]
+quant = "Q8_0"
+note = "Near-lossless; needs about 29 GB for the weights."
+files = [
+  { role = "weights", repo = "ggml-org/Qwen3.8-27B-GGUF", remote = "Qwen3.8-27B-Q8_0.gguf", local = "Qwen3.8-27B-Q8_0.gguf", size = 28595763648 },
+  { role = "aux", repo = "ggml-org/Qwen3.8-27B-GGUF", remote = "mmproj-Qwen3.8-27B-Q8_0.gguf", local = "mmproj-Qwen3.8-27B-Q8_0.gguf", size = 629247008 },
+]
+
+[[models]]
+id = "qwen3.6:35b-a3b"
+name = "Qwen3.6 35B-A3B"
+publisher = "Qwen (Alibaba)"
+license = "apache-2.0"
+architecture = "qwen35moe"
+modality = "text_generation"
+additional_modalities = ["vision"]
+engine = "ggml_llama"
+capabilities = ["thinking", "tools"]
+summary = "Mixture-of-Experts chat and vision model (3B active parameters): fast for its size, with thinking and tool calling."
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = true
+priority = "high"
+slots = 2
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 536870912
+activation_workspace_bytes = 2550136832 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 40
+num_kv_heads = 2
+head_dim = 256
+max_context_len = 262144
+expert_bytes = 18119393280
+global_kv_layers = 10
+global_num_kv_heads = 2
+swa_kv_layers = 0
+swa_num_kv_heads = 0
+swa_head_dim = 256
+
+[[models.variants]]
+quant = "Q4_K_M"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/Qwen3.6-35B-A3B-GGUF", remote = "Qwen3.6-35B-A3B-Q4_K_M.gguf", local = "Qwen3.6-35B-A3B-Q4_K_M.gguf", size = 20419565568 },
+  { role = "aux", repo = "ggml-org/Qwen3.6-35B-A3B-GGUF", remote = "mmproj-Qwen3.6-35B-A3B-BF16.gguf", local = "mmproj-Qwen3.6-35B-A3B-BF16.gguf", size = 902822144 },
+]
+
+[[models.variants]]
+quant = "Q8_0"
+note = "Near-lossless; needs about 37 GB for the weights."
+files = [
+  { role = "weights", repo = "ggml-org/Qwen3.6-35B-A3B-GGUF", remote = "Qwen3.6-35B-A3B-Q8_0.gguf", local = "Qwen3.6-35B-A3B-Q8_0.gguf", size = 36903139328 },
+  { role = "aux", repo = "ggml-org/Qwen3.6-35B-A3B-GGUF", remote = "mmproj-Qwen3.6-35B-A3B-Q8_0.gguf", local = "mmproj-Qwen3.6-35B-A3B-Q8_0.gguf", size = 614194304 },
+]
+
+[[models]]
+id = "qwen3.5:9b"
+name = "Qwen3.5 9B"
+publisher = "Qwen (Alibaba)"
+license = "apache-2.0"
+architecture = "qwen35"
+modality = "text_generation"
+additional_modalities = ["vision"]
+engine = "ggml_llama"
+capabilities = ["thinking", "tools"]
+summary = "Mid-size chat and vision model with thinking and tool calling (the same weights MOSS-Image uses as its text encoder)."
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+slots = 2
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 536870912
+activation_workspace_bytes = 2281701376 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 32
+num_kv_heads = 4
+head_dim = 256
+max_context_len = 262144
+global_kv_layers = 8
+global_num_kv_heads = 4
+swa_kv_layers = 0
+swa_num_kv_heads = 0
+swa_head_dim = 256
+
+[[models.variants]]
+quant = "Q4_K_M"
+default = true
+files = [
+  { role = "weights", repo = "unsloth/Qwen3.5-9B-GGUF", remote = "Qwen3.5-9B-Q4_K_M.gguf", local = "Qwen3.5-9B-Q4_K_M.gguf", size = 5680522464 },
+  { role = "aux", repo = "unsloth/Qwen3.5-9B-GGUF", remote = "mmproj-BF16.gguf", local = "mmproj-Qwen3.5-9B-BF16.gguf", size = 921705024 },
+]
+
+[[models.variants]]
+quant = "Q8_0"
+note = "Near-lossless; needs about 10 GB for the weights."
+files = [
+  { role = "weights", repo = "unsloth/Qwen3.5-9B-GGUF", remote = "Qwen3.5-9B-Q8_0.gguf", local = "Qwen3.5-9B-Q8_0.gguf", size = 9527502048 },
+  { role = "aux", repo = "unsloth/Qwen3.5-9B-GGUF", remote = "mmproj-BF16.gguf", local = "mmproj-Qwen3.5-9B-BF16.gguf", size = 921705024 },
+]
+
+[[models]]
+id = "qwen3.5:2b"
+name = "Qwen3.5 2B"
+publisher = "Qwen (Alibaba)"
+license = "apache-2.0"
+architecture = "qwen35"
+modality = "text_generation"
+additional_modalities = ["vision"]
+engine = "ggml_llama"
+capabilities = ["thinking", "tools"]
+summary = "Small chat and vision model with thinking and tool calling, for machines with little memory."
+
+[models.config]
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+slots = 2
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 536870912
+activation_workspace_bytes = 2684354560 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 24
+num_kv_heads = 2
+head_dim = 256
+max_context_len = 262144
+global_kv_layers = 6
+global_num_kv_heads = 2
+swa_kv_layers = 0
+swa_num_kv_heads = 0
+swa_head_dim = 256
+
+[[models.variants]]
+quant = "Q4_K_M"
+default = true
+files = [
+  { role = "weights", repo = "unsloth/Qwen3.5-2B-GGUF", remote = "Qwen3.5-2B-Q4_K_M.gguf", local = "Qwen3.5-2B-Q4_K_M.gguf", size = 1280835840 },
+  { role = "aux", repo = "unsloth/Qwen3.5-2B-GGUF", remote = "mmproj-BF16.gguf", local = "mmproj-Qwen3.5-2B-BF16.gguf", size = 671372992 },
+]
+
+[[models.variants]]
+quant = "Q8_0"
+note = "Larger and a little more accurate."
+files = [
+  { role = "weights", repo = "unsloth/Qwen3.5-2B-GGUF", remote = "Qwen3.5-2B-Q8_0.gguf", local = "Qwen3.5-2B-Q8_0.gguf", size = 2012012800 },
+  { role = "aux", repo = "unsloth/Qwen3.5-2B-GGUF", remote = "mmproj-BF16.gguf", local = "mmproj-Qwen3.5-2B-BF16.gguf", size = 671372992 },
+]
+
+[[models]]
+id = "qwen3.5:4b"
+name = "Qwen3.5 4B"
+publisher = "Qwen (Alibaba)"
+license = "apache-2.0"
+architecture = "qwen35"
+modality = "text_generation"
+additional_modalities = ["vision"]
+engine = "ggml_llama"
+capabilities = ["thinking", "tools"]
+summary = "Compact chat and vision model with thinking and tool calling."
+
+[models.config]
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+slots = 2
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 536870912
+activation_workspace_bytes = 2818572288 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 32
+num_kv_heads = 4
+head_dim = 256
+max_context_len = 262144
+global_kv_layers = 8
+global_num_kv_heads = 4
+swa_kv_layers = 0
+swa_num_kv_heads = 0
+swa_head_dim = 256
+
+[[models.variants]]
+quant = "Q4_K_M"
+default = true
+files = [
+  { role = "weights", repo = "unsloth/Qwen3.5-4B-GGUF", remote = "Qwen3.5-4B-Q4_K_M.gguf", local = "Qwen3.5-4B-Q4_K_M.gguf", size = 2740937888 },
+  { role = "aux", repo = "unsloth/Qwen3.5-4B-GGUF", remote = "mmproj-BF16.gguf", local = "mmproj-Qwen3.5-4B-BF16.gguf", size = 675569344 },
+]
+
+[[models.variants]]
+quant = "Q8_0"
+note = "Larger and a little more accurate."
+files = [
+  { role = "weights", repo = "unsloth/Qwen3.5-4B-GGUF", remote = "Qwen3.5-4B-Q8_0.gguf", local = "Qwen3.5-4B-Q8_0.gguf", size = 4482403488 },
+  { role = "aux", repo = "unsloth/Qwen3.5-4B-GGUF", remote = "mmproj-BF16.gguf", local = "mmproj-Qwen3.5-4B-BF16.gguf", size = 675569344 },
+]
+
+[[models]]
+id = "qwen3.5:0.8b"
+name = "Qwen3.5 0.8B"
+publisher = "Qwen (Alibaba)"
+license = "apache-2.0"
+architecture = "qwen35"
+modality = "text_generation"
+additional_modalities = ["vision"]
+engine = "ggml_llama"
+capabilities = ["thinking", "tools"]
+summary = "The smallest Qwen 3.5: quick chat, captions and tool calls; weak at arithmetic and facts."
+
+[models.config]
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+slots = 2
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 536870912
+activation_workspace_bytes = 2684354560 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 24
+num_kv_heads = 2
+head_dim = 256
+max_context_len = 262144
+global_kv_layers = 6
+global_num_kv_heads = 2
+swa_kv_layers = 0
+swa_num_kv_heads = 0
+swa_head_dim = 256
+
+[[models.variants]]
+quant = "Q8_0"
+default = true
+files = [
+  { role = "weights", repo = "unsloth/Qwen3.5-0.8B-GGUF", remote = "Qwen3.5-0.8B-Q8_0.gguf", local = "Qwen3.5-0.8B-Q8_0.gguf", size = 811843840 },
+  { role = "aux", repo = "unsloth/Qwen3.5-0.8B-GGUF", remote = "mmproj-BF16.gguf", local = "mmproj-Qwen3.5-0.8B-BF16.gguf", size = 207346528 },
+]
+
+[[models.variants]]
+quant = "Q4_K_M"
+note = "Smaller still; noticeably weaker answers."
+files = [
+  { role = "weights", repo = "unsloth/Qwen3.5-0.8B-GGUF", remote = "Qwen3.5-0.8B-Q4_K_M.gguf", local = "Qwen3.5-0.8B-Q4_K_M.gguf", size = 532517120 },
+  { role = "aux", repo = "unsloth/Qwen3.5-0.8B-GGUF", remote = "mmproj-BF16.gguf", local = "mmproj-Qwen3.5-0.8B-BF16.gguf", size = 207346528 },
+]
+
+[[models]]
+id = "qwen3-asr:1.7b"
+name = "Qwen3-ASR 1.7B"
+publisher = "Qwen (Alibaba)"
+license = "apache-2.0"
+architecture = "qwen3vl"
+modality = "speech_to_text"
+engine = "ggml_llama"
+summary = "The larger Qwen speech recognizer: the most accurate transcription in the catalog, 30 languages and 22 Chinese dialects."
+
+[models.config]
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+slots = 2
+
+[models.config.arch]
+default_context_len = 8192
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 536870912
+activation_workspace_bytes = 2147483648 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 28
+num_kv_heads = 8
+head_dim = 128
+max_context_len = 65536
+
+[[models.variants]]
+quant = "Q8_0"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/Qwen3-ASR-1.7B-GGUF", remote = "Qwen3-ASR-1.7B-Q8_0.gguf", local = "Qwen3-ASR-1.7B-Q8_0.gguf", size = 2165034944 },
+  { role = "aux", repo = "ggml-org/Qwen3-ASR-1.7B-GGUF", remote = "mmproj-Qwen3-ASR-1.7B-bf16.gguf", local = "mmproj-Qwen3-ASR-1.7B-bf16.gguf", size = 641773984 },
+]
+
+[[models]]
+id = "minicpm-v:4.6"
+name = "MiniCPM-V 4.6"
+publisher = "OpenBMB"
+license = "apache-2.0"
+architecture = "qwen35"
+modality = "vision"
+additional_modalities = ["text_generation"]
+engine = "ggml_llama"
+capabilities = ["thinking", "tools"]
+summary = "Tiny vision-language model on Qwen 3.5: image questions and OCR in about 2 GB."
+
+[models.config]
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+slots = 2
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 536870912
+activation_workspace_bytes = 2550136832 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 24
+num_kv_heads = 2
+head_dim = 256
+max_context_len = 262144
+global_kv_layers = 6
+global_num_kv_heads = 2
+swa_kv_layers = 0
+swa_num_kv_heads = 0
+swa_head_dim = 256
+
+[[models.variants]]
+quant = "Q4_K_M"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/MiniCPM-V-4.6-GGUF", remote = "MiniCPM-V-4.6-Q4_K_M.gguf", local = "MiniCPM-V-4.6-Q4_K_M.gguf", size = 529101536 },
+  { role = "aux", repo = "ggml-org/MiniCPM-V-4.6-GGUF", remote = "mmproj-MiniCPM-V-4.6-bf16.gguf", local = "mmproj-MiniCPM-V-4.6-bf16.gguf", size = 1110101728 },
+]
+
+[[models.variants]]
+quant = "Q8_0"
+note = "Larger weights and a Q8_0 projector."
+files = [
+  { role = "weights", repo = "ggml-org/MiniCPM-V-4.6-GGUF", remote = "MiniCPM-V-4.6-Q8_0.gguf", local = "MiniCPM-V-4.6-Q8_0.gguf", size = 811591648 },
+  { role = "aux", repo = "ggml-org/MiniCPM-V-4.6-GGUF", remote = "mmproj-MiniCPM-V-4.6-Q8_0.gguf", local = "mmproj-MiniCPM-V-4.6-Q8_0.gguf", size = 727954528 },
+]
+
+[[models]]
+id = "qwen3-asr:0.6b"
+name = "Qwen3-ASR 0.6B"
+publisher = "Qwen (Alibaba)"
+license = "apache-2.0"
+architecture = "qwen3vl"
+modality = "speech_to_text"
+engine = "ggml_llama"
+summary = "Dedicated speech recognizer: 30 languages and 22 Chinese dialects, detects the language itself."
+
+[models.config]
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+slots = 2
+
+[models.config.arch]
+default_context_len = 8192
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 536870912
+activation_workspace_bytes = 2147483648 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 28
+num_kv_heads = 8
+head_dim = 128
+max_context_len = 65536
+
+[[models.variants]]
+quant = "Q8_0"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/Qwen3-ASR-0.6B-GGUF", remote = "Qwen3-ASR-0.6B-Q8_0.gguf", local = "Qwen3-ASR-0.6B-Q8_0.gguf", size = 804749248 },
+  { role = "aux", repo = "ggml-org/Qwen3-ASR-0.6B-GGUF", remote = "mmproj-Qwen3-ASR-0.6B-bf16.gguf", local = "mmproj-Qwen3-ASR-0.6B-bf16.gguf", size = 378575520 },
+]
+
+
 # -----------------------------------------------------------------------------------------------
 # Embeddings, speech, images, documents, entities
 # -----------------------------------------------------------------------------------------------

@@ -292,6 +292,15 @@ remote fetches go through `media.rs` `PublicOnly` (no loopback / private / link-
   engine passes `<|tool_call>` / `<tool_call|>` / `<|"|>` through and stops at `<|tool_response>`,
   and a `CallParser` turns the raw text into OpenAI `tool_calls`; `tool_choice` required / named
   is forced by prefilling the call's opening; other architectures refuse `tools` with 400).
+  `qwen_prompt` renders Qwen 3.5 / 3.6 / 3.8 and models on them (`qwen35`, `qwen35moe`;
+  MiniCPM-V 4.6) with `QwenTemplate` (3.8's reasoning-effort instruction, which answers keep
+  their thinking block) and Qwen's XML tool calls (`ToolFormat::QwenXml`: `<tool_call>` /
+  `<function=…>` / `<parameter=…>`, string values typed by the tool's schema); its renderings are
+  checked against the real templates (`testdata/qwen_templates.json`, made with jinja2). GGUF
+  detection reads `full_attention_interval` / `recurrent_layers` so only the full-attention layers
+  book KV. Qwen3-ASR (`qwen3vl`) transcribes with `qwen_asr_prompt` and `split_asr_output`
+  (`language X<asr_text>…`; a given language is forced by prefilling it). Cloudflare's Clef
+  (`clef`) is a decision model on Qwen 3.5, not a chat model, and is not rendered.
   `lfm3_prompt` renders LFM3 (Liquid AI; `hypnos.lfm3.macos.example.toml`) the same way: `think`
   opens `<think>`, which the engine hides like Gemma's channel, and transcription uses its
   `Perform ASR in <language>.` system prompt. Hybrid / recurrent models (`is_hybrid`) take the

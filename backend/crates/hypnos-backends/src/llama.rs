@@ -15,7 +15,7 @@ use std::ffi::CString;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Instant;
 
-use crate::tools::{CallParser, Parsed, CALL_OPEN};
+use crate::tools::{CallParser, Parsed, ToolFormat};
 use async_trait::async_trait;
 use chrono::Utc;
 use hypnos_core::config::{MemoryTier, Modality, ModelConfig};
@@ -25,7 +25,7 @@ use hypnos_core::openai::{
     AudioTranscriptionRequest, AudioTranscriptionResponse, ChatChoice, ChatCompletionRequest,
     ChatCompletionResponse, ChatMessage, ChatResponseMessage, ChatStreamEvent, EmbeddingData,
     EmbeddingRequest, EmbeddingResponse, EmbeddingUsage, ExecutionTelemetry, LoadPhases,
-    PromptTokensDetails, TokenUsage, ToolCall, ToolChoice, ToolSpec,
+    PromptTokensDetails, ReasoningEffort, TokenUsage, ToolCall, ToolSpec,
 };
 use hypnos_core::request::RequestContext;
 use hypnos_core::ModelBackend;
@@ -424,23 +424,179 @@ fn template_has(model: &LlamaModel, literal: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether the model's native tool format is implemented (Gemma 4, `tools.rs`).
-pub(crate) fn supports_tools(arch: &str) -> bool {
-    arch.starts_with("gemma4")
+/// The GGUF architectures rendered by [`qwen_prompt`]: Qwen 3.5 / 3.6 / 3.8 dense and MoE, and
+/// chat models built on them (MiniCPM-V 4.6 is `qwen35`).
+fn is_qwen_chat(arch: &str) -> bool {
+    matches!(arch, "qwen35" | "qwen35moe")
 }
 
-/// Gemma 4 and LFM3 have their own renderers; other models get the GGUF's own template through
-/// llama.cpp, else ChatML.
+/// The model's native tool-call format, when Hypnos implements it (`tools.rs`).
+pub(crate) fn tool_format(arch: &str) -> Option<ToolFormat> {
+    if arch.starts_with("gemma4") {
+        Some(ToolFormat::Gemma4)
+    } else if is_qwen_chat(arch) {
+        Some(ToolFormat::QwenXml)
+    } else {
+        None
+    }
+}
+
+/// Whether the model's native tool format is implemented.
+pub(crate) fn supports_tools(arch: &str) -> bool {
+    tool_format(arch).is_some()
+}
+
+const QWEN_EFFORT_XHIGH: &str = "Reasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.";
+const QWEN_EFFORT_LOW: &str = "Reasoning effort is set to low. Keep your thinking brief and focused, moving directly to the conclusion without unnecessary elaboration.";
+
+/// How a Qwen-family template differs between releases, read from the template text (ENG-6).
+#[derive(Debug, Clone, Copy, Default)]
+struct QwenTemplate {
+    /// Qwen 3.8: a reasoning-effort instruction opens the system turn when thinking is on.
+    effort_instructions: bool,
+    /// Qwen 3.8: every earlier answer keeps its thinking block; older templates keep it only for
+    /// the answers after the last question (a tool loop in progress).
+    preserve_thinking: bool,
+}
+
+impl QwenTemplate {
+    fn of(model: &LlamaModel) -> Self {
+        Self {
+            effort_instructions: template_has(model, "Reasoning effort is set to"),
+            preserve_thinking: template_has(
+                model,
+                "preserve_thinking is undefined or preserve_thinking is true",
+            ),
+        }
+    }
+}
+
+/// Qwen 3.5+'s ChatML turns, as their GGUF templates render them (the Jinja templates are not
+/// run: llama.cpp's basic template call cannot evaluate them). Thinking opens `<think>\n` or
+/// writes an empty block; Qwen 3.8 adds its reasoning-effort instruction (`low`, none for
+/// `medium`, `xhigh` otherwise). With `tools`, the declarations open the system turn, past calls
+/// follow the answer text (`tools.rs`) and results come back in a user turn. Images and audio are
+/// the media marker: libmtmd adds `<|vision_start|>` / `<|vision_end|>` around them.
+fn qwen_prompt(
+    messages: &[ChatMessage],
+    marker: &str,
+    think: bool,
+    effort: Option<ReasoningEffort>,
+    tools: &[ToolSpec],
+    prefill: &str,
+    variant: QwenTemplate,
+) -> String {
+    let mut out = String::new();
+    let system_text: Vec<String> = messages
+        .iter()
+        .filter(|m| m.role == "system" || m.role == "developer")
+        .map(|m| m.content.extract_text().trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let system_text = system_text.join("\n");
+    let instructions = (variant.effort_instructions && think)
+        .then(|| match effort {
+            Some(ReasoningEffort::Low) => Some(QWEN_EFFORT_LOW),
+            Some(ReasoningEffort::Medium) => None,
+            _ => Some(QWEN_EFFORT_XHIGH),
+        })
+        .flatten();
+    if !tools.is_empty() {
+        out.push_str("<|im_start|>system\n");
+        if let Some(i) = instructions {
+            out.push_str(i);
+            out.push_str("\n\n");
+        }
+        out.push_str(&crate::tools::qwen_tools_block(tools));
+        if !system_text.is_empty() {
+            out.push_str("\n\n");
+            out.push_str(&system_text);
+        }
+        out.push_str("<|im_end|>\n");
+    } else if !system_text.is_empty() || instructions.is_some() {
+        out.push_str("<|im_start|>system\n");
+        match (instructions, system_text.is_empty()) {
+            (Some(i), false) => out.push_str(&format!("{i}\n\n{system_text}")),
+            (Some(i), true) => out.push_str(i),
+            (None, _) => out.push_str(&system_text),
+        }
+        out.push_str("<|im_end|>\n");
+    }
+    let turns: Vec<&ChatMessage> = messages
+        .iter()
+        .filter(|m| m.role != "system" && m.role != "developer")
+        .collect();
+    let last_query = turns.iter().rposition(|m| m.role == "user");
+    for (i, m) in turns.iter().enumerate() {
+        let content = m.content.render_with_media_marker(marker);
+        let content = content.trim();
+        match m.role.as_str() {
+            "assistant" | "model" => {
+                // A client that kept the thinking block in the answer: the template splits it off.
+                let (reasoning, answer) = match content.split_once("</think>") {
+                    Some((before, after)) => (
+                        before.rsplit("<think>").next().unwrap_or("").trim(),
+                        after.trim_start_matches('\n').trim(),
+                    ),
+                    None => ("", content),
+                };
+                out.push_str("<|im_start|>assistant\n");
+                if variant.preserve_thinking || last_query.is_none_or(|q| i > q) {
+                    out.push_str(&format!("<think>\n{reasoning}\n</think>\n\n"));
+                }
+                out.push_str(answer);
+                for (k, call) in m.tool_calls.iter().flatten().enumerate() {
+                    if k > 0 {
+                        out.push('\n');
+                    } else if !answer.is_empty() {
+                        out.push_str("\n\n");
+                    }
+                    out.push_str(&crate::tools::qwen_call_text(call));
+                }
+                out.push_str("<|im_end|>\n");
+            }
+            "tool" => {
+                if i == 0 || turns[i - 1].role != "tool" {
+                    out.push_str("<|im_start|>user");
+                }
+                out.push_str(&crate::tools::qwen_response_text(content));
+                if turns.get(i + 1).is_none_or(|n| n.role != "tool") {
+                    out.push_str("<|im_end|>\n");
+                }
+            }
+            _ => {
+                out.push_str(&format!("<|im_start|>user\n{content}<|im_end|>\n"));
+            }
+        }
+    }
+    out.push_str("<|im_start|>assistant\n");
+    out.push_str(if think {
+        "<think>\n"
+    } else {
+        "<think>\n\n</think>\n\n"
+    });
+    out.push_str(prefill);
+    out
+}
+
+/// Gemma 4, LFM3 and Qwen 3.5+ have their own renderers; other models get the GGUF's own
+/// template through llama.cpp, else ChatML.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_prompt(
     model: &LlamaModel,
     arch: &str,
     messages: &[ChatMessage],
     marker: &str,
     think: bool,
+    effort: Option<ReasoningEffort>,
     tools: &[ToolSpec],
     prefill: &str,
 ) -> String {
-    if supports_tools(arch) || arch.starts_with("gemma-embedding") {
+    if is_qwen_chat(arch) {
+        let variant = QwenTemplate::of(model);
+        return qwen_prompt(messages, marker, think, effort, tools, prefill, variant);
+    }
+    if arch.starts_with("gemma4") || arch.starts_with("gemma-embedding") {
         let variant = Gemma4Template::of(model);
         return gemma4_prompt(messages, marker, think, tools, prefill, variant);
     }
@@ -483,15 +639,52 @@ pub(crate) fn transcription_prompt(
     language: Option<&str>,
 ) -> String {
     let marker = mtmd_default_marker();
+    if is_qwen_asr(arch) {
+        return qwen_asr_prompt(marker, prompt, language);
+    }
     build_prompt(
         model,
         arch,
         &transcription_messages(arch, marker, prompt, language),
         marker,
         false,
+        None,
         &[],
         "",
     )
+}
+
+/// Qwen3-ASR (a `qwen3vl` GGUF with an audio projector): the dedicated speech recognizers.
+fn is_qwen_asr(arch: &str) -> bool {
+    arch == "qwen3vl"
+}
+
+/// Qwen3-ASR's prompt, as its `qwen_asr` package builds it: optional context as the system turn,
+/// the audio alone as the user turn, and with a known language `language <Name><asr_text>` after
+/// the generation prompt, so the model writes the text only.
+fn qwen_asr_prompt(marker: &str, prompt: Option<&str>, language: Option<&str>) -> String {
+    let context = prompt.map(str::trim).unwrap_or("");
+    let mut out = format!(
+        "<|im_start|>system\n{context}<|im_end|>\n<|im_start|>user\n{marker}<|im_end|>\n<|im_start|>assistant\n"
+    );
+    if let Some(l) = language.map(str::trim).filter(|l| !l.is_empty()) {
+        out.push_str(&format!("language {}<asr_text>", language_name(l)));
+    }
+    out
+}
+
+/// Qwen3-ASR's answer `language English<asr_text>The text.` as the language and the text
+/// (`language None` = no speech). Other models' text is returned as it is.
+pub(crate) fn split_asr_output(text: &str) -> (Option<String>, String) {
+    let Some((meta, body)) = text.split_once("<asr_text>") else {
+        return (None, text.trim().to_string());
+    };
+    let lang = meta
+        .trim()
+        .strip_prefix("language")
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty() && !l.eq_ignore_ascii_case("none"));
+    (lang, body.trim().to_string())
 }
 
 fn transcription_messages(
@@ -657,13 +850,12 @@ impl GgmlLlamaBackend {
         tx: Option<mpsc::Sender<ChatStreamEvent>>,
     ) -> Result<ChatOutput> {
         let (tools, choice) = req.active_tools().map_err(HypnosError::InvalidRequest)?;
-        // No grammar constraint here: a required or named call is forced by writing its opening.
-        let prefill = match &choice {
-            ToolChoice::Required => format!("{CALL_OPEN}call:"),
-            ToolChoice::Function(name) => format!("{CALL_OPEN}call:{name}{{"),
-            ToolChoice::Auto | ToolChoice::None => String::new(),
-        };
         let with_tools = !tools.is_empty();
+        // A model without a format never gets here with tools (the server refuses them first,
+        // the engine as well); Gemma's is only a placeholder for the parser then.
+        let format = tool_format(self.arch()).unwrap_or(ToolFormat::Gemma4);
+        // No grammar constraint here: a required or named call is forced by writing its opening.
+        let prefill = format.prefill(&choice);
         let total_chars: usize = req
             .messages
             .iter()
@@ -710,7 +902,7 @@ impl GgmlLlamaBackend {
         let (engine_tx, forward) = match (tx, with_tools) {
             (Some(tx), true) => {
                 let (itx, mut irx) = mpsc::channel::<ChatStreamEvent>(128);
-                let mut parser = CallParser::new(&prefill, &id_prefix);
+                let mut parser = CallParser::new(format, &prefill, &id_prefix, tools);
                 let forward = tokio::spawn(async move {
                     let mut calls = Vec::new();
                     while let Some(event) = irx.recv().await {
@@ -739,6 +931,7 @@ impl GgmlLlamaBackend {
             prompt: PromptSpec::Messages {
                 messages: req.messages.clone(),
                 think,
+                effort: req.reasoning_effort,
                 tools: tools.to_vec(),
                 prefill: prefill.clone(),
             },
@@ -766,7 +959,7 @@ impl GgmlLlamaBackend {
                 })?,
             ),
             None if with_tools => {
-                let mut parser = CallParser::new(&prefill, &id_prefix);
+                let mut parser = CallParser::new(format, &prefill, &id_prefix, tools);
                 let mut parsed = parser.feed(&raw);
                 parsed.extend(parser.finish());
                 let mut text = String::new();
@@ -1051,9 +1244,11 @@ impl ModelBackend for GgmlLlamaBackend {
             .filter(|d| *d > 0.0)
             .map(|d| started.elapsed().as_secs_f64() / f64::from(d));
 
+        // Qwen3-ASR names the language it heard before the text.
+        let (heard, text) = split_asr_output(&text);
         Ok(AudioTranscriptionResponse {
-            text: text.trim().to_string(),
-            language: req.language.clone(),
+            text,
+            language: req.language.clone().or(heard.map(|l| l.to_lowercase())),
             duration_secs: duration,
             hypnos_telemetry: Some(ExecutionTelemetry::for_engine(timing)),
         })
@@ -1113,7 +1308,8 @@ impl ModelBackend for GgmlLlamaBackend {
 #[cfg(test)]
 mod tests {
     use super::{
-        cpu_expert_pattern, gemma4_prompt, lfm3_prompt, transcription_messages, Gemma4Template,
+        cpu_expert_pattern, gemma4_prompt, lfm3_prompt, qwen_asr_prompt, qwen_prompt,
+        split_asr_output, transcription_messages, Gemma4Template, QwenTemplate,
     };
 
     #[test]
@@ -1330,6 +1526,99 @@ mod tests {
         assert!(
             gemma.contains("<tool_response|>Let me check.<turn|>"),
             "{gemma}"
+        );
+    }
+
+    /// Qwen 3.5 / 3.6 / 3.8, MiniCPM-V 4.6 and Clef against their own templates: the expected
+    /// strings are those templates rendered with jinja2 (`testdata/qwen_templates.json`).
+    #[test]
+    fn qwen_family_renders_like_its_chat_templates() {
+        use hypnos_core::openai::ReasoningEffort;
+        let cases: serde_json::Value =
+            serde_json::from_str(include_str!("testdata/qwen_templates.json")).unwrap();
+        let tool: ToolSpec = serde_json::from_value(json!({
+            "type": "function",
+            "function": {"name": "get_weather", "description": "Weather",
+                         "parameters": {"properties": {"city": {"type": "string"}},
+                                        "required": ["city"], "type": "object"}}
+        }))
+        .unwrap();
+        for case in cases.as_array().unwrap() {
+            let conv = case["conversation"].as_str().unwrap();
+            let (messages, tools) = match conv {
+                "plain" => (vec![msg("user", "Hi")], vec![]),
+                "system_history" => (
+                    vec![
+                        msg("system", "Be brief."),
+                        msg("user", "Hi"),
+                        msg("assistant", "Hello!"),
+                        msg("user", "Bye"),
+                    ],
+                    vec![],
+                ),
+                "tools_round" => {
+                    let mut call = msg("assistant", "Let me check.");
+                    call.tool_calls = Some(vec![ToolCall {
+                        id: "c1".into(),
+                        kind: "function".into(),
+                        function: FunctionCall {
+                            name: "get_weather".into(),
+                            arguments: r#"{"city":"Paris"}"#.into(),
+                        },
+                    }]);
+                    let mut result = msg("tool", "18 C");
+                    result.tool_call_id = Some("c1".into());
+                    (
+                        vec![
+                            msg("system", "Be brief."),
+                            msg("user", "Weather in Paris?"),
+                            call,
+                            result,
+                        ],
+                        vec![tool.clone()],
+                    )
+                }
+                other => panic!("unknown conversation {other}"),
+            };
+            let effort = match case["effort"].as_str() {
+                Some("low") => Some(ReasoningEffort::Low),
+                Some("medium") => Some(ReasoningEffort::Medium),
+                _ => None,
+            };
+            let qwen38 = case["family"] == "qwen3.8";
+            let variant = QwenTemplate {
+                effort_instructions: qwen38,
+                preserve_thinking: qwen38,
+            };
+            let think = case["think"].as_bool().unwrap();
+            let got = qwen_prompt(&messages, "<__media__>", think, effort, &tools, "", variant);
+            assert_eq!(
+                got,
+                case["expected"].as_str().unwrap(),
+                "{} / {conv} / think {think} / {effort:?}",
+                case["template"]
+            );
+        }
+    }
+
+    #[test]
+    fn qwen_asr_prompt_and_output() {
+        assert_eq!(
+            qwen_asr_prompt("<__media__>", None, Some("en")),
+            "<|im_start|>system\n<|im_end|>\n<|im_start|>user\n<__media__><|im_end|>\n\
+             <|im_start|>assistant\nlanguage English<asr_text>"
+        );
+        assert_eq!(
+            split_asr_output("language English<asr_text>Ask not."),
+            (Some("English".into()), "Ask not.".into())
+        );
+        assert_eq!(
+            split_asr_output("language None<asr_text>"),
+            (None, "".into())
+        );
+        assert_eq!(
+            split_asr_output(" Plain text. "),
+            (None, "Plain text.".into())
         );
     }
 }

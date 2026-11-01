@@ -309,17 +309,35 @@ impl GgufArchMetadata {
 
         // Per layer: KV heads (an array, or the scalar everywhere) and sliding or not.
         let blocks = int("block_count").unwrap_or(0) as usize;
-        let kv_per_layer: Option<Vec<u64>> = match key("attention.head_count_kv") {
+        let mut kv_per_layer: Option<Vec<u64>> = match key("attention.head_count_kv") {
             Some(Value::IntArray(v)) => Some(v.clone()),
             Some(Value::Int(n)) => Some(vec![*n; blocks]),
             _ => None,
         };
+        // Hybrid models whose recurrent layers keep no KV (Qwen 3.5+: linear attention with a
+        // full-attention layer every N): one flag per layer, else every N-th layer has KV.
+        let recurrent: Option<Vec<bool>> = match (
+            key("attention.recurrent_layers"),
+            int("full_attention_interval"),
+        ) {
+            (Some(Value::BoolArray(v)), _) => Some(v.clone()),
+            (_, Some(n)) if n > 1 => Some((0..blocks).map(|i| (i + 1) % n as usize != 0).collect()),
+            _ => None,
+        };
+        if let (Some(kv), Some(rec)) = (kv_per_layer.as_mut(), recurrent.as_ref()) {
+            for (heads, is_recurrent) in kv.iter_mut().zip(rec) {
+                if *is_recurrent {
+                    *heads = 0;
+                }
+            }
+        }
         let sliding: Option<Vec<bool>> = match key("attention.sliding_window_pattern") {
             Some(Value::BoolArray(v)) => Some(v.clone()),
             _ => None,
         };
-        let non_uniform =
-            matches!(key("attention.head_count_kv"), Some(Value::IntArray(_))) || sliding.is_some();
+        let non_uniform = matches!(key("attention.head_count_kv"), Some(Value::IntArray(_)))
+            || sliding.is_some()
+            || recurrent.is_some();
         let kv_layout = match (kv_per_layer, non_uniform) {
             (Some(kv), true) => {
                 let is_swa = |i: usize| sliding.as_ref().is_some_and(|s| s.get(i) == Some(&true));
@@ -522,6 +540,37 @@ mod tests {
         assert_eq!(m.context_length, None);
         assert_eq!(m.sliding_window, None);
         assert_eq!(m.global_attn_every_n_layers, None);
+    }
+
+    /// Qwen 3.5+: only the full-attention layers keep KV, named per layer or by an interval.
+    #[test]
+    fn hybrid_recurrent_layers_keep_no_kv() {
+        let flags: Vec<Vec<u8>> = [1u8, 1, 1, 0, 1, 1, 1, 0]
+            .iter()
+            .map(|b| vec![*b])
+            .collect();
+        let per_layer = gguf(&[
+            ("general.architecture", T_STRING, s("qwen35")),
+            ("qwen35.block_count", T_U32, u32v(8)),
+            ("qwen35.attention.head_count_kv", T_U32, u32v(4)),
+            ("qwen35.attention.key_length", T_U32, u32v(256)),
+            (
+                "qwen35.attention.recurrent_layers",
+                T_ARRAY,
+                arr(T_BOOL, &flags),
+            ),
+        ]);
+        let m = GgufArchMetadata::read(&per_layer.0).unwrap().unwrap();
+        assert_eq!(m.kv_layout, Some((2, 4, 0, 0, 256)));
+        let interval = gguf(&[
+            ("general.architecture", T_STRING, s("qwen35moe")),
+            ("qwen35moe.block_count", T_U32, u32v(40)),
+            ("qwen35moe.attention.head_count_kv", T_U32, u32v(2)),
+            ("qwen35moe.attention.key_length", T_U32, u32v(256)),
+            ("qwen35moe.full_attention_interval", T_U32, u32v(4)),
+        ]);
+        let m = GgufArchMetadata::read(&interval.0).unwrap().unwrap();
+        assert_eq!(m.kv_layout, Some((10, 2, 0, 0, 256)));
     }
 
     #[test]

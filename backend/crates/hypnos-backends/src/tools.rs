@@ -1,11 +1,16 @@
-//! OpenAI tool calling on Gemma 4's native format (API-9), as its GGUF chat template defines it:
+//! OpenAI tool calling on each model family's native format: Gemma 4's (API-9) and Qwen's XML
+//! (ENG-6, below [`ToolFormat::QwenXml`]).
+//!
+//! Gemma 4, as its GGUF chat template defines it:
 //! tools are declared in the system turn as `<|tool>declaration:NAME{...}<tool|>`, the model calls
 //! one with `<|tool_call>call:NAME{key:value,...}<tool_call|>` and then emits `<|tool_response>`
 //! (the engine stops there), and results come back in the same model turn as
 //! `<|tool_response>response:NAME{value:...}<tool_response|>`. Values use Gemma's own notation:
 //! strings between `<|"|>` tokens, bare keys inside a call.
 
-use hypnos_core::openai::{FunctionCall, ToolCall, ToolSpec};
+use std::collections::BTreeSet;
+
+use hypnos_core::openai::{FunctionCall, ToolCall, ToolChoice, ToolSpec};
 use serde_json::{Map, Value};
 
 pub const QUOTE: &str = "<|\"|>";
@@ -14,8 +19,60 @@ pub const CALL_CLOSE: &str = "<tool_call|>";
 pub const RESPONSE_OPEN: &str = "<|tool_response>";
 pub const RESPONSE_CLOSE: &str = "<tool_response|>";
 
-/// The engine passes these marker tokens through as text when tools are active.
-pub const PASS_THROUGH: [&str; 3] = [CALL_OPEN, CALL_CLOSE, QUOTE];
+pub const QWEN_CALL_OPEN: &str = "<tool_call>";
+pub const QWEN_CALL_CLOSE: &str = "</tool_call>";
+
+/// The engine passes these marker tokens through as text when tools are active (Qwen's are
+/// ordinary tokens already; listed in case a GGUF marks them special).
+pub const PASS_THROUGH: [&str; 5] = [
+    CALL_OPEN,
+    CALL_CLOSE,
+    QUOTE,
+    QWEN_CALL_OPEN,
+    QWEN_CALL_CLOSE,
+];
+
+/// A model family's tool-call notation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolFormat {
+    /// `<|tool_call>call:NAME{key:value}<tool_call|>` (Gemma 4).
+    Gemma4,
+    /// `<tool_call>\n<function=NAME>\n<parameter=KEY>\nVALUE\n</parameter>\n</function>\n</tool_call>`
+    /// (Qwen 3.5 and later, and models built on them).
+    QwenXml,
+}
+
+impl ToolFormat {
+    fn open(self) -> &'static str {
+        match self {
+            ToolFormat::Gemma4 => CALL_OPEN,
+            ToolFormat::QwenXml => QWEN_CALL_OPEN,
+        }
+    }
+
+    fn close(self) -> &'static str {
+        match self {
+            ToolFormat::Gemma4 => CALL_CLOSE,
+            ToolFormat::QwenXml => QWEN_CALL_CLOSE,
+        }
+    }
+
+    /// What the prompt writes after the generation prompt to force a call (no grammar: a
+    /// required or named call is forced by writing its opening).
+    pub fn prefill(self, choice: &ToolChoice) -> String {
+        match (self, choice) {
+            (_, ToolChoice::Auto | ToolChoice::None) => String::new(),
+            (ToolFormat::Gemma4, ToolChoice::Required) => format!("{CALL_OPEN}call:"),
+            (ToolFormat::Gemma4, ToolChoice::Function(name)) => {
+                format!("{CALL_OPEN}call:{name}{{")
+            }
+            (ToolFormat::QwenXml, ToolChoice::Required) => format!("{QWEN_CALL_OPEN}\n<function="),
+            (ToolFormat::QwenXml, ToolChoice::Function(name)) => {
+                format!("{QWEN_CALL_OPEN}\n<function={name}>\n")
+            }
+        }
+    }
+}
 
 /// `format_argument` of the template: a JSON value in Gemma notation.
 pub fn format_value(v: &Value, escape_keys: bool) -> String {
@@ -202,6 +259,120 @@ pub fn response_text(name: &str, content: &str) -> String {
     )
 }
 
+// --- Qwen ---------------------------------------------------------------------------------------
+
+/// The system-turn block that declares `tools`, as Qwen 3.5+ templates write it.
+pub fn qwen_tools_block(tools: &[ToolSpec]) -> String {
+    let mut out = String::from("# Tools\n\nYou have access to the following functions:\n\n<tools>");
+    for tool in tools {
+        out.push('\n');
+        out.push_str(&py_json(&serde_json::to_value(tool).unwrap_or(Value::Null)));
+    }
+    out.push_str("\n</tools>");
+    out.push_str(QWEN_TOOL_INSTRUCTIONS);
+    out
+}
+
+const QWEN_TOOL_INSTRUCTIONS: &str = "\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>";
+
+/// A past call as a Qwen template writes it in the assistant turn (without the separator before
+/// it, which depends on its place).
+pub fn qwen_call_text(call: &ToolCall) -> String {
+    let args: Value =
+        serde_json::from_str(&call.function.arguments).unwrap_or(Value::Object(Map::new()));
+    let mut out = format!("{QWEN_CALL_OPEN}\n<function={}>\n", call.function.name);
+    if let Value::Object(map) = &args {
+        for (k, v) in map {
+            let v = match v {
+                Value::String(s) => s.clone(),
+                other => py_json(other),
+            };
+            out.push_str(&format!("<parameter={k}>\n{v}\n</parameter>\n"));
+        }
+    }
+    out.push_str("</function>\n");
+    out.push_str(QWEN_CALL_CLOSE);
+    out
+}
+
+/// One tool result inside the user turn that carries them.
+pub fn qwen_response_text(content: &str) -> String {
+    format!("\n<tool_response>\n{content}\n</tool_response>")
+}
+
+/// Jinja's `tojson` (Python `json.dumps`: `", "` and `": "` separators, non-ASCII kept).
+pub fn py_json(v: &Value) -> String {
+    match v {
+        Value::Array(items) => format!(
+            "[{}]",
+            items.iter().map(py_json).collect::<Vec<_>>().join(", ")
+        ),
+        Value::Object(map) => format!(
+            "{{{}}}",
+            map.iter()
+                .map(|(k, v)| format!("{}: {}", Value::String(k.clone()), py_json(v)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        other => other.to_string(),
+    }
+}
+
+/// `<function=NAME>` and its `<parameter=KEY>VALUE</parameter>` blocks (the text between the
+/// call markers) as a name and JSON arguments. A value is a string where the tool's schema says
+/// so, else JSON when it parses as JSON, else a string.
+pub fn parse_qwen_call(body: &str, string_params: &BTreeSet<String>) -> Option<(String, Value)> {
+    let rest = body.trim_start().strip_prefix("<function=")?;
+    let gt = rest.find('>')?;
+    let name = rest[..gt].trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let mut s = &rest[gt + 1..];
+    let mut map = Map::new();
+    while let Some(i) = s.find("<parameter=") {
+        let after = &s[i + "<parameter=".len()..];
+        let gt = after.find('>')?;
+        let key = after[..gt].trim().to_string();
+        let tail = &after[gt + 1..];
+        let end = tail
+            .find("</parameter>")
+            .or_else(|| tail.find("</function>"))
+            .unwrap_or(tail.len());
+        let raw = tail[..end].strip_prefix('\n').unwrap_or(&tail[..end]);
+        let raw = raw.strip_suffix('\n').unwrap_or(raw);
+        let value = if string_params.contains(&format!("{name}.{key}")) {
+            Value::String(raw.to_string())
+        } else {
+            serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.to_string()))
+        };
+        map.insert(key, value);
+        s = tail[end..]
+            .strip_prefix("</parameter>")
+            .unwrap_or(&tail[end..]);
+    }
+    Some((name, Value::Object(map)))
+}
+
+/// `function.param` for every string-typed parameter of `tools`.
+fn string_params(tools: &[ToolSpec]) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for t in tools {
+        let props = t
+            .function
+            .parameters
+            .as_ref()
+            .and_then(|p| p.get("properties"))
+            .and_then(Value::as_object);
+        for (k, v) in props.into_iter().flatten() {
+            if v.get("type").and_then(Value::as_str) == Some("string") {
+                out.insert(format!("{}.{k}", t.function.name));
+            }
+        }
+    }
+    out
+}
+
 // --- parsing --------------------------------------------------------------------------------
 
 /// Reads Gemma notation back into JSON: `{key:value}` with bare or quoted keys, `<|"|>` strings,
@@ -343,26 +514,41 @@ pub enum Parsed {
 }
 
 /// Splits the engine's raw output (tool markers included) into text and calls as it streams.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct CallParser {
+    format: ToolFormat,
     buf: String,
     in_call: bool,
     calls: usize,
     prefix: String,
+    /// `function.param` of the string-typed parameters (Qwen values carry no quotes).
+    string_params: BTreeSet<String>,
 }
 
 impl CallParser {
     /// `prefill` is what the prompt already wrote of the answer (a forced call's opening).
-    pub fn new(prefill: &str, id_prefix: &str) -> Self {
+    pub fn new(format: ToolFormat, prefill: &str, id_prefix: &str, tools: &[ToolSpec]) -> Self {
         let mut p = Self {
+            format,
+            buf: String::new(),
+            in_call: false,
+            calls: 0,
             prefix: id_prefix.to_string(),
-            ..Self::default()
+            string_params: string_params(tools),
         };
-        if let Some(rest) = prefill.strip_prefix(CALL_OPEN) {
+        if let Some(rest) = prefill.strip_prefix(format.open()) {
             p.in_call = true;
             p.buf.push_str(rest);
         }
         p
+    }
+
+    /// Text outside calls; Gemma's quote token reads as `"`.
+    fn text(&self, t: &str) -> String {
+        match self.format {
+            ToolFormat::Gemma4 => t.replace(QUOTE, "\""),
+            ToolFormat::QwenXml => t.to_string(),
+        }
     }
 
     #[cfg(test)]
@@ -372,17 +558,18 @@ impl CallParser {
 
     pub fn feed(&mut self, piece: &str) -> Vec<Parsed> {
         self.buf.push_str(piece);
+        let (open, close) = (self.format.open(), self.format.close());
         let mut out = Vec::new();
         loop {
             if self.in_call {
-                let Some(end) = self.buf.find(CALL_CLOSE) else {
+                let Some(end) = self.buf.find(close) else {
                     break;
                 };
-                let body: String = self.buf.drain(..end + CALL_CLOSE.len()).collect();
+                let body: String = self.buf.drain(..end + close.len()).collect();
                 self.in_call = false;
                 out.extend(self.call(&body[..end]));
-            } else if let Some(start) = self.buf.find(CALL_OPEN) {
-                let text: String = self.buf.drain(..start + CALL_OPEN.len()).collect();
+            } else if let Some(start) = self.buf.find(open) {
+                let text: String = self.buf.drain(..start + open.len()).collect();
                 let text = &text[..start];
                 if !text.is_empty() {
                     out.push(Parsed::Text(text.to_string()));
@@ -390,14 +577,14 @@ impl CallParser {
                 self.in_call = true;
             } else {
                 // Keep a possible marker prefix at the end for the next piece.
-                let keep = (1..CALL_OPEN.len())
+                let keep = (1..open.len())
                     .rev()
-                    .find(|&n| self.buf.ends_with(&CALL_OPEN[..n]))
+                    .find(|&n| self.buf.ends_with(&open[..n]))
                     .unwrap_or(0);
                 let cut = self.buf.len() - keep;
                 if cut > 0 {
                     let text: String = self.buf.drain(..cut).collect();
-                    out.push(Parsed::Text(text.replace(QUOTE, "\"")));
+                    out.push(Parsed::Text(self.text(&text)));
                 }
                 break;
             }
@@ -414,17 +601,21 @@ impl CallParser {
             if !parsed.is_empty() {
                 return parsed;
             }
-            return vec![Parsed::Text(rest.replace(QUOTE, "\""))];
+            return vec![Parsed::Text(self.text(&rest))];
         }
         if rest.is_empty() {
             vec![]
         } else {
-            vec![Parsed::Text(rest.replace(QUOTE, "\""))]
+            vec![Parsed::Text(self.text(&rest))]
         }
     }
 
     fn call(&mut self, body: &str) -> Vec<Parsed> {
-        match parse_call(body) {
+        let parsed = match self.format {
+            ToolFormat::Gemma4 => parse_call(body),
+            ToolFormat::QwenXml => parse_qwen_call(body, &self.string_params),
+        };
+        match parsed {
             Some((name, args)) => {
                 self.calls += 1;
                 vec![Parsed::Call(ToolCall {
@@ -508,7 +699,7 @@ mod tests {
 
     #[test]
     fn the_parser_splits_text_and_calls_across_pieces() {
-        let mut p = CallParser::new("", "x");
+        let mut p = CallParser::new(ToolFormat::Gemma4, "", "x", &[]);
         let mut out = Vec::new();
         for piece in [
             "Let me check. ",
@@ -535,7 +726,12 @@ mod tests {
 
     #[test]
     fn a_forced_call_starts_inside_the_call() {
-        let mut p = CallParser::new("<|tool_call>call:get_weather{", "y");
+        let mut p = CallParser::new(
+            ToolFormat::Gemma4,
+            "<|tool_call>call:get_weather{",
+            "y",
+            &[],
+        );
         let mut out = p.feed("city:<|\"|>Rome<|\"|>}<tool_call|>");
         out.extend(p.finish());
         let Parsed::Call(call) = &out[0] else {
@@ -546,7 +742,7 @@ mod tests {
 
     #[test]
     fn plain_answers_pass_through_and_quotes_read_as_quotes() {
-        let mut p = CallParser::new("", "z");
+        let mut p = CallParser::new(ToolFormat::Gemma4, "", "z", &[]);
         let mut out = p.feed("It is <|\"|>fine<|\"|>.");
         out.extend(p.finish());
         let text: String = out
@@ -558,5 +754,82 @@ mod tests {
             .collect();
         assert_eq!(text, "It is \"fine\".");
         assert_eq!(p.calls(), 0);
+    }
+
+    #[test]
+    fn qwen_calls_render_and_parse_like_the_template() {
+        let call = ToolCall {
+            id: "c1".into(),
+            kind: "function".into(),
+            function: FunctionCall {
+                name: "get_weather".into(),
+                arguments: r#"{"city":"Paris","days":3,"opts":{"unit":"c"}}"#.into(),
+            },
+        };
+        let text = qwen_call_text(&call);
+        assert_eq!(
+            text,
+            "<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n\
+             <parameter=days>\n3\n</parameter>\n<parameter=opts>\n{\"unit\": \"c\"}\n</parameter>\n\
+             </function>\n</tool_call>"
+        );
+        // Back again: the schema keeps a numeric-looking string a string.
+        let strings: BTreeSet<String> = ["get_weather.city".to_string()].into();
+        let body = &text[QWEN_CALL_OPEN.len()..text.len() - QWEN_CALL_CLOSE.len()];
+        let (name, args) = parse_qwen_call(body, &strings).unwrap();
+        assert_eq!(name, "get_weather");
+        assert_eq!(
+            args,
+            json!({"city": "Paris", "days": 3, "opts": {"unit": "c"}})
+        );
+        let zip = "<function=f>\n<parameter=zip>\n02134\n</parameter>\n</function>";
+        let (_, a) = parse_qwen_call(zip, &["f.zip".to_string()].into()).unwrap();
+        assert_eq!(a, json!({"zip": "02134"}));
+        // The declarations block lists each tool as Python-style JSON.
+        let block = qwen_tools_block(&[weather_tool()]);
+        assert!(block.starts_with("# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_weather\""), "{block}");
+        assert!(block.contains("</tools>\n\nIf you choose to call a function ONLY reply"));
+    }
+
+    #[test]
+    fn the_qwen_parser_streams_text_and_calls() {
+        let tools = [weather_tool()];
+        let mut p = CallParser::new(ToolFormat::QwenXml, "", "q", &tools);
+        let mut parsed = Vec::new();
+        for piece in [
+            "Let me check.\n\n<tool",
+            "_call>\n<function=get_weather>\n<parameter=city>\nPar",
+            "is\n</parameter>\n</function>\n</tool_call>",
+        ] {
+            parsed.extend(p.feed(piece));
+        }
+        parsed.extend(p.finish());
+        let text: String = parsed
+            .iter()
+            .filter_map(|x| match x {
+                Parsed::Text(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "Let me check.\n\n");
+        let calls: Vec<&ToolCall> = parsed
+            .iter()
+            .filter_map(|x| match x {
+                Parsed::Call(c) => Some(c),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "get_weather");
+        assert_eq!(calls[0].function.arguments, r#"{"city":"Paris"}"#);
+        // A forced call: the prompt wrote the opening, the model continues inside it.
+        let prefill = ToolFormat::QwenXml.prefill(&ToolChoice::Function("get_weather".into()));
+        let mut p = CallParser::new(ToolFormat::QwenXml, &prefill, "r", &tools);
+        let mut parsed = p.feed("<parameter=city>\nOslo\n</parameter>\n</function>\n</tool_call>");
+        parsed.extend(p.finish());
+        assert!(
+            matches!(&parsed[..], [Parsed::Call(c)] if c.function.arguments == r#"{"city":"Oslo"}"#),
+            "{parsed:?}"
+        );
     }
 }

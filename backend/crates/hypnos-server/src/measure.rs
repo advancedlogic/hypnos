@@ -91,7 +91,14 @@ async fn exercise_all(
     cfg: &hypnos_core::config::ModelConfig,
     ctx: &RequestContext,
 ) -> (String, Result<(), String>) {
-    let (mut what, mut result) = exercise(backend, id, cfg.modality, ctx).await;
+    // A dedicated speech recognizer (Qwen3-ASR) does not chat: only the transcription below.
+    let transcribes_only =
+        cfg.modality == Modality::SpeechToText && !cfg.supports_modality(Modality::TextGeneration);
+    let (mut what, mut result) = if transcribes_only {
+        (String::new(), Ok(()))
+    } else {
+        exercise(backend, id, cfg.modality, ctx).await
+    };
     if cfg.supports_modality(Modality::Vision) && result.is_ok() {
         if let Some(png) = fixture("../../../assets/logo.png") {
             use base64::Engine as _;
@@ -123,7 +130,11 @@ async fn exercise_all(
                 language: Some("en".into()),
                 prompt: None,
             };
-            what += " + an 11 s transcription";
+            what += if what.is_empty() {
+                "an 11 s transcription"
+            } else {
+                " + an 11 s transcription"
+            };
             result = backend
                 .transcribe(&req, ctx)
                 .await

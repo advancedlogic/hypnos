@@ -23,7 +23,9 @@ use std::time::{Duration, Instant};
 
 use hypnos_core::config::{KvDataType, Modality, ModelConfig};
 use hypnos_core::error::{HypnosError, Result};
-use hypnos_core::openai::{ChatMessage, ChatStreamEvent, EngineTiming, LoadPhases, ToolSpec};
+use hypnos_core::openai::{
+    ChatMessage, ChatStreamEvent, EngineTiming, LoadPhases, ReasoningEffort, ToolSpec,
+};
 use hypnos_core::request::RequestContext;
 use llama_cpp_2::context::params::{KvCacheType, LlamaContextParams, LlamaPoolingType};
 use llama_cpp_2::context::session::{LlamaStateSeqFlags, SeqState};
@@ -106,7 +108,9 @@ pub(crate) enum PromptSpec {
     Messages {
         messages: Vec<ChatMessage>,
         think: bool,
-        /// Declared in the prompt (Gemma 4 only; see `tools.rs`).
+        /// The request's reasoning effort (Qwen 3.8 names it in its system turn).
+        effort: Option<ReasoningEffort>,
+        /// Declared in the prompt (Gemma 4 and Qwen; see `tools.rs`).
         tools: Vec<ToolSpec>,
         /// Appended after the generation prompt (a forced tool call's opening).
         prefill: String,
@@ -821,12 +825,12 @@ impl<'m> Engine<'m> {
             checkpoints = trim_limited,
             "llama.cpp engine worker ready"
         );
+        // Gemma 4 closes its thought channel with `<channel|>`; LFM3, Qwen and the other
+        // `<think>` models with `</think>` (None when the vocabulary has no such token).
         let think_close = if arch.starts_with("gemma4") {
             single_token(model, "<channel|>")
-        } else if arch == "lfm3" {
-            single_token(model, "</think>")
         } else {
-            None
+            single_token(model, "</think>")
         };
         Ok(Self {
             backend,
@@ -1152,12 +1156,13 @@ impl<'m> Engine<'m> {
             PromptSpec::Messages {
                 messages,
                 think,
+                effort,
                 tools,
                 prefill,
             } => {
                 if !tools.is_empty() && !supports_tools(&self.arch) {
                     let _ = reply.send(Err(HypnosError::InvalidRequest(format!(
-                        "{} ({}) has no tool-calling format in Hypnos; tools work with Gemma 4 models",
+                        "{} ({}) has no tool-calling format in Hypnos; tools work with Gemma 4 and Qwen 3.5+ models",
                         self.cfg.id, self.arch
                     ))));
                     return;
@@ -1168,6 +1173,7 @@ impl<'m> Engine<'m> {
                     &messages,
                     mtmd_default_marker(),
                     think,
+                    effort,
                     &tools,
                     &prefill,
                 )
@@ -1249,7 +1255,8 @@ impl<'m> Engine<'m> {
             text: String::new(),
             completion: 0,
             // A prompt that opens a thinking block (LFM3 with `think`) starts the reply in it.
-            in_channel: text.ends_with("<think>"),
+            // LFM3 opens `<think>`, Qwen `<think>\n`.
+            in_channel: text.trim_end_matches('\n').ends_with("<think>"),
             channel_header_pending: text.ends_with("<think>"),
             reasoning: String::new(),
             unsent_reasoning: String::new(),
