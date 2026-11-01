@@ -18,6 +18,8 @@ license = "MIT OR Apache-2.0"
 authors = ["Hypnos Contributors"]
 description = "3-Tier GPU/RAM/SSD lazy model loader and OpenAI-compatible multi-modal server"
 rust-version = "1.92"
+# The server crates are not published to crates.io (the SDK in sdk/rust is).
+publish = false
 
 [workspace.dependencies]
 tokio = { version = "1.37", features = ["full"] }

@@ -3,6 +3,7 @@ name = "hypnos-backends"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 build = "build.rs"
 rust-version.workspace = true
 

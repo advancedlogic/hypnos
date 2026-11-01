@@ -1,9 +1,13 @@
 name: ci
 
 on:
-  # Runs for a release only: release.yml calls it on a `v*` tag and publishes nothing unless it
-  # passes. Pushes and PRs start nothing; run it by hand (Actions > ci > Run workflow) to check a
-  # branch before tagging.
+  # Every push to main and every pull request (BUILD-14): fmt + clippy, the dependency audit, the
+  # SDKs, the frontend, and the build, tests and desktop app on Linux. release.yml calls it on a
+  # `v*` tag (publishing nothing unless it passes), and a manual run (Actions > ci > Run workflow)
+  # does the same: the build, tests and desktop app on Linux, Windows and macOS.
+  push:
+    branches: [main]
+  pull_request:
   workflow_call:
   workflow_dispatch:
 
@@ -24,18 +28,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # Pinned, unlike the builds: each Rust release adds lints, and `-D warnings` would turn a
       # new release into a red main with no code change. Bump it deliberately, together with the
       # fixes the new clippy asks for (the version the project is developed with).
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: 1.98.0
           components: rustfmt, clippy
       - name: Vendor engine sources
         # Cargo loads every workspace member's path dependencies, even for the engine-free crates.
         run: ./backend/scripts/vendor.sh
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: backend -> target
           key: lint
@@ -47,33 +51,67 @@ jobs:
         working-directory: backend
         run: cargo clippy -p hypnos-core -p hypnos-memory -p hypnos-scheduler --all-targets -- -D warnings
 
+  # Dependency audit (BUILD-15): RustSec advisories, licenses and sources for the three Rust
+  # workspaces (deny.toml), npm advisories for the three Node projects, and the Python SDK's.
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: backend/Cargo.toml
+          command: check
+          arguments: --all-features --config deny.toml
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: desktop/src-tauri/Cargo.toml
+          command: check
+          arguments: --all-features --config deny.toml
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: sdk/rust/Cargo.toml
+          command: check
+          arguments: --all-features --config deny.toml
+      - name: npm audit (production dependencies, high and critical)
+        run: |
+          for d in frontend desktop sdk/javascript; do
+            echo "== $d"
+            (cd "$d" && npm audit --omit=dev --audit-level=high)
+          done
+      - name: pip-audit (Python SDK)
+        run: |
+          python3 -m venv /tmp/audit && /tmp/audit/bin/pip install --quiet pip-audit
+          /tmp/audit/bin/pip-audit --strict ./sdk/python
+
   build-test:
     name: build + test (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
+      # Pushes and pull requests: Linux. A release or a manual run: Linux, Windows and macOS
+      # (macos-15 is Apple Silicon; Metal compiles without a GPU attached).
       matrix:
-        include:
-          - { name: linux-cpu, os: ubuntu-latest, features: "" }
-          - { name: windows-cpu, os: windows-latest, features: "" }
-          # macos-15 is Apple Silicon; Metal compiles without a GPU attached.
-          - { name: macos-metal, os: macos-15, features: "--features hypnos-server/metal" }
+        include: ${{ fromJSON((github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/'))) && '[{"name":"linux-cpu","os":"ubuntu-latest","features":""}]' || '[{"name":"linux-cpu","os":"ubuntu-latest","features":""},{"name":"windows-cpu","os":"windows-latest","features":""},{"name":"macos-metal","os":"macos-15","features":"--features hypnos-server/metal"}]') }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: lukka/get-cmake@latest
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: lukka/get-cmake@f86dd60acae0d132056913e248bdabf0e0580b7a # v4.4.5
       - name: Linux build deps
         timeout-minutes: 10
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libssl-dev libclang-dev
       - name: MSVC developer environment
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
       - name: Vendor engine sources (pinned commits + patches)
         shell: bash
         run: ./backend/scripts/vendor.sh
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: backend -> target
           key: ${{ matrix.name }}
@@ -115,15 +153,17 @@ jobs:
     env:
       HYPNOS_MOCK_SERVER: ${{ github.workspace }}/backend/target/debug/examples/mock_server
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: lukka/get-cmake@latest
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: lukka/get-cmake@f86dd60acae0d132056913e248bdabf0e0580b7a # v4.4.5
       - name: Linux build deps
         timeout-minutes: 10
         run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libssl-dev libclang-dev
       - name: Vendor engine sources
         run: ./backend/scripts/vendor.sh
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: |
             backend -> target
@@ -132,11 +172,11 @@ jobs:
       - name: Build the mock server
         working-directory: backend
         run: cargo build -p hypnos-server --example mock_server --no-default-features
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
       - name: Python SDK
         working-directory: sdk/python
         run: uv sync && uv run pytest -q
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -156,8 +196,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -173,12 +213,14 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      # Pushes and pull requests: Linux; a release or a manual run: all three.
       matrix:
-        os: [ubuntu-22.04, windows-latest, macos-15]
+        os: ${{ fromJSON((github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/'))) && '["ubuntu-22.04"]' || '["ubuntu-22.04","windows-latest","macos-15"]') }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
+          toolchain: stable
           components: rustfmt, clippy
       - name: Linux webview deps
         timeout-minutes: 10
@@ -187,11 +229,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libssl-dev libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev librsvg2-dev patchelf libasound2-dev
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: desktop/src-tauri -> target
           key: desktop
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm

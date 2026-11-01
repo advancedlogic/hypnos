@@ -42,15 +42,17 @@ jobs:
       matrix:
         include: ${{ fromJSON(inputs.platforms) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: lukka/get-cmake@latest
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: lukka/get-cmake@f86dd60acae0d132056913e248bdabf0e0580b7a # v4.4.5
 
       # sccache for the engines' C, C++ and CUDA objects (CMake reads the *_COMPILER_LAUNCHER
       # variables from the environment), stored in the GitHub Actions cache. A tag run reads the
       # caches of its own tag and of main, so a manual run of release on main fills it for the
       # next tag. A cache error falls back to compiling. vars.HYPNOS_SCCACHE = "off" disables it.
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
         if: vars.HYPNOS_SCCACHE != 'off'
       - name: Compiler cache
         if: vars.HYPNOS_SCCACHE != 'off'
@@ -98,7 +100,7 @@ jobs:
 
       - name: CUDA toolkit (Windows)
         if: runner.os == 'Windows'
-        uses: Jimver/cuda-toolkit@v0.2.36
+        uses: Jimver/cuda-toolkit@b8bf9c6c28f8a92fbb04dcfcaee872e60c57462d # v0.2.36
         with:
           cuda: ${{ env.CUDA_VERSION }}
           method: network
@@ -106,7 +108,7 @@ jobs:
 
       - name: MSVC developer environment
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
 
       - name: macOS deployment target
         if: runner.os == 'macOS'
@@ -180,7 +182,7 @@ jobs:
           [ ${#notarize[@]} -gt 0 ] && echo "notarized=1" >> "$GITHUB_OUTPUT"
           SIGN_KEYCHAIN="$kc" ./backend/scripts/sign-macos.sh ${notarize[@]+"${notarize[@]}"}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: frontend-dist
           path: frontend/dist
@@ -207,7 +209,7 @@ jobs:
           cp "$bin"/cudart64_12.dll "$bin"/cublas64_12.dll "$bin"/cublasLt64_12.dll dist/cudart/
           (cd dist/cudart && 7z a -tzip -mx=7 "../hypnos-$version-windows-x64-cuda12-runtime.zip" ./*.dll >/dev/null)
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: hypnos-${{ matrix.platform }}
           path: |

@@ -74,12 +74,23 @@ Build notes:
   length), dyld refuses it and rustc reports E0463 "can't find crate". Keep it until that is fixed.
 - The first backend build compiles every native engine (10-20 min). CMake generator is forced to
   Ninja; the Visual Studio generator ignores `CUDAHOSTCXX`.
-- `.github/workflows/ci.yml` runs fmt + clippy, the CPU (Linux, Windows) and Metal (macOS) builds
-  and tests, the SDK tests, the desktop app build (three OSes) and the frontend build only for a release: `release.yml` calls it on a `v*` tag and
-  the Docker push and the GitHub release wait for it. Pushes and PRs start nothing; run it by
-  hand (Actions > ci > Run workflow) before tagging, and run fmt + clippy + tests locally.
-  Clippy runs on a pinned Rust (1.98.0 in the lint job; the builds use current stable): bump it
-  on purpose, with the fixes the new lints ask for.
+- `.github/workflows/ci.yml` runs on every push to main and every pull request (BUILD-14): fmt +
+  clippy, the dependency audit, the SDK tests, the frontend build, and the CPU build, tests and
+  desktop app on Linux. `release.yml` calls it on a `v*` tag (the Docker push and the GitHub
+  release wait for it), and a manual run does the same: there the build, tests and desktop app
+  also run on Windows and macOS (Metal). Protect main with the `fmt + clippy`, `dependency audit`,
+  `build + test (linux-cpu)`, `SDKs`, `frontend build` and `desktop app (ubuntu-22.04)` checks
+  required. Clippy runs on a pinned Rust (1.98.0 in the lint job; the builds use current stable):
+  bump it on purpose, with the fixes the new lints ask for.
+- Supply chain (BUILD-15): `deny.toml` (repo root) is cargo-deny's policy for the three Rust
+  workspaces (vulnerabilities fail; unmaintained crates fail only as direct dependencies; the
+  allowed licenses, espeak-rs-sys the one GPL-3.0 exception, see the README's license section;
+  crates.io only); `npm audit --omit=dev --audit-level=high` and `pip-audit` cover the Node
+  projects and the Python SDK. `.github/dependabot.yml` opens weekly grouped PRs for actions,
+  desktop + SDK cargo, npm and pip; the backend workspace is left out (its vendored path crates
+  are git-ignored): `cargo update` it by hand. Every action is pinned to a commit SHA with its
+  version in a comment; keep new ones that way (Dependabot updates both). The server and desktop
+  crates are `publish = false`.
 - CUDA builds compile ggml for `CMAKE_CUDA_ARCHITECTURES` (BUILD-11): the archives and the
   Docker image for Turing..Blackwell (`CUDA_ARCHITECTURES` in `build-server.yml` and the
   `Dockerfile`), local builds for the machine's GPU (`setup-build-env`). `CUDAARCHS` alone does

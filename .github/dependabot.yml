@@ -1,0 +1,30 @@
+# Dependency update PRs (BUILD-15), weekly, grouped per ecosystem so each week is one or two PRs.
+# Not here: backend/ (its engine crates are path dependencies in backend/vendor/, which is
+# git-ignored and made by scripts/vendor.sh, so Dependabot cannot resolve the workspace). Its
+# advisories fail CI through cargo-deny (deny.toml); bump it by hand with `cargo update`, and the
+# engines through the pins in scripts/vendor.sh.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/engine-cache"]
+    schedule: { interval: weekly }
+    groups:
+      actions: { patterns: ["*"] }
+
+  - package-ecosystem: cargo
+    directories: ["/desktop/src-tauri", "/sdk/rust"]
+    schedule: { interval: weekly }
+    groups:
+      cargo-minor: { update-types: [minor, patch] }
+
+  - package-ecosystem: npm
+    directories: ["/frontend", "/desktop", "/sdk/javascript"]
+    schedule: { interval: weekly }
+    groups:
+      npm-minor: { update-types: [minor, patch] }
+
+  - package-ecosystem: pip
+    directory: /sdk/python
+    schedule: { interval: weekly }
+    groups:
+      pip-minor: { update-types: [minor, patch] }

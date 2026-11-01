@@ -57,20 +57,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Backlog
 
-- [ ] ⬛ **BUILD-14** `P1` CI on pushes and pull requests
-      Nothing runs until a tag, which is how a broken Windows test reached the v0.5.0 release.
-      Run the fast jobs (fmt, clippy, the engine-free crates' tests, the SDK tests against the
-      mock server, the frontend and desktop builds) on every push to main and every pull request,
-      under 15 minutes; the full engine builds on pull requests once BUILD-13's engine cache makes
-      them cheap, and always on tags as now. Document the branch protection to turn on (required
-      checks) in CLAUDE.md.
-- [ ] ⬛ **BUILD-15** `P1` Supply-chain checks: dependency audit, update PRs, pinned actions
-      `cargo-deny` (advisories, licenses, duplicate and banned crates; a `deny.toml` that allows
-      the licenses in use) for the backend, desktop and Rust SDK workspaces, `npm audit
-      --omit=dev` for frontend, desktop and the JavaScript SDK, `pip-audit` for the Python SDK,
-      all in BUILD-14's CI. Dependabot (or Renovate) for cargo, npm, pip and GitHub Actions,
-      grouped weekly. Pin every action to a commit SHA with its version in a comment (today
-      `lukka/get-cmake@latest`, `dtolnay/rust-toolchain@master` and tags float).
 - [ ] ⬛ **BUILD-16** `P2` Release provenance: checksums, SBOM, attestations, a signed image
       Each release publishes `SHA256SUMS` for every archive and installer, an SBOM per archive
       (CycloneDX: `cargo cyclonedx` for the Rust side, the vendored engines and model-free
@@ -244,6 +230,30 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       cache, the second shows the time.
 
 ## Done
+
+- [x] ⬛ **BUILD-15** `P1` Supply-chain checks: dependency audit, update PRs, pinned actions
+      `cargo-deny` (advisories, licenses, duplicate and banned crates; a `deny.toml` that allows
+      the licenses in use) for the backend, desktop and Rust SDK workspaces, `npm audit
+      --omit=dev` for frontend, desktop and the JavaScript SDK, `pip-audit` for the Python SDK,
+      all in BUILD-14's CI. Dependabot (or Renovate) for cargo, npm, pip and GitHub Actions,
+      grouped weekly. Pin every action to a commit SHA with its version in a comment (today
+      `lukka/get-cmake@latest`, `dtolnay/rust-toolchain@master` and tags float).
+      Done: `deny.toml` (advisories, licenses with the espeak-ng GPL exception written down,
+      sources); all three workspaces pass (7 unmaintained transitive crates reported, no
+      vulnerability); the server and desktop crates are `publish = false`. `audit` job in ci.yml
+      with cargo-deny-action, npm audit and pip-audit (all clean today). `.github/dependabot.yml`
+      (backend left out: its vendored path crates are git-ignored). Every action pinned to a SHA.
+
+- [x] ⬛ **BUILD-14** `P1` CI on pushes and pull requests
+      Nothing runs until a tag, which is how a broken Windows test reached the v0.5.0 release.
+      Run the fast jobs (fmt, clippy, the engine-free crates' tests, the SDK tests against the
+      mock server, the frontend and desktop builds) on every push to main and every pull request,
+      under 15 minutes; the full engine builds on pull requests once BUILD-13's engine cache makes
+      them cheap, and always on tags as now. Document the branch protection to turn on (required
+      checks) in CLAUDE.md.
+      Done: `ci.yml` runs on pushes to main and on pull requests; there the build + test and
+      desktop jobs run on Linux only (a `fromJSON` matrix; tags and manual runs keep all three
+      OSes), with BUILD-13's engine cache. The checks to require are listed in CLAUDE.md.
 
 - [x] 🩵 **DESK-29** `P1` Models dialog: an "In use" tab from the server in place of Lineup
       The Lineup tab mixed the manifest's download list (files on disk, `docling-gpu` "not in
