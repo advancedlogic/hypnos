@@ -700,6 +700,30 @@ export class Client {
   }
 
   /**
+   * `POST /v1/images/edits` (multipart): `images` edited, or taken as references, as `prompt`
+   * says. Needs a model that edits (`[models.image] edit = true`: FLUX.2 klein).
+   */
+  async editImage(
+    model: string,
+    prompt: string,
+    images: FileInput[],
+    options: ImageOptions = {},
+  ): Promise<ImageResponse> {
+    const { signal, ...rest } = options;
+    const form = new FormData();
+    form.append("model", model);
+    form.append("prompt", prompt);
+    for (const [key, value] of Object.entries(dropUndefined(rest))) {
+      form.append(key, String(value));
+    }
+    for (const image of images) {
+      const { blob, name } = await toBlob(image, undefined);
+      form.append("image", blob, name);
+    }
+    return this.json("POST", "/v1/images/edits", { model, form, signal });
+  }
+
+  /**
    * `POST /v1/entities`: zero-shot entity extraction. `start`/`end` are Unicode code point
    * offsets: slice with `sliceByCodePoints`, not `String.prototype.slice`.
    */

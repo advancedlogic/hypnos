@@ -1339,14 +1339,14 @@ license = "apache-2.0"
 architecture = "flux2-klein"
 modality = "image_generation"
 engine = "ggml_diffusion"
-summary = "The quickest image model in the catalog (4 steps): FLUX.2 quality in about 9 GB."
+summary = "The quickest image model in the catalog (4 steps), and it edits: FLUX.2 quality in about 9 GB."
 
 [models.config]
 min_gpu_layer_ratio = 0.25
 initial_tier = "tier3_nvme_ssd"
 keep_warm_in_ram = false
 priority = "low"
-image = { steps = 4, cfg_scale = 1.0 }
+image = { steps = 4, cfg_scale = 1.0, edit = true }
 
 [models.config.arch]
 num_layers = 30

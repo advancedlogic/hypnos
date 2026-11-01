@@ -194,6 +194,15 @@ def test_images(client: Client) -> None:
     assert "hypnos_telemetry" in reply
 
 
+def test_edit_image(client: Client) -> None:
+    source = base64.b64decode(client.images(IMAGE, "a fox")["data"][0]["b64_json"])
+    reply = client.edit_image(IMAGE, "give the fox a scarf", [("fox.png", source)], seed=3)
+    assert len(reply["data"]) == 1
+    assert base64.b64decode(reply["data"][0]["b64_json"])[:8] == b"\x89PNG\r\n\x1a\n"
+    with pytest.raises(BadRequestError):
+        client.edit_image(IMAGE, "no image", [])
+
+
 def test_entities(client: Client) -> None:
     text = "Mario Rossi works in Milan."
     reply = client.entities(NER, [text, "nothing here"], ["person", "city"], threshold=0.4)

@@ -218,6 +218,8 @@ struct ImageJob {
     /// sd.cpp's sampler name (`[models.image] sample_method`); `None` = the model's default.
     sample_method: Option<String>,
     flow_shift: Option<f32>,
+    /// Reference images, decoded to RGB (`/v1/images/edits`).
+    references: Vec<image::RgbImage>,
     seed: i64,
     count: u32,
 }
@@ -312,6 +314,21 @@ fn run_image_job_inner(loaded: &LoadedSd, job: &ImageJob) -> Result<Vec<Vec<u8>>
         }
         if let Some(shift) = job.flow_shift {
             g.sample_params.flow_shift = shift;
+        }
+        // sd.cpp reads the pixels during the call; `job` owns them until it returns.
+        let mut refs: Vec<sd::sd_image_t> = job
+            .references
+            .iter()
+            .map(|img| sd::sd_image_t {
+                width: img.width(),
+                height: img.height(),
+                channel: 3,
+                data: img.as_raw().as_ptr() as *mut u8,
+            })
+            .collect();
+        if !refs.is_empty() {
+            g.ref_images = refs.as_mut_ptr();
+            g.ref_images_count = refs.len() as i32;
         }
 
         let mut result: *mut sd::sd_image_generation_result_t = std::ptr::null_mut();
@@ -429,6 +446,30 @@ impl ModelBackend for GgmlDiffusionBackend {
             ));
         }
         let max_n = ctx.limits.max_images_per_request.max(1);
+        let mut references = Vec::with_capacity(req.reference_images.len());
+        if !req.reference_images.is_empty() {
+            if !self.config.image.edit {
+                return Err(HypnosError::InvalidRequest(format!(
+                    "'{}' does not edit images; use a model with [models.image] edit = true (FLUX.2 klein)",
+                    self.config.id
+                )));
+            }
+            if req.mask.is_some() {
+                return Err(HypnosError::InvalidRequest(format!(
+                    "'{}' edits from the prompt and reference images; masks are not supported",
+                    self.config.id
+                )));
+            }
+            for (i, bytes) in req.reference_images.iter().enumerate() {
+                let img = image::load_from_memory(bytes).map_err(|e| {
+                    HypnosError::InvalidRequest(format!(
+                        "image {} is not a PNG, JPEG or WebP: {e}",
+                        i + 1
+                    ))
+                })?;
+                references.push(img.to_rgb8());
+            }
+        }
         let (width, height) = parse_image_size(&req.size)?;
         let seed = req
             .seed
@@ -450,6 +491,7 @@ impl ModelBackend for GgmlDiffusionBackend {
                 .unwrap_or(DEFAULT_CFG_SCALE),
             sample_method: self.config.image.sample_method.clone(),
             flow_shift: self.config.image.flow_shift,
+            references,
             seed,
             count: req.n.clamp(1, max_n),
         };

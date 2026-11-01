@@ -1014,6 +1014,39 @@ impl Client {
         .await
     }
 
+    /// `POST /v1/images/edits` (multipart): `images` (file name, bytes) edited, or taken as
+    /// references, as `req.prompt` says. Needs a model that edits (`[models.image] edit = true`:
+    /// FLUX.2 klein). `req`'s generation options apply.
+    pub async fn edit_image(
+        &self,
+        req: &ImageRequest,
+        images: &[(String, Vec<u8>)],
+    ) -> Result<ImageResponse> {
+        let fields =
+            serde_json::to_value(req).map_err(|e| Error::InvalidArgument(e.to_string()))?;
+        self.json(Some(&req.model), || {
+            let mut form = reqwest::multipart::Form::new();
+            if let Value::Object(map) = &fields {
+                for (k, v) in map {
+                    let text = match v {
+                        Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    form = form.text(k.clone(), text);
+                }
+            }
+            for (name, bytes) in images {
+                form = form.part(
+                    "image",
+                    reqwest::multipart::Part::bytes(bytes.clone()).file_name(name.clone()),
+                );
+            }
+            self.request(Method::POST, "/v1/images/edits")
+                .multipart(form)
+        })
+        .await
+    }
+
     /// `POST /v1/entities`: zero-shot entity extraction.
     pub async fn entities(&self, req: &EntitiesRequest) -> Result<EntityResponse> {
         let body = serde_json::to_value(req).map_err(|e| Error::InvalidArgument(e.to_string()))?;

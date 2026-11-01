@@ -252,6 +252,29 @@ async fn speech_stream() {
 }
 
 #[tokio::test]
+async fn edit_image() {
+    let server = MockServer::start();
+    let client = server.client();
+    let source = client
+        .images(&ImageRequest::new(IMAGE, "a fox"))
+        .await
+        .unwrap();
+    let png = B64.decode(&source.data[0].b64_json).unwrap();
+    let reply = client
+        .edit_image(
+            &ImageRequest::new(IMAGE, "give the fox a scarf").seed(3),
+            &[("fox.png".to_string(), png)],
+        )
+        .await
+        .unwrap();
+    assert_eq!(reply.data.len(), 1);
+    assert!(client
+        .edit_image(&ImageRequest::new(IMAGE, "no image"), &[])
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn images() {
     let server = MockServer::start();
     let reply = server

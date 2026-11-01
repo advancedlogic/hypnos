@@ -366,6 +366,9 @@ pub struct ImageDefaults {
     /// Flow-matching time shift; unset = the model's own default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flow_shift: Option<f32>,
+    /// The model edits images given as references (`POST /v1/images/edits`; FLUX.2 klein).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub edit: bool,
 }
 
 impl ImageDefaults {

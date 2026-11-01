@@ -266,6 +266,7 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
         .route("/v1/audio/transcriptions", post(audio_transcriptions))
         .route("/v1/audio/speech", post(audio_speech))
         .route("/v1/images/generations", post(image_generations))
+        .route("/v1/images/edits", post(image_edits))
         .route("/v1/documents/convert", post(documents::convert_document))
         .route(
             "/v1/documents/:id",
@@ -1548,6 +1549,120 @@ async fn image_generations(
             with_log(e.into_response(), details.with_error(message))
         }
     }
+}
+
+/// `POST /v1/images/edits` (API-13): OpenAI's multipart form (`model`, `prompt`, one or more
+/// `image` / `image[]` files, optional `mask`, `n`, `size`, `response_format`) plus the Hypnos
+/// fields of the generation route (`negative_prompt`, `steps`, `seed`, `cfg_scale`). The images
+/// reach the model as references; the rest is the generation route.
+async fn image_edits(State(state): State<AppState>, headers: HeaderMap, body: Body) -> Response {
+    let mut details = LogDetails::default();
+    let result = async {
+        let req = parse_image_edit(&state, &headers, body).await?;
+        details.model = Some(req.model.clone());
+        if state.request_log.capture_text() {
+            details.input = Some(format!(
+                "{} ({} image(s))",
+                req.prompt,
+                req.reference_images.len()
+            ));
+        }
+        image_generations_inner(&state, &req, &mut details).await
+    }
+    .await;
+    match result {
+        Ok(resp) => with_log(resp.into_response(), details),
+        Err(e) => {
+            let message = e.0.to_string();
+            with_log(e.into_response(), details.with_error(message))
+        }
+    }
+}
+
+async fn parse_image_edit(
+    state: &AppState,
+    headers: &HeaderMap,
+    body: Body,
+) -> std::result::Result<ImageGenerationRequest, ApiError> {
+    let bad = |m: String| ApiError::from(HypnosError::InvalidRequest(m));
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !content_type.starts_with("multipart/form-data") {
+        return Err(bad(
+            "/v1/images/edits takes multipart/form-data (model, prompt, image)".into(),
+        ));
+    }
+    let max_image = usize::try_from(state.limits.max_image_bytes).unwrap_or(usize::MAX);
+    let request = axum::http::Request::builder()
+        .header(header::CONTENT_TYPE, content_type)
+        .body(body)
+        .map_err(|e| bad(e.to_string()))?;
+    use axum::extract::FromRequest;
+    let mut form = Multipart::from_request(request, state)
+        .await
+        .map_err(|e| bad(e.to_string()))?;
+    let mut fields: std::collections::HashMap<String, String> = Default::default();
+    let mut images = Vec::new();
+    let mut mask = None;
+    while let Some(field) = form.next_field().await.map_err(|e| bad(e.to_string()))? {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "image" | "image[]" | "mask" => {
+                let bytes = field.bytes().await.map_err(|e| bad(e.to_string()))?;
+                if bytes.len() > max_image {
+                    return Err(bad(format!(
+                        "{name} is {} bytes, above limits.max_image_bytes ({max_image})",
+                        bytes.len()
+                    )));
+                }
+                if name == "mask" {
+                    mask = Some(bytes.to_vec());
+                } else {
+                    images.push(bytes.to_vec());
+                }
+            }
+            _ => {
+                let text = field.text().await.map_err(|e| bad(e.to_string()))?;
+                fields.insert(name, text);
+            }
+        }
+    }
+    let take = |k: &str| {
+        fields
+            .get(k)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    let number = |k: &str| -> std::result::Result<Option<f64>, ApiError> {
+        take(k)
+            .map(|v| {
+                v.parse::<f64>()
+                    .map_err(|_| bad(format!("{k} is not a number: {v}")))
+            })
+            .transpose()
+    };
+    let model = take("model").ok_or_else(|| bad("missing 'model'".into()))?;
+    let prompt = take("prompt").ok_or_else(|| bad("missing 'prompt'".into()))?;
+    if images.is_empty() {
+        return Err(bad(
+            "no 'image' file: an edit needs at least one image".into()
+        ));
+    }
+    Ok(ImageGenerationRequest {
+        model,
+        prompt,
+        negative_prompt: take("negative_prompt"),
+        n: number("n")?.map_or(1, |n| n.max(1.0) as u32),
+        size: take("size").unwrap_or_else(|| "1024x1024".into()),
+        response_format: take("response_format").unwrap_or_else(|| "b64_json".into()),
+        steps: number("steps")?.map(|v| v as u32),
+        seed: number("seed")?.map(|v| v as u64),
+        cfg_scale: number("cfg_scale")?.map(|v| v as f32),
+        reference_images: images,
+        mask,
+    })
 }
 
 async fn image_generations_inner(

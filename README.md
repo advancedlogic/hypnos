@@ -239,7 +239,7 @@ models Hypnos has been tested with (the other Gemma 4 sizes E2B, 12B and 31B, NV
 4.6, the Qwen3-ASR speech recognizers, Qwen3-TTS with voice cloning, Liquid AI's LFM3 text, vision,
 audio and omni models (the audio and omni models also speak), and
 LFM2.5 24B-A2B, Qwen3-Coder 30B-A3B, NVIDIA Nemotron 3.5 Lightning, GLM-4.7-Flash, and the image
-models Z-Image-Turbo, FLUX.2 klein 4B and
+models Z-Image-Turbo, FLUX.2 klein 4B (which also edits images, `POST /v1/images/edits`) and
 ERNIE-Image-Turbo), each in several quantizations where they come in several.
 
 ```bash

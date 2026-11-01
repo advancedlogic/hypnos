@@ -218,6 +218,14 @@ test("images", async () => {
   assert.ok(reply.hypnos_telemetry);
 });
 
+test("edit image", async () => {
+  const source = b64decode((await client.images(IMAGE, "a fox")).data[0].b64_json);
+  const reply = await client.editImage(IMAGE, "give the fox a scarf", [source], { seed: 3 });
+  assert.equal(reply.data.length, 1);
+  assert.ok(startsWith(b64decode(reply.data[0].b64_json), [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  await assert.rejects(client.editImage(IMAGE, "no image", []), BadRequestError);
+});
+
 test("entities", async () => {
   const text = "Mario Rossi works in Milan.";
   const reply = await client.entities(NER, [text, "nothing here"], ["person", "city"], { threshold: 0.4 });

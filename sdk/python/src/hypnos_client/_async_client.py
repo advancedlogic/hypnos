@@ -491,6 +491,32 @@ class AsyncClient:
             await self._json("POST", "/v1/images/generations", model=model, json=body),
         )
 
+    async def edit_image(
+        self,
+        model: str,
+        prompt: str,
+        images: Sequence[FileInput],
+        *,
+        n: Optional[int] = None,
+        size: Optional[str] = None,
+        negative_prompt: Optional[str] = None,
+        steps: Optional[int] = None,
+        seed: Optional[int] = None,
+        cfg_scale: Optional[float] = None,
+    ) -> ImageResponse:
+        """``POST /v1/images/edits`` (multipart): ``images`` (bytes, paths or ``(name, bytes)``)
+        edited, or taken as references, as ``prompt`` says. Needs a model that edits
+        (``[models.image] edit = true``: FLUX.2 klein)."""
+        fields = {k: form_value(v) for k, v in drop_none(
+            {"model": model, "prompt": prompt, "n": n, "size": size,
+             "negative_prompt": negative_prompt, "steps": steps, "seed": seed,
+             "cfg_scale": cfg_scale}).items()}  # fmt: skip
+        files = [("image", read_file(image, None)) for image in images]
+        return cast(
+            ImageResponse,
+            await self._json("POST", "/v1/images/edits", model=model, data=fields, files=files),
+        )
+
     async def entities(
         self,
         model: str,

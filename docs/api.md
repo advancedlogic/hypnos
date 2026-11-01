@@ -798,6 +798,23 @@ Images are PNG. One 1024x1024 generation takes tens of seconds on a 24 GB GPU an
 minutes when the generator runs partially offloaded; keep the client timeout at the server's
 `request_timeout_secs` for this route.
 
+### `POST /v1/images/edits`
+
+OpenAI's image edit route, as `multipart/form-data`: `model`, `prompt`, one or more `image`
+(or `image[]`) files (PNG, JPEG or WebP, each up to `max_image_bytes`), and the optional fields
+of the generation route (`n`, `size`, `negative_prompt`, `steps`, `seed`, `cfg_scale`). The
+images reach the model as references: it edits them, or composes from several, as the prompt
+says. The response is the one of `/v1/images/generations`.
+
+```bash
+curl localhost:9999/v1/images/edits -F model=flux2-klein:4b -F prompt="give the fox a red scarf" \
+  -F image=@fox.png
+```
+
+Only models with `[models.image] edit = true` edit (in the catalog: FLUX.2 klein 4B); others
+answer 400. `mask` is accepted by the form but refused with 400: the current models edit from the
+prompt and the references, not by inpainting.
+
 ---
 
 ## 12. Document conversion and pictures

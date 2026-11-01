@@ -112,11 +112,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       a 9.7 GB diffusion-LLM encoder: make `aux_weights_path` optional and check each pipeline.
       NVIDIA Parakeet TDT 0.6B v3 (25 languages, fast) runs through libmtmd but is not a chat
       model: a transcription-only path.
-- [ ] 🟪 **API-13** `P3` `POST /v1/images/edits` (OpenAI images edit)
-      Image + prompt (+ mask) in, image out, for the sd.cpp models that edit: Qwen-Image 2.1
-      (Qwen3-VL 8B encoder; Qwen Research license, likely non-commercial), Fibo 2.0 Edit Turbo,
-      FLUX.2 / FLUX.3 reference images. Then `docs/api.md`, the mock server, the three SDKs, the
-      playground and the desktop app's image tool.
 
 ## In Progress
 
@@ -124,6 +119,17 @@ _No cards yet._
 
 ## Done
 
+- [x] 🟪 **API-13** `P3` `POST /v1/images/edits` (OpenAI images edit)
+      Image + prompt (+ mask) in, image out, for the sd.cpp models that edit: Qwen-Image 2.1
+      (Qwen3-VL 8B encoder; Qwen Research license, likely non-commercial), Fibo 2.0 Edit Turbo,
+      FLUX.2 / FLUX.3 reference images. Then `docs/api.md`, the mock server, the three SDKs, the
+      playground and the desktop app's image tool.
+      Done: multipart `POST /v1/images/edits` (one or more `image` files, the generation fields),
+      the images as sd.cpp reference images for models with `[models.image] edit = true`
+      (FLUX.2 klein 4B in the catalog; tested: the fox got a red scarf, the rest kept); others and
+      masks answer 400. docs/api.md, the three SDKs (`edit_image` / `editImage`, mock-server
+      tests), the playground's Images tab. Not done: Qwen-Image 2.1 (license), Fibo 2.0, the
+      desktop app's image tool.
 - [x] 🟩 **ENG-9** `P3` More chat formats: Mistral, Nemotron, GLM, LFM2, Qwen 3
       One renderer each, only where a model earns it: Voxtral Mini 4B Realtime (`mistral3`,
       streaming transcription, Apache-2.0), Nemotron 3.5 Lightning 30B-A3B (`nemotron_h_moe`, 1M

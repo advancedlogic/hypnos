@@ -551,6 +551,13 @@ pub struct ImageGenerationRequest {
     pub seed: Option<u64>,
     #[serde(default)]
     pub cfg_scale: Option<f32>,
+    /// `POST /v1/images/edits` (API-13): the images to edit or take as references, as uploaded
+    /// (PNG, JPEG, WebP). Never read from or written to JSON.
+    #[serde(skip)]
+    pub reference_images: Vec<Vec<u8>>,
+    /// `POST /v1/images/edits`: the area to repaint (not supported by the current models).
+    #[serde(skip)]
+    pub mask: Option<Vec<u8>>,
 }
 
 fn default_image_count() -> u32 {

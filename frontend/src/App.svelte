@@ -131,6 +131,8 @@
   // 5. Image Generation Playground State (moss-image)
   // -------------------------------------------------------------------------
   let imageModel = $state('moss-image');
+  // Reference images for /v1/images/edits (API-13): with any, the request edits them.
+  let imageRefs = $state([]);
   let imagePrompt = $state('A futuristic cyberpunk Rust crab orchestrating glowing GPU memory blocks');
   let imageSize = $state('1024x1024');
   let imageCount = $state(1);
@@ -1305,16 +1307,28 @@
     isLoading = true;
     lastError = '';
     try {
-      const res = await apiFetch(`/v1/images/generations`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: imageModel,
-          prompt: imagePrompt,
-          size: imageSize,
-          n: Number(imageCount),
-        }),
-      });
+      let res;
+      if (imageRefs.length > 0) {
+        // An edit: the images go as references (multipart, as OpenAI's route takes them).
+        const form = new FormData();
+        form.append('model', imageModel);
+        form.append('prompt', imagePrompt);
+        form.append('size', imageSize);
+        form.append('n', String(Number(imageCount)));
+        for (const f of imageRefs) form.append('image', f, f.name);
+        res = await apiFetch(`/v1/images/edits`, { method: 'POST', body: form });
+      } else {
+        res = await apiFetch(`/v1/images/generations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: imageModel,
+            prompt: imagePrompt,
+            size: imageSize,
+            n: Number(imageCount),
+          }),
+        });
+      }
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
 
@@ -2993,12 +3007,36 @@
               ></textarea>
             </div>
 
+            <div>
+              <label class="block text-xs text-slate-400 mb-1" for="img-refs">
+                Images to edit (optional; needs a model that edits, e.g. flux2-klein:4b)
+              </label>
+              <input
+                id="img-refs"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                multiple
+                onchange={(ev) => (imageRefs = [...ev.currentTarget.files])}
+                class="w-full text-xs text-slate-300 file:mr-3 file:rounded file:border-0 file:bg-slate-800 file:px-3 file:py-1.5 file:text-slate-200"
+              />
+              {#if imageRefs.length > 0}
+                <div class="mt-1 flex items-center gap-2 text-[11px] text-slate-400">
+                  <span>{imageRefs.length} image(s): {imageRefs.map((f) => f.name).join(', ')}</span>
+                  <button type="button" class="text-indigo-300 hover:text-indigo-200" onclick={() => (imageRefs = [])}>clear</button>
+                </div>
+              {/if}
+            </div>
+
             <button
               type="submit"
               disabled={isLoading}
               class="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs font-semibold text-white transition"
             >
-              {isLoading ? 'Swapping VRAM Tiers & Rendering...' : 'Generate Image via /v1/images/generations (moss-image)'}
+              {isLoading
+                ? 'Swapping VRAM Tiers & Rendering...'
+                : imageRefs.length > 0
+                  ? `Edit via /v1/images/edits (${imageModel})`
+                  : `Generate Image via /v1/images/generations (${imageModel})`}
             </button>
           </form>
 
