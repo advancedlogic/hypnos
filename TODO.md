@@ -148,6 +148,12 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Done
 
+- [x] 🩵 **DESK-28** `P2` The Catalog tab: pool and not-pool tabs, models grouped by job
+      Two tabs inside Catalog, "Not in the pool" and "In the pool" (with counts), and in each the
+      models grouped by their main modality (Chat, Vision, Speech to text, Text to speech,
+      Embeddings, Image generation, Documents, Entities, Other), with filter buttons per group.
+      The manual's Catalog section and screenshots follow (`models-catalog-pool` scene).
+
 - [x] ⬜ **DOC-7** `P2` A user manual for the desktop app, with screenshots
       `docs/desktop-manual.md`, for people using the app: installing, the first start and the
       guided setup, the window, chatting, thinking, attachments and links, voice, images, tools

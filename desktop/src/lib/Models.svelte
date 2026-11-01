@@ -168,6 +168,36 @@
   let available = $derived(entries ? entries.filter((m) => !m.inPool) : []);
   let pooled = $derived(entries ? entries.filter((m) => m.inPool) : []);
 
+  // The Catalog tab: the models not in the pool or the ones in it, grouped by their main job.
+  const GROUPS = [
+    ['text_generation', 'Chat'],
+    ['vision', 'Vision'],
+    ['speech_to_text', 'Speech to text'],
+    ['text_to_speech', 'Text to speech'],
+    ['embeddings', 'Embeddings'],
+    ['image_generation', 'Image generation'],
+    ['document_conversion', 'Documents'],
+    ['entity_extraction', 'Entities'],
+  ];
+  let poolView = $state('available'); // 'available' | 'pooled'
+  let mode = $state(null); // a modality to show alone, or all
+  let listed = $derived(poolView === 'pooled' ? pooled : available);
+  let groups = $derived.by(() => {
+    const known = new Set(GROUPS.map(([m]) => m));
+    const all = [...GROUPS, ['other', 'Other']].map(([modality, label]) => ({
+      modality,
+      label,
+      models: listed.filter((m) => (modality === 'other' ? !known.has(m.modality) : m.modality === modality)),
+    }));
+    return all.filter((g) => g.models.length);
+  });
+  let shownGroups = $derived(mode && groups.some((g) => g.modality === mode) ? groups.filter((g) => g.modality === mode) : groups);
+
+  function showPool(which) {
+    poolView = which;
+    mode = null;
+  }
+
   /**
    * The lineup is the manifest's models; models added to the pool from the catalog, and any other
    * model the running server has, are listed after them so the lineup shows what is configured.
@@ -631,24 +661,36 @@
           {#if entriesError}
             <p class="px-5 py-2 text-xs text-amber-300">{entriesError}</p>
           {/if}
-          {#if available.length}
-            <h3 class="px-5 pt-3 text-[11px] uppercase tracking-wide text-slate-500">Not in the pool</h3>
-          {:else if !entriesError}
-            <p class="px-5 py-2 text-xs text-slate-500">The server has every model of the catalog.</p>
-          {/if}
-          <ul class="divide-y divide-slate-800">
-            {#each available as m (m.id)}
-              {@render row(m)}
+          <div class="px-5 pt-3 flex items-center gap-1" role="tablist" aria-label="Catalog models">
+            {#each [['available', 'Not in the pool', available.length], ['pooled', 'In the pool', pooled.length]] as [id, label, count] (id)}
+              <button role="tab" aria-selected={poolView === id}
+                class="px-3 py-1 rounded-md text-xs {poolView === id ? 'bg-slate-800 text-slate-100' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'}"
+                onclick={() => showPool(id)}>{label} <span class="text-slate-500">{count}</span></button>
             {/each}
-          </ul>
-          {#if pooled.length}
-            <h3 class="px-5 pt-4 text-[11px] uppercase tracking-wide text-slate-500 border-t border-slate-800">In the pool</h3>
+          </div>
+          {#if groups.length > 1}
+            <div class="px-5 pt-2 flex flex-wrap gap-1" aria-label="Show one kind of model">
+              <button class="px-2 py-0.5 rounded-full text-[11px] border {mode === null ? 'border-indigo-500 text-indigo-200' : 'border-slate-700 text-slate-400 hover:text-slate-200'}"
+                onclick={() => (mode = null)}>All</button>
+              {#each groups as g (g.modality)}
+                <button class="px-2 py-0.5 rounded-full text-[11px] border {mode === g.modality ? 'border-indigo-500 text-indigo-200' : 'border-slate-700 text-slate-400 hover:text-slate-200'}"
+                  onclick={() => (mode = mode === g.modality ? null : g.modality)}>{g.label} <span class="text-slate-500">{g.models.length}</span></button>
+              {/each}
+            </div>
+          {/if}
+          {#if !listed.length && !entriesError}
+            <p class="px-5 py-3 text-xs text-slate-500">
+              {poolView === 'pooled' ? 'No catalog model is in the pool yet: add one from "Not in the pool".' : 'The server has every model of the catalog.'}
+            </p>
+          {/if}
+          {#each shownGroups as g (g.modality)}
+            <h3 class="px-5 pt-4 pb-1 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800">{g.label}</h3>
             <ul class="divide-y divide-slate-800">
-              {#each pooled as m (m.id)}
+              {#each g.models as m (m.id)}
                 {@render row(m)}
               {/each}
             </ul>
-          {/if}
+          {/each}
         </div>
       {/if}
     </div>

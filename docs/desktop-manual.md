@@ -311,14 +311,21 @@ the files to the new folder" to take the downloaded files along.
 
 ### Catalog: models to add
 
-![The Catalog tab: tested models with their license, what they do, thinking and tools, a variant and Add](images/desktop/models-catalog.png)
+![The Catalog tab, Not in the pool: tested models grouped by job, with a variant and Add](images/desktop/models-catalog.png)
 
-The catalog lists the models Hypnos has been tested with: name, maker, license, what it does
-(Chat, Vision, Speech to text, …), **Thinking** and **Tools** when it supports them, and a
-short description. Pick a **variant** (a smaller one is faster and uses less memory, a larger
-one is a little better) and click **Add**: the app downloads it if needed and adds it to the
-running server, with no restart. Models already in the server are listed under "In the pool",
-with **Replace** (switch to another variant) and **Remove**.
+The catalog lists the models Hypnos has been tested with, in two tabs: **Not in the pool** (the
+ones you can add) and **In the pool** (the ones the server has). In each, the models are grouped
+by their main job: Chat, Vision, Speech to text, Text to speech, Embeddings, Image generation,
+Documents, Entities. The buttons above the list (All, Chat 15, Vision 2, …) show one group alone.
+
+Each model shows its name, maker, license, what it does (Chat, Vision, Speech to text, …),
+**Thinking** and **Tools** when it supports them, and a short description. Pick a **variant** (a
+smaller one is faster and uses less memory, a larger one is a little better) and click **Add**:
+the app downloads it if needed and adds it to the running server, with no restart. In the
+**In the pool** tab each model has **Replace** (switch to another variant) and **Remove**, and
+the same Thinking and "Make default for…" menus as in the Lineup.
+
+![The In the pool tab: the server's models grouped by job, with Replace and Remove](images/desktop/models-catalog-pool.png)
 
 Some models come from repositories that need you to accept a license first, such as Black
 Forest Labs' FLUX originals. Their variants say **needs a Hugging Face token**: accept the

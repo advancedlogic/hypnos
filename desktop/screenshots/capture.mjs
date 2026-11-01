@@ -116,6 +116,14 @@ const scenes = {
     await shot(page, 'models-catalog', page.locator('div.fixed > div').first());
     return page;
   },
+  async 'models-catalog-pool'() {
+    const page = await open('dolomites', { scale: 2, width: 1360, height: 1000 });
+    await page.getByRole('button', { name: 'Models', exact: true }).click();
+    await page.getByRole('tab', { name: /^In the pool/ }).click();
+    await page.waitForTimeout(800);
+    await shot(page, 'models-catalog-pool', page.locator('div.fixed > div').first());
+    return page;
+  },
   async settings() {
     const page = await open('dolomites', { scale: 2, width: 1360, height: 1100 });
     await page.getByRole('button', { name: /Ready/ }).click();
