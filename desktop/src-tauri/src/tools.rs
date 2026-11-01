@@ -544,7 +544,11 @@ mod tests {
         assert_eq!(panel_text("short"), "short");
         let long = "x".repeat(STEP_OUTPUT_CHARS + 5);
         let cut = panel_text(&long);
-        assert!(cut.ends_with("… (5 more characters)"), "{}", &cut[cut.len() - 40..]);
+        assert!(
+            cut.ends_with("… (5 more characters)"),
+            "{}",
+            &cut[cut.len() - 40..]
+        );
         assert_eq!(
             Tool::Image.label(&json!({"prompt": "a", "reference": "previous"})),
             "Editing an image"
