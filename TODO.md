@@ -107,6 +107,52 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       probably makes llama.cpp b11982 re-capture its CUDA graph every step again. Check with the
       graph counters / `GGML_CUDA_DISABLE_GRAPHS`, try 2 slots and 4 x 8k, and ship the shape that
       batches well (on Metal 4 slots gave 1.43x).
+- [ ] 🟩 **ENG-5** `P1` Catalog: the other Gemma 4 sizes, Nemotron 3.5 Bolt E4B, LFM3-Omni 2B
+      Architectures Hypnos already runs (`gemma4`, `lfm3`), so catalog entries + `[models.estimate]`
+      + a smoke run each: `ggml-org/gemma-4-E2B-it-GGUF` (2.8 GB Q4_0, vision + audio in),
+      `gemma-4-12B-it` (7.2 GB, vision), `gemma-4-31B-it` (18 GB, vision),
+      `NVIDIA-Nemotron-3.5-Bolt-E4B-GGUF` (gemma4 arch, text, 8 GB Q8; check its template matches
+      `gemma4_prompt`), `LFM3-Omni-2B-GGUF` (1.1 GB, text + vision + audio in, LFM 1.0 license).
+      Measure `activation_workspace_bytes` with `hypnos measure-memory` (TEST-3).
+- [ ] 🟩 **ENG-6** `P1` Qwen chat format: Qwen 3.5 / 3.6 / 3.8 and the models built on them
+      One renderer (`qwen_prompt`: ChatML, `<think>` thinking with the budget/close logic of
+      `lfm3_prompt`, Qwen's `<tool_call>` JSON tool format in `tools.rs`, vision markers) and
+      `qwen35`, `qwen35moe`, `qwen3vl` in `TESTED_GGUF_ARCHITECTURES`. Catalog: Qwen3.8-27B (19 GB
+      Q4_K_M, vision, 256k, Apache-2.0), Qwen3.6-35B-A3B (20 GB, MoE: `moe_offload`), Qwen3.5
+      0.8B / 2B / 4B / 9B, MiniCPM-V 4.6 (0.5 GB vision), Qwen3-ASR 0.6B / 1.7B (transcription,
+      `qwen3vl`). Check Clef / Clef-Flash (Cloudflare, own `clef` arch) against the same renderer.
+- [ ] 🟩 **ENG-7** `P1` Image models on the existing sd.cpp file set; per-model sampling defaults
+      `diffusion.rs` uses one `DEFAULT_STEPS` / CFG for every model; turbo models want ~4-8 steps
+      and CFG 1. Add `[models.arch]`-style `default_steps` / `default_cfg_scale` (sample method,
+      flow shift if needed) and generalize the module docs beyond MOSS. Catalog, all DiT + LLM
+      encoder + VAE: Z-Image-Turbo (3.9 GB Q4_K + Qwen3 4B, Apache-2.0), FLUX.2 klein 4B
+      (Apache-2.0; the 9B is non-commercial), ERNIE-Image-Turbo (5 GB + Ministral 3 3B,
+      Apache-2.0), FLUX.3 Image Klein (3.5 GB + Qwen3-VL 4B, FLUX.2 VAE; FLUX Kommunity license:
+      check the terms first). Memory measured per model (TEST-3).
+- [ ] 🟩 **ENG-8** `P2` Speech output through llama.cpp (LFM3-Audio, Qwen3-TTS)
+      b11982's libmtmd generates audio (`mtmd-helper-gen.cpp`, `tools/tts`): an engine path for
+      `text_to_speech` on `ggml_llama` models, WAV / streamed PCM like Kokoro. First LFM3-Audio
+      (already in the catalog for transcription: 19 languages, `female` / `male`, 80 ms frames,
+      model-card sampling), so one model hears, chats and speaks; then Qwen3-TTS 1.7B
+      (`ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF`, 1 GB, 10 languages, voice cloning from a
+      reference clip: a `voice` upload or path; check its license). Pocket TTS (CC-BY-4.0, gated)
+      and Soprano 80M (Apache-2.0, English) need our own GGUF conversion. Kokoro stays the CPU
+      default.
+- [ ] 🟩 **ENG-9** `P3` More chat formats: Mistral, Nemotron, GLM, LFM2, Qwen 3
+      One renderer each, only where a model earns it: Voxtral Mini 4B Realtime (`mistral3`,
+      streaming transcription, Apache-2.0), Nemotron 3.5 Lightning 30B-A3B (`nemotron_h_moe`, 1M
+      context, NVIDIA license), GLM-4.7-Flash 30B (MIT, tool use), Qwen3-Coder-30B-A3B
+      (`qwen3moe`), LFM2.5-24B-A2B (`lfm2moe`).
+- [ ] 🟩 **ENG-10** `P3` Image engine: optional VAE and other encoders; Parakeet transcription
+      Iris-3B works in pixel space (no VAE; Apache-2.0), Krea 2 uses the Wan 2.1 VAE, LLaDA-Image
+      a 9.7 GB diffusion-LLM encoder: make `aux_weights_path` optional and check each pipeline.
+      NVIDIA Parakeet TDT 0.6B v3 (25 languages, fast) runs through libmtmd but is not a chat
+      model: a transcription-only path.
+- [ ] 🟪 **API-13** `P3` `POST /v1/images/edits` (OpenAI images edit)
+      Image + prompt (+ mask) in, image out, for the sd.cpp models that edit: Qwen-Image 2.1
+      (Qwen3-VL 8B encoder; Qwen Research license, likely non-commercial), Fibo 2.0 Edit Turbo,
+      FLUX.2 / FLUX.3 reference images. Then `docs/api.md`, the mock server, the three SDKs, the
+      playground and the desktop app's image tool.
 
 ## In Progress
 
