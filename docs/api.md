@@ -951,6 +951,10 @@ hands out; `tier1_vram_effective_free_bytes` is what a new promotion can use rig
 present on NVIDIA devices with `nvidia-smi` available and is sampled at most every few seconds.
 Additional fields may appear in later versions; clients should ignore unknown ones.
 
+With `[server] profile` set, the status also carries `"profile": {"name": "voice_assistant",
+"objective": {"metric": "first_audio", "target_ms": 1500}}` (`metric`: `first_token`,
+`first_audio` or `throughput`, the last without `target_ms`).
+
 ### `POST /v1/memory/tier`
 
 Moves a model by hand.

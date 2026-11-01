@@ -4,6 +4,7 @@ pub mod error;
 pub mod gguf;
 pub mod kv_cache;
 pub mod openai;
+pub mod profile;
 pub mod request;
 
 use crate::config::{Modality, ModelConfig};

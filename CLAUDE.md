@@ -246,6 +246,13 @@ sliding-window caches = window + micro-batch, padded to 256); `activation_worksp
 in the configs and the catalog are measured peaks (`docs/bench/memory-2026-11-01.md`); Kokoro is
 `device = "cpu"`. `/metrics` `hypnos_memory_bytes{kind}` shows booked vs held.
 
+Workload profiles (MEM-7): `[server] profile` (`hypnos-core/src/profile.rs`) is applied to the raw
+TOML in `from_toml_str` before deserializing: it inserts only the `[[models]]` keys a block lacks
+(priority, initial_tier, keep_warm_in_ram, slots and arch.default_context_len for llama.cpp
+models) by the model's roles (merged to the most demanding) and `[limits] max_queue_per_model`;
+`config.profile_notes` lists what it set. The pool (`check_block`) and `apply_overlay` apply it to
+runtime and overlay blocks; `/v1/memory/status` has `profile` with its `objective`.
+
 ### Engines (`hypnos-backends`)
 
 - `llama.rs`: `ggml_llama`. Text, vision, audio-in (via mtmd), embeddings, tool calling (`tools.rs`:

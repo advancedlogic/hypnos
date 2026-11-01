@@ -201,6 +201,9 @@ async fn run() -> Result<()> {
     let log_format =
         std::env::var("HYPNOS_LOG_FORMAT").unwrap_or_else(|_| config.server.log_format.clone());
     init_logging(&log_format);
+    for note in &config.profile_notes {
+        info!(profile = ?config.server.profile, "set by the workload profile: {note}");
+    }
     // Models added, replaced or removed at runtime (API-11) live in an overlay next to the config.
     let overlay_path = hypnos_server::pool::overlay_path_for(Path::new(&config_path));
     let config_ids: std::collections::BTreeSet<String> =

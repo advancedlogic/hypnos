@@ -67,6 +67,27 @@ merely loads in llama.cpp can still get its prompt format, media markers or memo
 wrong. The route reports `outdated` for a file whose size differs from the catalog (an upload
 replaced upstream) and `problem` when downloaded weights report another architecture.
 
+**Workload profiles.** `[server] profile` sets the knobs for an outcome instead of one by one. It
+fills in only what the config leaves out (a `[[models]]` block's `priority`, `initial_tier`,
+`keep_warm_in_ram`, `slots`, `[models.arch] default_context_len`, and `[limits]
+max_queue_per_model`), so explicit keys always win and a block that should follow the profile
+leaves them out; `hypnos --check-config` logs what the profile set. Models added at runtime get the
+same presets.
+
+| Role | `interactive_chat` | `voice_assistant` | `document_pipeline` | `batch_processing` |
+| :--- | :--- | :--- | :--- | :--- |
+| chat / vision | high, loaded at start, 2 slots | high, loaded at start, 1 slot, 8k context | normal, on demand, 2 slots | normal, on demand, 4 slots |
+| speech-to-text, text-to-speech | normal, on demand | never evicted, loaded at start | low | normal |
+| embeddings | never evicted, loaded at start | normal | high, loaded at start | high, loaded at start |
+| documents, entities | normal, on demand | low | high, loaded at start | high, loaded at start |
+| images | low | low | low | normal |
+| `max_queue_per_model` | 8 | 4 | 32 | 64 |
+| objective | first token within 1 s | first audio within 1.5 s | throughput | throughput |
+
+A model with several roles takes the most demanding one (the E4B speech model under
+`voice_assistant` is never evicted and gets one chat slot). `/v1/memory/status` reports the
+profile and its objective.
+
 ## 2. Which knob for which symptom
 
 | Symptom | Where to look | What to change |

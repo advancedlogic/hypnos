@@ -491,6 +491,12 @@ async fn memory_status(State(state): State<AppState>) -> Json<serde_json::Value>
             "kv_park".into(),
             serde_json::to_value(state.kv_park.status()).unwrap_or_default(),
         );
+        if let Some(profile) = state.pool.profile() {
+            map.insert(
+                "profile".into(),
+                json!({ "name": profile, "objective": profile.objective() }),
+            );
+        }
     }
     Json(status)
 }

@@ -20,6 +20,7 @@ pub fn default_six_model_config() -> HypnosConfig {
     HypnosConfig {
         config_version: hypnos_core::config::CONFIG_VERSION,
         unknown_keys: Vec::new(),
+        profile_notes: Vec::new(),
         server: ServerConfig {
             host: "127.0.0.1".to_string(),
             port: 9999,
@@ -36,6 +37,7 @@ pub fn default_six_model_config() -> HypnosConfig {
             frontend_dir: None,
             // Bare file names below, as models.manifest lays them out.
             models_dir: Some(PathBuf::from("models")),
+            profile: None,
             document_pictures_dir: None,
             document_pictures_ttl_secs: 3600,
             document_pictures_max_bytes: gb,

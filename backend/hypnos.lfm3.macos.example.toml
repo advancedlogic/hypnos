@@ -80,6 +80,11 @@ log_format = "pretty"
 # backend/). HYPNOS_MODELS_DIR overrides it, e.g. for files on another drive. The file names
 # match the `local` column of models.manifest, which `./run.sh models` downloads into it.
 models_dir = "models"
+# Workload profile: presets for what [[models]] blocks and [limits] leave out (priority,
+# initial_tier, keep_warm_in_ram, slots, context, max_queue_per_model). Explicit keys win, so a
+# block that should follow the profile leaves those keys out. `hypnos --check-config` lists what
+# it set. One of: interactive_chat, voice_assistant, document_pipeline, batch_processing.
+# profile = "voice_assistant"
 # Pictures kept for `return_pictures` document conversions (GET /v1/documents/{id}/pictures): one
 # JSON file per picture (base64 image + mime, size, page, bounding box, caption). Unset dir =
 # hypnos-pictures under the OS temp directory; leftovers of an earlier run are removed at startup.

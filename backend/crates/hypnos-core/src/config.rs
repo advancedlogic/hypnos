@@ -544,6 +544,10 @@ pub struct ServerConfig {
     /// layout `models.manifest` downloads; the desktop app points it at its models folder.
     #[serde(default)]
     pub models_dir: Option<PathBuf>,
+    /// Workload profile (MEM-7): presets for the models' priorities, tiers, slots and the queue
+    /// depth, filled in where the file leaves them out (`crate::profile`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<crate::profile::WorkloadProfile>,
     /// Where `/v1/documents/convert` keeps the pictures a `return_pictures` conversion cut out
     /// (one JSON file per picture: base64 image plus its metadata). Unset: `hypnos-pictures`
     /// under the OS temporary directory. Documents left from an earlier run are removed at
@@ -683,6 +687,7 @@ impl Default for ServerConfig {
             request_log_redact: Vec::new(),
             frontend_dir: None,
             models_dir: None,
+            profile: None,
             document_pictures_dir: None,
             document_pictures_ttl_secs: default_document_pictures_ttl_secs(),
             document_pictures_max_bytes: default_document_pictures_max_bytes(),
@@ -783,6 +788,9 @@ pub struct HypnosConfig {
     /// later version removed. Filled by [`HypnosConfig::from_toml_str`], reported by `validate`.
     #[serde(skip)]
     pub unknown_keys: Vec<String>,
+    /// What `[server] profile` filled in, one line per model (for `--check-config` and the log).
+    #[serde(skip)]
+    pub profile_notes: Vec<String>,
     #[serde(default)]
     pub server: ServerConfig,
     #[serde(default)]
@@ -845,7 +853,12 @@ impl ValidationReport {
 impl HypnosConfig {
     pub fn from_toml_str(content: &str) -> crate::error::Result<Self> {
         let err = |e: toml::de::Error| crate::error::HypnosError::Config(e.to_string());
-        let mut config: Self = toml::from_str(content).map_err(err)?;
+        // A workload profile (MEM-7) fills in what the file leaves out before anything reads it.
+        let mut raw: toml::Table = toml::from_str(content).map_err(err)?;
+        let profile_notes = crate::profile::WorkloadProfile::apply_to_document(&mut raw)
+            .map_err(crate::error::HypnosError::Config)?;
+        let mut config: Self = toml::Value::Table(raw.clone()).try_into().map_err(err)?;
+        config.profile_notes = profile_notes;
         if config.config_version > CONFIG_VERSION {
             return Err(crate::error::HypnosError::Config(format!(
                 "config_version = {} was written for a newer Hypnos; this build reads version {CONFIG_VERSION} (see README, \"Config versions\")",
@@ -859,7 +872,6 @@ impl HypnosConfig {
         }
         // Serde fills defaults silently; remember which arch keys the file actually wrote so GGUF
         // detection can fill the rest without overriding them.
-        let raw: toml::Table = toml::from_str(content).map_err(err)?;
         // Keys no field consumed: serde ignores them, which hides typos and removed keys.
         if let Ok(known) = toml::Value::try_from(&config) {
             let mut unknown = Vec::new();

@@ -117,6 +117,11 @@ impl ModelPool {
         if let Some(id) = force_id {
             table.insert("id".into(), toml::Value::String(id.to_string()));
         }
+        // The server's workload profile fills in what the block leaves out, as at startup.
+        let stored = table.clone();
+        if let Some(profile) = self.template.server.profile {
+            profile.apply_to_model(&mut table);
+        }
         let parsed = HypnosConfig::from_toml_str(&overlay_text(&[], &[table.clone()]))
             .map_err(|e| bad(e.to_string()))?;
         if !parsed.unknown_keys.is_empty() {
@@ -128,7 +133,7 @@ impl ModelPool {
         let mut full = self.template.clone();
         full.models = parsed.models;
         if !self.strict {
-            return Ok((full.models.remove(0), table));
+            return Ok((full.models.remove(0), stored));
         }
         // The template's models_dir is already resolved (absolute) at startup.
         full.apply_models_dir(&self.base_dir, None);
@@ -175,7 +180,12 @@ impl ModelPool {
                 )));
             }
         }
-        Ok((model, table))
+        Ok((model, stored))
+    }
+
+    /// The workload profile the server runs with (`[server] profile`).
+    pub fn profile(&self) -> Option<hypnos_core::profile::WorkloadProfile> {
+        self.template.server.profile
     }
 
     /// Writes one change to the overlay (when there is one); a failure is logged, not returned:
@@ -274,7 +284,14 @@ pub fn apply_overlay(config: &mut HypnosConfig, path: &Path) -> Result<Vec<Strin
         }
         keep
     });
-    let added = HypnosConfig::from_toml_str(&overlay_text(&[], &overlay.models))
+    // The overlay's blocks get the config's workload profile, as the config's own blocks did.
+    let mut blocks = overlay.models.clone();
+    if let Some(profile) = config.server.profile {
+        for b in &mut blocks {
+            profile.apply_to_model(b);
+        }
+    }
+    let added = HypnosConfig::from_toml_str(&overlay_text(&[], &blocks))
         .map_err(|e| format!("{}: {e}", path.display()))?;
     for model in added.models {
         match config.models.iter_mut().find(|m| m.id == model.id) {
