@@ -130,10 +130,13 @@ _No cards yet._
       image models, two that transcribe) the choice is a hidden Settings field that the chat's
       model overrides for vision and speech to text. (1) Lineup: rows for the pool's models outside
       the manifest (from the catalog view: id, job, variant, size, `added` badge) and any other
-      model the running server has. (2) "Model for each job" at the top of the Lineup for the jobs
-      more than one enabled model can do, the same `routes` as Settings (`saveRoutes` in
-      `App.svelte`, `hypnos_set_routes`), applied on the next request without a restart; the job
-      list shared in `src/lib/jobs.js`. (3) `route` (`hypnos.rs`): an explicit choice wins over
+      model the running server has. (2) On each running model's row (Lineup, and the Catalog tab's
+      "In the pool"): green badges for the jobs it is the default for (× goes back to automatic)
+      and a "Make default for…" menu of the jobs it can do (`DEFAULT_JOBS` in `src/lib/jobs.js`:
+      Chat, images in messages, speech to text, text to speech, image generation, documents).
+      Chat sets the model new chats start with (`ChatStore.setDefaultModel`); the others the same
+      `routes` as Settings (`saveRoutes` in `App.svelte`, `hypnos_set_routes`), applied on the
+      next request without a restart. (3) `route` (`hypnos.rs`): an explicit choice wins over
       the chat's model, as Settings' "Automatic picks the chat's model" says; a choice that is
       disabled or gone falls back. Docs: desktop/README.md, CLAUDE.md.
 

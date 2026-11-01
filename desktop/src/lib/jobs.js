@@ -11,5 +11,8 @@ export const JOBS = [
   ['document_conversion', 'Documents and URLs'],
 ];
 
+/** Every job a model can be the default for in the Models dialog: the chat, then `JOBS`. */
+export const DEFAULT_JOBS = [['text_generation', 'Chat'], ...JOBS];
+
 /** The enabled models (from `hypnos_models`) that can do `modality`. */
 export const servingModels = (models, modality) => models.filter((m) => m.modalities.includes(modality));

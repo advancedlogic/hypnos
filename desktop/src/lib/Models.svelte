@@ -2,7 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import * as models from './models.js';
-  import { JOBS, servingModels } from './jobs.js';
+  import { DEFAULT_JOBS } from './jobs.js';
 
   /**
    * The local server's model files (DESK-17): pick from the lineup, download with progress,
@@ -13,11 +13,12 @@
    * (no restart: it serves the change right away); `firstRun` shows the welcome line; `tab` opens
    * on `lineup` or `catalog`; `onsetup` opens the guided setup (DESK-18) instead. `inUse`: the
    * running server's enabled models (`hypnos_models`), `routes` the model chosen per job and
-   * `onroutes` keeps a new choice (the same as in Settings, applied without a restart).
+   * `onroutes` keeps a new choice (the same as in Settings, applied without a restart);
+   * `chatModel` is the model new chats start with and `onchatmodel` changes it.
    */
   let {
     config, binary = null, firstRun = false, tab = 'lineup', onchanged, onpool, onsetup = null, onclose,
-    inUse = [], routes = {}, onroutes = null,
+    inUse = [], routes = {}, onroutes = null, chatModel = null, onchatmodel = null,
   } = $props();
   let view = $state(untrack(() => tab)); // 'lineup' | 'catalog'
 
@@ -185,14 +186,21 @@
     return rows;
   });
 
-  /** The jobs that can go to more than one model, with the models that do them. */
-  let choices = $derived(
-    JOBS.map(([modality, label]) => ({ modality, label, options: servingModels(inUse, modality) })).filter(
-      (j) => j.options.length > 1,
-    ),
-  );
+  /** The jobs a running model can do, and those it is the default for. */
+  function jobsOf(id) {
+    const m = inUse.find((x) => x.id === id);
+    if (!m) return { can: [], is: [] };
+    const can = DEFAULT_JOBS.filter(([modality]) => m.modalities.includes(modality));
+    const is = can.filter(([modality]) => (modality === 'text_generation' ? chatModel === id : routes[modality] === id));
+    return { can, is };
+  }
 
+  /** Makes `id` the default for a job (`id` null: back to automatic). */
   function choose(modality, id) {
+    if (modality === 'text_generation') {
+      if (id) onchatmodel?.(id);
+      return;
+    }
     const next = { ...routes };
     if (id) next[modality] = id;
     else delete next[modality];
@@ -324,6 +332,38 @@
 
 <svelte:window onkeydown={onKeydown} />
 
+{#snippet defaults(id)}
+  {@const jobs = jobsOf(id)}
+  {#each jobs.is as [modality, label] (modality)}
+    <span class="text-[10px] pl-1.5 rounded bg-emerald-950 text-emerald-300 inline-flex items-center gap-0.5" title="The default model for this job">
+      {label}
+      {#if modality !== 'text_generation'}
+        <button class="px-1 hover:text-emerald-100" title="Back to automatic" aria-label="Stop using {id} for {label}"
+          onclick={() => choose(modality, null)}>×</button>
+      {:else}
+        <span class="pr-1.5"></span>
+      {/if}
+    </span>
+  {/each}
+{/snippet}
+
+{#snippet defaultMenu(id)}
+  {@const jobs = jobsOf(id)}
+  {#if onroutes && jobs.can.length > jobs.is.length}
+    <select class="rounded-md bg-slate-950 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+      aria-label="Make {id} the default for a job" value=""
+      onchange={(e) => {
+        choose(e.currentTarget.value, id);
+        e.currentTarget.value = '';
+      }}>
+      <option value="" disabled>Make default for…</option>
+      {#each jobs.can.filter((j) => !jobs.is.includes(j)) as [modality, label] (modality)}
+        <option value={modality}>{label}</option>
+      {/each}
+    </select>
+  {/if}
+{/snippet}
+
 {#snippet row(m)}
   {@const v = variantOf(m)}
   {@const short = cat?.freeBytes != null && missingBytes(v) > cat.freeBytes}
@@ -347,8 +387,12 @@
         {#if m.enabled === false}
           <span class="text-[10px] px-1.5 rounded bg-slate-800 text-slate-400" title="Disabled">off</span>
         {/if}
+        {@render defaults(m.id)}
       {/if}
       <span class="ml-auto font-mono text-[11px] text-slate-500">{m.id}</span>
+      {#if m.inPool}
+        {@render defaultMenu(m.id)}
+      {/if}
     </div>
     <p class="text-xs text-slate-400">{m.summary}</p>
     <div class="flex items-center gap-2 text-xs">
@@ -489,28 +533,6 @@
             Could not reach every host (offline?): some sizes are unknown and those models cannot be downloaded now.
           </p>
         {/if}
-        {#if choices.length && onroutes}
-          <div class="px-5 pt-3 pb-3 space-y-2 border-b border-slate-800">
-            <h3 class="text-[11px] uppercase tracking-wide text-slate-500">Model for each job</h3>
-            <p class="text-xs text-slate-500">
-              More than one model can do these. The choice applies to the next request, no restart;
-              Automatic uses the chat's model when it can, else one already loaded.
-            </p>
-            <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 items-center">
-              {#each choices as j (j.modality)}
-                <label for="job-{j.modality}" class="text-xs text-slate-400">{j.label}</label>
-                <select id="job-{j.modality}" value={routes[j.modality] ?? ''}
-                  onchange={(e) => choose(j.modality, e.currentTarget.value)}
-                  class="max-w-xs rounded-md bg-slate-950 border border-slate-700 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500">
-                  <option value="">Automatic</option>
-                  {#each j.options as m (m.id)}
-                    <option value={m.id}>{m.id}</option>
-                  {/each}
-                </select>
-              {/each}
-            </div>
-          </div>
-        {/if}
         <ul class="divide-y divide-slate-800">
           {#each cat.models as m (m.id)}
             <li class="px-5 py-2.5 flex items-center gap-3 text-sm">
@@ -530,6 +552,7 @@
               {#if !m.inConfig}
                 <span class="text-[10px] px-1.5 rounded bg-slate-800 text-slate-500" title="Not in this config: downloading it changes nothing until a [[models]] block uses it">not in config</span>
               {/if}
+              {@render defaults(m.id)}
               <span class="ml-auto text-xs tabular-nums {m.installed ? 'text-slate-500' : 'text-slate-300'}">
                 {#if m.installed}
                   {models.gb(m.have)}
@@ -539,6 +562,7 @@
                   {models.gb(m.size)}
                 {/if}
               </span>
+              {@render defaultMenu(m.id)}
             </li>
           {/each}
           {#each added as m (m.id)}
@@ -552,7 +576,9 @@
               {#if m.enabled === false}
                 <span class="text-[10px] px-1.5 rounded bg-slate-800 text-slate-400" title="Disabled">off</span>
               {/if}
+              {@render defaults(m.id)}
               <span class="ml-auto text-xs tabular-nums text-slate-500">{m.size != null ? models.gb(m.size) : ''}</span>
+              {@render defaultMenu(m.id)}
             </li>
           {/each}
         </ul>

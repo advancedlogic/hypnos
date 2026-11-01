@@ -411,8 +411,8 @@ builds have no hardened runtime (`hardenedRuntime: false`; its library validatio
 ad-hoc dylib); a Developer ID build turns it on. Every server call is a command in `src-tauri/src/hypnos.rs` on `hypnos-client`
 (chat tokens over a `tauri::ipc::Channel`, cancel by request id); the webview has no HTTP
 permission, and an SDK API change can break the app. `route` picks the model per modality from
-`/v1/memory/status` `modalities` (the choice for the job from Settings or the Models dialog's
-Lineup, `src/lib/jobs.js`, then the chat model, then a Tier 1 model), never hard-coded ids. `attachments.rs` prepares files when they are attached (image ->
+`/v1/memory/status` `modalities` (the choice for the job from Settings or a model's row in the
+Models dialog, `src/lib/jobs.js`, then the chat model, then a Tier 1 model), never hard-coded ids. `attachments.rs` prepares files when they are attached (image ->
 1024 px JPEG data URL, documents -> docling markdown, audio -> symphonia decode + transcription,
 video -> soundtrack transcript, frames sampled in the webview through the asset protocol,
 allowed per file); `hypnos_chat` turns them into text and `image_url` parts and switches to a

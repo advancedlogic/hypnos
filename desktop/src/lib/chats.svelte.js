@@ -95,6 +95,17 @@ export class ChatStore {
     this.#persist();
   }
 
+  /** The model new chats start with; the open chat takes it too while it has no messages. */
+  setDefaultModel(model) {
+    this.lastModel = model;
+    save(LAST_MODEL_KEY, model);
+    const chat = this.current;
+    if (chat && chat.messages.length === 0) {
+      chat.model = model;
+      this.#persist();
+    }
+  }
+
   setThinking(level) {
     this.thinking = level;
     save(THINKING_KEY, level);

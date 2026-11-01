@@ -471,6 +471,7 @@
 {#if modelsOpen && localSettings?.config}
   <Models config={localSettings.config} binary={localSettings.binary} firstRun={modelsFirstRun} tab={modelsTab} onchanged={restartLocal}
     onpool={reloadModels} {routes} inUse={allModels} onroutes={saveRoutes}
+    chatModel={store.lastModel} onchatmodel={(id) => store.setDefaultModel(id)}
     onsetup={localSettings.binary ? () => openSetup() : null}
     onclose={() => (modelsOpen = false)} />
 {/if}
