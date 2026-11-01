@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 3  | 13  | 5   | 8   | 11   | 8   | 10    | 7   | 6    | 20   |
+| 3  | 13  | 5   | 8   | 11   | 8   | 11    | 7   | 6    | 20   |
 
 ---
 
@@ -113,6 +113,17 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] ⬛ **BUILD-10** `P2` `run.sh build all` / `run.bat build all` builds backend, playground and desktop
+      Today `build` (target `all` by default) compiles the backend and installs the playground's
+      packages, and the desktop app is only built when named. An explicit `build all` builds
+      everything in dependency order: the backend, the playground (`npm install` + `npm run
+      build`, so `frontend/dist`, which the server serves at `/` and the macOS app bundles, is
+      fresh), then the desktop app (which bundles that server; skipped when the backend failed).
+      Plain `build` and the other actions keep `all` = backend + playground.
+      Done 2026-11-01: `build_playground` (dependencies + `npm run build`) and the ordered
+      `build all` in run.sh and run.bat (run.bat not run: no Windows here); usage, README,
+      desktop/README.md and CLAUDE.md updated. (commit 91c6f81)
 
 - [x] 🟥 **BUG-7** `P1` Tools for an LFM3 model fail mid-stream instead of a 400 (API, desktop)
       A streamed chat with `tools` for `lfm3:1.7b` answered 200 and then an error event ("has no
