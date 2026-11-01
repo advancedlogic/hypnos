@@ -487,6 +487,10 @@ pub struct AudioSpeechRequest {
     /// an open-ended length) instead of returning the whole file at the end.
     #[serde(default)]
     pub stream: Option<bool>,
+    /// Hypnos extension: the language of `input` (ISO 639-1, e.g. `fr`), for multilingual speech
+    /// models (LFM3-Audio, Qwen3-TTS); English when absent. Kokoro ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 /// A piece of synthesized audio: mono f32 samples in `[-1, 1]`.

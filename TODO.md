@@ -107,15 +107,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       probably makes llama.cpp b11982 re-capture its CUDA graph every step again. Check with the
       graph counters / `GGML_CUDA_DISABLE_GRAPHS`, try 2 slots and 4 x 8k, and ship the shape that
       batches well (on Metal 4 slots gave 1.43x).
-- [ ] 🟩 **ENG-8** `P2` Speech output through llama.cpp (LFM3-Audio, Qwen3-TTS)
-      b11982's libmtmd generates audio (`mtmd-helper-gen.cpp`, `tools/tts`): an engine path for
-      `text_to_speech` on `ggml_llama` models, WAV / streamed PCM like Kokoro. First LFM3-Audio
-      (already in the catalog for transcription: 19 languages, `female` / `male`, 80 ms frames,
-      model-card sampling), so one model hears, chats and speaks; then Qwen3-TTS 1.7B
-      (`ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF`, 1 GB, 10 languages, voice cloning from a
-      reference clip: a `voice` upload or path; check its license). Pocket TTS (CC-BY-4.0, gated)
-      and Soprano 80M (Apache-2.0, English) need our own GGUF conversion. Kokoro stays the CPU
-      default.
 - [ ] 🟩 **ENG-9** `P3` More chat formats: Mistral, Nemotron, GLM, LFM2, Qwen 3
       One renderer each, only where a model earns it: Voxtral Mini 4B Realtime (`mistral3`,
       streaming transcription, Apache-2.0), Nemotron 3.5 Lightning 30B-A3B (`nemotron_h_moe`, 1M
@@ -138,6 +129,23 @@ _No cards yet._
 
 ## Done
 
+- [x] 🟩 **ENG-8** `P2` Speech output through llama.cpp (LFM3-Audio, Qwen3-TTS)
+      b11982's libmtmd generates audio (`mtmd-helper-gen.cpp`, `tools/tts`): an engine path for
+      `text_to_speech` on `ggml_llama` models, WAV / streamed PCM like Kokoro. First LFM3-Audio
+      (already in the catalog for transcription: 19 languages, `female` / `male`, 80 ms frames,
+      model-card sampling), so one model hears, chats and speaks; then Qwen3-TTS 1.7B
+      (`ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF`, 1 GB, 10 languages, voice cloning from a
+      reference clip: a `voice` upload or path; check its license). Pocket TTS (CC-BY-4.0, gated)
+      and Soprano 80M (Apache-2.0, English) need our own GGUF conversion. Kokoro stays the CPU
+      default.
+      Done: `LlamaJob::Speak` drives libmtmd's `mtmd_helper_gen_audio_*` (raw pointers via
+      `as_raw_ptr` in the llama-cpp-rs patch, `llama-cpp-sys-2` as a dependency); LFM3-Audio and
+      LFM3-Omni speak through their `tts` template (19 languages, female / male), Qwen3-TTS 1.7B
+      (new catalog entry) with voice cloning from `voices_path` clips. `language` is a new
+      `/v1/audio/speech` field (api.md, the three SDKs). Checked by transcribing the output back
+      with Qwen3-ASR (English, French, cloned voice, PCM, stream) and measured. The advisor weighs
+      transcription at 0.25 and speech at 0.1 of chat. Pocket TTS and Soprano: not done (no
+      published GGUF).
 - [x] 🟩 **ENG-7** `P1` Image models on the existing sd.cpp file set; per-model sampling defaults
       `diffusion.rs` uses one `DEFAULT_STEPS` / CFG for every model; turbo models want ~4-8 steps
       and CFG 1. Add `[models.arch]`-style `default_steps` / `default_cfg_scale` (sample method,

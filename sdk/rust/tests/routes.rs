@@ -617,7 +617,11 @@ async fn advise() {
     assert!(advice.interactive_coresident);
     assert!(!advice.specs.is_empty());
     assert!(advice.config.contains("[[models]]"));
-    assert!(advice.models.iter().any(|m| m.id == TTS));
+    // A model serves the voice need (Kokoro or an audio model that also speaks).
+    assert!(advice
+        .models
+        .iter()
+        .any(|m| m.serves.iter().any(|n| n == "voice")));
 
     let small = AdvisorRequest::new(&["images"])
         .vram_bytes(2 * GIB)

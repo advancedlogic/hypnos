@@ -232,7 +232,7 @@ Advisor (API-12): `hypnos-memory/src/advisor.rs` recommends a lineup from the ca
 machine (VRAM / RAM / unified) and needs. Budgets as `detect` derives them; each candidate placed
 with `KvCacheEstimator::compute_optimal_placement`; catalog `[models.estimate]` stands in for the
 GGUF values (`CatalogEntry::model_config`). Exhaustive over entries x variants; scores model parameters
-(weights bytes / the quant's bits per weight) per need, transcription at half weight, interactive co-residency (tries 1 slot / 8k context, MoE offload on discrete GPUs), minus
+(weights bytes / the quant's bits per weight) per need, transcription at 0.25 and speech at 0.1 weight, interactive co-residency (tries 1 slot / 8k context, MoE offload on discrete GPUs), minus
 partial GPU fits and extra models; every model must be the lineup's largest for some need.
 `hypnos advise ...` (CLI) and `POST /v1/advisor` (`hypnos-server/src/catalog.rs`). CPU models
 are sized against RAM after the OS reserve (`Budgets::host_bytes`), not the warm-memory budget.
@@ -326,6 +326,11 @@ remote fetches go through `media.rs` `PublicOnly` (no loopback / private / link-
   defaults; a request's `steps` / `cfg_scale` win. sd.cpp is built as a
   **shared** library so its ggml does not clash with llama.cpp's; the vendored build script copies
   the DLL/.so next to the binary.
+- Speech output on `ggml_llama` (ENG-8): `LlamaJob::Speak` runs between batches on slot 0 with
+  `llama_set_embeddings` on, driving libmtmd's `mtmd_helper_gen_audio_*` as llama.cpp's
+  `tools/tts` does (raw pointers through `as_raw_ptr`, added by the llama-cpp-rs patch, and the
+  `llama-cpp-sys-2` crate). LFM3-Audio / -Omni get `lfm3_tts_prompt` (their GGUF `tts`
+  template), Qwen3-TTS the text and a reference clip from `voices_path` (`speaker_reference`).
 - `kokoro.rs`: `onnx_runtime` TTS on CPU (`AutoDevicePolicy::PreferCPU`) with espeak-ng G2P. Use the
   fp32 `model.onnx` graph on every platform (BUG-6): the quantized exports crash ORT session
   creation on Windows and fp16 overflows to an all-NaN (silent) waveform for some inputs (seen on

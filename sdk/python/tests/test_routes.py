@@ -60,7 +60,8 @@ def test_advise(client: Client) -> None:
     assert advice["interactive_coresident"] is True
     assert advice["specs"]
     assert "[[models]]" in advice["config"]
-    assert TTS in {m["id"] for m in advice["models"]}
+    # A model serves the voice need (Kokoro or an audio model that also speaks).
+    assert any("voice" in m["serves"] for m in advice["models"])
     with pytest.raises(BadRequestError):
         client.advise(["images"], vram_bytes=2 * GIB, ram_bytes=8 * GIB)
     with pytest.raises(BadRequestError):

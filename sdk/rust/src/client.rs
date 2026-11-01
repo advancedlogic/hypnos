@@ -194,6 +194,9 @@ pub struct SpeechRequest {
     pub response_format: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speed: Option<f32>,
+    /// Hypnos extension: the language of `input` (ISO 639-1) for multilingual speech models.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 impl SpeechRequest {
@@ -214,6 +217,10 @@ impl SpeechRequest {
     }
     pub fn speed(mut self, speed: f32) -> Self {
         self.speed = Some(speed);
+        self
+    }
+    pub fn language(mut self, language: impl Into<String>) -> Self {
+        self.language = Some(language.into());
         self
     }
 }

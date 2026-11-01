@@ -317,9 +317,10 @@ fn score<'a>(picks: Vec<Pick<'a>>, needed: &BTreeSet<ModalityKey>, b: &Budgets) 
         .map(Pick::resident_bytes)
         .sum();
     let coresident = interactive_bytes <= b.tier1_bytes;
-    // Each needed modality counts the largest model (in parameters) serving it. Transcription
-    // counts half: its accuracy levels off with size (E2B transcribes as well as the 12B), so a
-    // model that also hears must not outrank a stronger chat model next to a small listener.
+    // Each needed modality counts the largest model (in parameters) serving it. Speech in and out
+    // count far less than chat: their quality levels off with size (E2B transcribes as well as
+    // the 12B, an 82M Kokoro speaks as clearly as a 2B audio model), so a model that also hears or
+    // speaks must not outrank a stronger chat model next to a small speech model.
     let quality: f64 = needed
         .iter()
         .map(|m| {
@@ -328,10 +329,10 @@ fn score<'a>(picks: Vec<Pick<'a>>, needed: &BTreeSet<ModalityKey>, b: &Budgets) 
                 .filter(|p| p.modalities().iter().any(|x| ModalityKey(*x) == *m))
                 .map(|p| (p.params_b() + 1.0).ln() * 10.0)
                 .fold(0.0, f64::max)
-                * if m.0 == Modality::SpeechToText {
-                    0.5
-                } else {
-                    1.0
+                * match m.0 {
+                    Modality::SpeechToText => 0.25,
+                    Modality::TextToSpeech => 0.1,
+                    _ => 1.0,
                 }
         })
         .sum();

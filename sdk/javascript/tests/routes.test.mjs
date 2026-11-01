@@ -50,7 +50,8 @@ test("advise", async () => {
   assert.equal(advice.interactive_coresident, true);
   assert.ok(advice.specs.length > 0);
   assert.ok(advice.config.includes("[[models]]"));
-  assert.ok(advice.models.some((m) => m.id === TTS));
+  // A model serves the voice need (Kokoro or an audio model that also speaks).
+  assert.ok(advice.models.some((m) => m.serves.includes("voice")));
   await assert.rejects(client.advise({ needs: ["images"], vramBytes: 2 * GIB, ramBytes: 8 * GIB }), BadRequestError);
   await assert.rejects(client.advise({ needs: [] }), BadRequestError);
 });

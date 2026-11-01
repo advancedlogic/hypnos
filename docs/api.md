@@ -368,7 +368,7 @@ most half the RAM, on a discrete GPU), and every candidate model is placed with 
 planner (catalog `estimate` values stand in for what the GGUF reports). All combinations of catalog
 models and variants serving the needs are tried; a lineup scores for the size of the model doing
 each need (its parameter count, estimated from the weights file and the quantization;
-transcription counts half, since its accuracy levels off early), for keeping the interactive models (chat, vision, speech, embeddings) resident together
+transcription a quarter and speech output a tenth, since their quality levels off early), for keeping the interactive models (chat, vision, speech, embeddings) resident together
 (trying one slot and 8k context on the chat models when that is what makes them fit, and
 Mixture-of-Experts offload on a discrete GPU), and against models that only partly fit the GPU.
 `serves` lists the needs a model is the lineup's choice for. `load_secs_*` are rough (3 GB/s).
@@ -737,8 +737,17 @@ is the way to ask questions about a recording instead of transcribing it.
 | `input` | required | text, up to `max_prompt_chars`; long inputs are synthesized in phrase chunks with 180 ms of silence between them |
 | `voice` | `alloy` | OpenAI names map to Kokoro voices: `alloy`→`af_alloy`, `echo`→`am_echo`, `fable`→`bm_fable`, `onyx`→`am_onyx`, `nova`→`af_nova`, `shimmer`/`coral`→`af_bella`, `ash`→`am_adam`, `sage`→`af_sarah`, `ballad`→`bm_george`, `verse`→`am_michael`; any other name falls back to `af_heart`. Raw Kokoro ids (`af_heart`, `bf_emma`, …) are accepted as-is |
 | `response_format` | `wav` | `wav` (16-bit PCM, mono, 24 kHz, `audio/wav`) or `pcm` (the same samples without a header, `audio/pcm`). `mp3`, `opus`, `aac`, `flac` are not implemented: the server falls back to WAV, so check the `Content-Type` |
-| `speed` | 1.0 | playback rate multiplier |
+| `speed` | 1.0 | playback rate multiplier (Kokoro; the llama.cpp speech models ignore it) |
 | `stream` | false | **Hypnos extension**: chunked audio as it is synthesized, see below |
+| `language` | `en` | **Hypnos extension**: the language of `input` (ISO 639-1) for the multilingual speech models; Kokoro ignores it |
+
+**Speech models.** Besides Kokoro, llama.cpp models with a speech decoder speak (24 kHz, mono):
+LFM3-Audio and LFM3-Omni (19 languages; `voice` picks `female` or `male`, and OpenAI's male
+names `echo`, `onyx`, `ash`, `ballad`, `verse`, `fable` map to `male`) and Qwen3-TTS
+(10 languages; voice cloning: when the model's `voices_path` is a folder, `voice` names a
+reference clip in it, `<voice>.wav` / `.mp3` / `.flac`, and when it is one file that clip is used
+for every voice). With `stream` these models send the whole answer as one chunk, since their codec
+runs at the end of the generation.
 
 **Response.** The audio bytes with `Content-Type: audio/wav` or `audio/pcm`, plus the
 `x-hypnos-*` headers of section 5. There is no JSON wrapper.

@@ -1893,6 +1893,7 @@ dependencies = [
  "hypnos-core",
  "image",
  "llama-cpp-2",
+ "llama-cpp-sys-2",
  "ort",
  "parking_lot",
  "rand 0.8.8",

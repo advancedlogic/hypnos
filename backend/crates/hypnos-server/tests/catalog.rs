@@ -135,13 +135,14 @@ async fn the_advisor_recommends_a_lineup() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["machine"]["unified_memory"], false);
     assert_eq!(body["interactive_coresident"], true);
-    let ids: Vec<&str> = body["models"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|m| m["id"].as_str().unwrap())
-        .collect();
-    assert!(ids.contains(&"kokoro-82m-q4"), "{ids:?}");
+    // A model serves the voice need (Kokoro or an audio model that also speaks).
+    let models = body["models"].as_array().unwrap();
+    assert!(
+        models
+            .iter()
+            .any(|m| m["serves"].as_array().unwrap().iter().any(|n| n == "voice")),
+        "{models:?}"
+    );
     assert!(body["config"].as_str().unwrap().contains("[[models]]"));
     // This machine when nothing is said about it.
     let (status, body) = post(r#"{"needs": ["documents"]}"#).await;

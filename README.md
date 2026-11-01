@@ -236,7 +236,8 @@ print(client.chat.completions.create(
 The quickest way is the catalog (`backend/models.catalog.toml`): the default lineup plus other
 models Hypnos has been tested with (the other Gemma 4 sizes E2B, 12B and 31B, NVIDIA's Nemotron
 3.5 Bolt E4B, Qwen 3.5 / 3.6 / 3.8 from 0.8B to 35B-A3B with thinking and tool calling, MiniCPM-V
-4.6, the Qwen3-ASR speech recognizers, Liquid AI's LFM3 text, vision, audio and omni models, and
+4.6, the Qwen3-ASR speech recognizers, Qwen3-TTS with voice cloning, Liquid AI's LFM3 text, vision,
+audio and omni models (the audio and omni models also speak), and
 the image models Z-Image-Turbo, FLUX.2 klein 4B and ERNIE-Image-Turbo), each in several
 quantizations where they come in several.
 

@@ -142,6 +142,15 @@ async fn exercise_all(
                 .map_err(|e| e.to_string());
         }
     }
+    // A model that also speaks (LFM3-Audio, LFM3-Omni): its speech decoder's memory too.
+    if cfg.modality != Modality::TextToSpeech
+        && cfg.supports_modality(Modality::TextToSpeech)
+        && result.is_ok()
+    {
+        let (spoke, r) = exercise(backend, id, Modality::TextToSpeech, ctx).await;
+        what += &format!(" + {spoke}");
+        result = r;
+    }
     (what, result)
 }
 

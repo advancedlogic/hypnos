@@ -22,9 +22,10 @@ use hypnos_core::config::{MemoryTier, Modality, ModelConfig};
 use hypnos_core::error::{HypnosError, Result};
 use hypnos_core::kv_cache::LayerPlacementPlan;
 use hypnos_core::openai::{
-    AudioTranscriptionRequest, AudioTranscriptionResponse, ChatChoice, ChatCompletionRequest,
-    ChatCompletionResponse, ChatMessage, ChatResponseMessage, ChatStreamEvent, EmbeddingData,
-    EmbeddingRequest, EmbeddingResponse, EmbeddingUsage, ExecutionTelemetry, LoadPhases,
+    AudioChunk, AudioSpeechOutput, AudioSpeechRequest, AudioStreamEvent, AudioTranscriptionRequest,
+    AudioTranscriptionResponse, ChatChoice, ChatCompletionRequest, ChatCompletionResponse,
+    ChatMessage, ChatResponseMessage, ChatStreamEvent, EmbeddingData, EmbeddingRequest,
+    EmbeddingResponse, EmbeddingUsage, EngineTiming, ExecutionTelemetry, LoadPhases,
     PromptTokensDetails, ReasoningEffort, TokenUsage, ToolCall, ToolSpec,
 };
 use hypnos_core::request::RequestContext;
@@ -40,7 +41,7 @@ use uuid::Uuid;
 
 use crate::engine::{
     spawn_worker, ChatJob, ChatReply, EmbedJob, GenParams, GenStats, LlamaJob, PromptSpec,
-    WorkerSpec,
+    SpeakJob, SpeechReply, WorkerSpec,
 };
 use crate::media::load_media;
 use crate::worker::{FailJob, WorkerHandle};
@@ -654,6 +655,46 @@ pub(crate) fn transcription_prompt(
     )
 }
 
+/// LFM3-Audio's `tts` chat template (in the GGUF beside the chat template): the language and a
+/// `female` / `male` voice in the system turn, the text as the user turn, `<|audio_start|>` opening
+/// the answer.
+fn lfm3_tts_prompt(text: &str, language: Option<&str>, voice: &str) -> String {
+    let lang = match language.map(|l| l.trim().to_ascii_lowercase()) {
+        None => "American English".to_string(),
+        Some(l) if l.is_empty() || l == "en" || l == "en-us" => "American English".to_string(),
+        Some(l) if l == "en-gb" => "British English".to_string(),
+        Some(l) => language_name(&l).to_string(),
+    };
+    format!(
+        "<|startoftext|><|im_start|>system\nPerform TTS in {lang} using a {voice} voice.<|im_end|>\n\
+         <|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n<|audio_start|>",
+        text.trim()
+    )
+}
+
+/// An OpenAI voice name as LFM3-Audio's two voices: `male` for OpenAI's male voices, else `female`.
+fn lfm3_voice(voice: &str) -> &'static str {
+    match voice.trim().to_ascii_lowercase().as_str() {
+        "male" | "echo" | "onyx" | "ash" | "ballad" | "verse" | "fable" => "male",
+        _ => "female",
+    }
+}
+
+/// A reference clip for voice cloning: `voices_path` is a folder of clips named after voices
+/// (`<voice>.wav` / `.mp3` / `.flac`) or one clip used for every voice.
+fn speaker_reference(cfg: &ModelConfig, voice: &str) -> Option<Vec<u8>> {
+    let path = cfg.voices_path.as_ref()?;
+    if path.is_file() {
+        return std::fs::read(path).ok();
+    }
+    let name = voice.trim().to_ascii_lowercase();
+    ["wav", "mp3", "flac"]
+        .iter()
+        .map(|ext| path.join(format!("{name}.{ext}")))
+        .find(|p| p.is_file())
+        .and_then(|p| std::fs::read(p).ok())
+}
+
 /// Qwen3-ASR (a `qwen3vl` GGUF with an audio projector): the dedicated speech recognizers.
 fn is_qwen_asr(arch: &str) -> bool {
     arch == "qwen3vl"
@@ -807,6 +848,64 @@ impl GgmlLlamaBackend {
             opts,
             arch: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Queues a speech job and waits for it; returns the reply and the time spent queued.
+    async fn speak(
+        &self,
+        req: &AudioSpeechRequest,
+        rctx: &RequestContext,
+    ) -> Result<(SpeechReply, f64)> {
+        self.require_modality(Modality::TextToSpeech)?;
+        let text = req.input.trim();
+        if text.is_empty() {
+            return Err(HypnosError::InvalidRequest("input text is empty".into()));
+        }
+        if text.chars().count() > rctx.limits.max_prompt_chars {
+            return Err(HypnosError::InvalidRequest(format!(
+                "input text exceeds limits.max_prompt_chars ({})",
+                rctx.limits.max_prompt_chars
+            )));
+        }
+        let lfm = self.arch().starts_with("lfm");
+        let (prompt, voice) = if lfm {
+            let v = lfm3_voice(&req.voice);
+            (
+                lfm3_tts_prompt(text, req.language.as_deref(), v),
+                Some(v.to_string()),
+            )
+        } else {
+            (text.to_string(), None)
+        };
+        // ~12.5 frames a second and ~15 characters a second of speech, with room to spare.
+        let max_frames = (64 + text.chars().count() as u32 * 3).min(4096);
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let queued = Instant::now();
+        self.submit(LlamaJob::Speak(SpeakJob {
+            prompt,
+            language: req.language.clone().or_else(|| Some("en".into())),
+            voice,
+            speaker_ref: speaker_reference(&self.config, &req.voice),
+            max_frames,
+            params: GenParams {
+                max_tokens: max_frames,
+                temperature: 0.8,
+                top_p: 0.95,
+                top_k: 40,
+                seed: rand::random(),
+            },
+            rctx: rctx.clone(),
+            reply: reply_tx,
+        }))?;
+        let reply = reply_rx
+            .await
+            .map_err(|_| HypnosError::BackendError("engine worker dropped the request".into()))??;
+        let queue_ms =
+            (queued.elapsed().as_secs_f64() * 1000.0 - reply.prompt_ms - reply.gen_ms).max(0.0);
+        info!(model = %self.config.id, chars = text.len(), frames = reply.frames,
+              audio_secs = format!("{:.2}", reply.samples as f64 / f64::from(reply.sample_rate.max(1))),
+              gen_secs = format!("{:.2}", (reply.prompt_ms + reply.gen_ms) / 1000.0), "speech generated");
+        Ok((reply, queue_ms))
     }
 
     fn require_modality(&self, m: Modality) -> Result<()> {
@@ -1193,6 +1292,54 @@ impl ModelBackend for GgmlLlamaBackend {
         }
     }
 
+    /// Speech output through libmtmd (ENG-8): LFM3-Audio with its TTS template and two voices,
+    /// Qwen3-TTS with the text as it is and an optional reference clip (`voices_path`).
+    async fn synthesize_speech(
+        &self,
+        req: &AudioSpeechRequest,
+        rctx: &RequestContext,
+    ) -> Result<AudioSpeechOutput> {
+        let (reply, queue_ms) = self.speak(req, rctx).await?;
+        let samples = pcm_of_wav(&reply.wav)?;
+        let (audio_bytes, content_type) = if req.response_format.eq_ignore_ascii_case("pcm") {
+            (crate::media::encode_pcm16_raw(&samples), "audio/pcm")
+        } else {
+            (reply.wav.clone(), "audio/wav")
+        };
+        let timing = speech_timing(&reply, queue_ms);
+        Ok(AudioSpeechOutput {
+            audio_bytes,
+            content_type: content_type.to_string(),
+            telemetry: ExecutionTelemetry {
+                inference_latency_ms: reply.prompt_ms + reply.gen_ms,
+                ..ExecutionTelemetry::for_engine(timing)
+            },
+        })
+    }
+
+    /// The whole answer as one chunk: the helper's codec runs at the end of the generation.
+    async fn synthesize_speech_stream(
+        &self,
+        req: &AudioSpeechRequest,
+        rctx: &RequestContext,
+        tx: mpsc::Sender<AudioStreamEvent>,
+    ) -> Result<()> {
+        let (reply, queue_ms) = self.speak(req, rctx).await?;
+        let pcm = pcm_of_wav(&reply.wav)?;
+        let _ = tx
+            .send(AudioStreamEvent::Chunk(AudioChunk {
+                pcm,
+                sample_rate: reply.sample_rate,
+            }))
+            .await;
+        let _ = tx
+            .send(AudioStreamEvent::Done {
+                timing: speech_timing(&reply, queue_ms),
+            })
+            .await;
+        Ok(())
+    }
+
     async fn transcribe(
         &self,
         req: &AudioTranscriptionRequest,
@@ -1302,6 +1449,30 @@ impl ModelBackend for GgmlLlamaBackend {
             },
             hypnos_telemetry: Some(ExecutionTelemetry::for_engine(timing)),
         })
+    }
+}
+
+/// The mono samples of the helper's 16-bit WAV, as f32 in [-1, 1].
+fn pcm_of_wav(wav: &[u8]) -> Result<Vec<f32>> {
+    let mut reader = hound::WavReader::new(std::io::Cursor::new(wav))
+        .map_err(|e| HypnosError::BackendError(format!("speech output is not a WAV file: {e}")))?;
+    Ok(reader
+        .samples::<i16>()
+        .filter_map(|s| s.ok())
+        .map(|s| f32::from(s) / 32768.0)
+        .collect())
+}
+
+fn speech_timing(reply: &SpeechReply, queue_ms: f64) -> EngineTiming {
+    let audio_secs = reply.samples as f64 / f64::from(reply.sample_rate.max(1));
+    let total_ms = reply.prompt_ms + reply.gen_ms;
+    EngineTiming {
+        queue_ms: Some(queue_ms),
+        prefill_ms: Some(reply.prompt_ms),
+        decode_ms: Some(reply.gen_ms),
+        audio_secs: Some(audio_secs),
+        rtf: (audio_secs > 0.0).then(|| total_ms / 1000.0 / audio_secs),
+        ..EngineTiming::default()
     }
 }
 

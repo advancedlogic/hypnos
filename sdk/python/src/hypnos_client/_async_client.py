@@ -418,11 +418,12 @@ class AsyncClient:
 
     def _speech_body(
         self, model: str, input: str, voice: Optional[str], response_format: Optional[str],
-        speed: Optional[float], stream: bool,
+        speed: Optional[float], stream: bool, language: Optional[str] = None,
     ) -> Dict[str, Any]:  # fmt: skip
         return drop_none(
             {"model": model, "input": input, "voice": voice,
-             "response_format": response_format, "speed": speed, "stream": stream}
+             "response_format": response_format, "speed": speed, "stream": stream,
+             "language": language}
         )  # fmt: skip
 
     async def speech(
@@ -433,11 +434,12 @@ class AsyncClient:
         voice: Optional[str] = None,
         response_format: Optional[str] = None,
         speed: Optional[float] = None,
+        language: Optional[str] = None,
     ) -> Speech:
         """``POST /v1/audio/speech``: WAV (or ``response_format="pcm"``) bytes plus the
         ``x-hypnos-*`` telemetry headers. Check ``content_type``: unsupported formats fall back
         to WAV."""
-        body = self._speech_body(model, input, voice, response_format, speed, False)
+        body = self._speech_body(model, input, voice, response_format, speed, False, language)
         response, release = await self._send("POST", "/v1/audio/speech", model=model, json=body)
         try:
             audio = await response.aread()
@@ -459,9 +461,10 @@ class AsyncClient:
         voice: Optional[str] = None,
         response_format: Optional[str] = None,
         speed: Optional[float] = None,
+        language: Optional[str] = None,
     ) -> AsyncSpeechStream:
         """``POST /v1/audio/speech`` with ``stream: true``: audio chunks as they are made."""
-        body = self._speech_body(model, input, voice, response_format, speed, True)
+        body = self._speech_body(model, input, voice, response_format, speed, True, language)
         response, release = await self._send("POST", "/v1/audio/speech", model=model, json=body)
         return AsyncSpeechStream(response, release)
 

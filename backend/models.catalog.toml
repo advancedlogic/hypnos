@@ -234,9 +234,9 @@ publisher = "Liquid AI"
 license = "lfm1.0"
 architecture = "lfm3"
 modality = "speech_to_text"
-additional_modalities = ["text_generation"]
+additional_modalities = ["text_generation", "text_to_speech"]
 engine = "ggml_llama"
-summary = "Small audio model for transcription in 18 languages, and chat (its speech output is not used)."
+summary = "Small audio model that hears, chats and speaks: transcription in 18 languages, speech in 19 (female and male voices)."
 
 [models.config]
 min_gpu_layer_ratio = 1.0
@@ -492,9 +492,9 @@ publisher = "Liquid AI"
 license = "lfm1.0"
 architecture = "lfm3"
 modality = "text_generation"
-additional_modalities = ["vision", "speech_to_text"]
+additional_modalities = ["vision", "speech_to_text", "text_to_speech"]
 engine = "ggml_llama"
-summary = "One small model for text, images and audio in: chat, image questions and transcription (no thinking: a non-reasoning model)."
+summary = "One small model for everything: chat, image questions, transcription and speech (no thinking: a non-reasoning model)."
 
 [models.config]
 min_gpu_layer_ratio = 1.0
@@ -1022,6 +1022,42 @@ quant = "Q8_0"
 default = true
 files = [
   { role = "weights", repo = "ggml-org/embeddinggemma-2-GGUF", remote = "embeddinggemma-2-Q8_0.gguf", local = "embeddinggemma-2-Q8_0.gguf", size = 309855456 },
+]
+
+[[models]]
+id = "qwen3-tts:1.7b"
+name = "Qwen3-TTS 1.7B"
+publisher = "Qwen (Alibaba)"
+license = "apache-2.0"
+architecture = "qwen3tts"
+modality = "text_to_speech"
+engine = "ggml_llama"
+summary = "Multilingual speech (10 languages) with voice cloning: put reference clips named after voices in the folder voices_path names."
+
+[models.config]
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+
+[models.config.arch]
+default_context_len = 8192
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 536870912
+activation_workspace_bytes = 3623878656 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 28
+num_kv_heads = 8
+head_dim = 128
+max_context_len = 32768
+
+[[models.variants]]
+quant = "Q8_0"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF", remote = "Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf", local = "Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf", size = 1847874400 },
+  { role = "aux", repo = "ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF", remote = "mmproj-Qwen3-TTS-12Hz-1.7B-Base-bf16.gguf", local = "mmproj-Qwen3-TTS-12Hz-1.7B-Base-bf16.gguf", size = 669081472 },
 ]
 
 [[models]]

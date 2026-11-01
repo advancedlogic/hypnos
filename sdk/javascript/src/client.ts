@@ -98,6 +98,8 @@ export interface SpeechOptions extends CallOptions {
   voice?: string;
   response_format?: "wav" | "pcm" | string;
   speed?: number;
+  /** Hypnos extension: the language of `input` (ISO 639-1) for multilingual speech models. */
+  language?: string;
 }
 
 export interface ImageOptions extends CallOptions {
@@ -653,6 +655,7 @@ export class Client {
       response_format: o.response_format,
       speed: o.speed,
       stream,
+      language: o.language,
     });
   }
 

@@ -48,6 +48,8 @@ regex = "1"
 # Default features are off so OpenMP is only requested by the `cuda` feature of hypnos-backends:
 # Apple clang ships no OpenMP runtime, and ggml falls back to its own thread pool without it.
 llama-cpp-2 = { path = "vendor/llama-cpp-rs/llama-cpp-2", default-features = false, features = ["common", "mtmd"] }
+# The raw C API, for libmtmd calls the safe crate does not wrap (speech output, ENG-8).
+llama-cpp-sys-2 = { path = "vendor/llama-cpp-rs/llama-cpp-sys-2", default-features = false }
 # stable-diffusion.cpp (MOSS-Image). Vendored copy carries sd.cpp master-1024 with MOSS-Image support.
 diffusion-rs-sys = { path = "vendor/diffusion-rs/sys" }
 # ONNX Runtime (Kokoro-82M TTS) and espeak-ng (grapheme-to-phoneme), both statically built.

@@ -124,6 +124,32 @@ pub(crate) enum PromptSpec {
     },
 }
 
+/// Text to speak with a model whose projector generates audio (LFM3-Audio, Qwen3-TTS).
+pub(crate) struct SpeakJob {
+    /// The prompt as the model expects it (LFM3-Audio: its TTS template; others: the text).
+    pub prompt: String,
+    /// ISO code or name, passed to the helper (Qwen3-TTS).
+    pub language: Option<String>,
+    /// Model-dependent voice name (LFM3-Audio: `female` / `male`).
+    pub voice: Option<String>,
+    /// A reference recording to clone the voice from (Qwen3-TTS, Pocket TTS).
+    pub speaker_ref: Option<Vec<u8>>,
+    pub max_frames: u32,
+    pub params: GenParams,
+    pub rctx: RequestContext,
+    pub reply: oneshot::Sender<Result<SpeechReply>>,
+}
+
+/// Generated speech: a mono 16-bit WAV file and the engine's numbers.
+pub(crate) struct SpeechReply {
+    pub wav: Vec<u8>,
+    pub sample_rate: u32,
+    pub samples: i64,
+    pub frames: u32,
+    pub prompt_ms: f64,
+    pub gen_ms: f64,
+}
+
 /// A finished chat request: the answer, the thoughts before it (empty without thinking) and the
 /// engine's numbers.
 pub(crate) struct ChatReply {
@@ -207,6 +233,8 @@ impl ParkedContext {
 pub(crate) enum LlamaJob {
     Chat(ChatJob),
     Embed(EmbedJob),
+    /// Speech output through libmtmd's audio generation helper (ENG-8).
+    Speak(SpeakJob),
     /// Save every used, idle slot's state before the worker is dropped (MEM-4).
     Park {
         reply: oneshot::Sender<Option<ParkedContext>>,
@@ -225,6 +253,9 @@ impl FailJob for LlamaJob {
                 let _ = job.reply.send(Err(error));
             }
             LlamaJob::Embed(job) => {
+                let _ = job.reply.send(Err(error));
+            }
+            LlamaJob::Speak(job) => {
                 let _ = job.reply.send(Err(error));
             }
             LlamaJob::Reconfigure { reply, .. } => {
@@ -1076,7 +1107,7 @@ impl<'m> Engine<'m> {
             }
             other => {
                 if self.active.is_empty() {
-                    self.run_idle_job(other);
+                    self.run_idle_job(mtmd, other);
                 } else {
                     self.deferred.push_back(other);
                 }
@@ -1084,10 +1115,14 @@ impl<'m> Engine<'m> {
         }
     }
 
-    /// Embedding and reconfigure jobs touch the whole context; they run between batches.
-    fn run_idle_job(&mut self, job: LlamaJob) {
+    /// Embedding, speech and reconfigure jobs touch the whole context; they run between batches.
+    fn run_idle_job(&mut self, mtmd: &mut Option<MtmdContext>, job: LlamaJob) {
         match job {
             LlamaJob::Embed(job) => self.embed(job),
+            LlamaJob::Speak(job) => {
+                let reply = self.speak(mtmd, &job);
+                let _ = job.reply.send(reply);
+            }
             LlamaJob::Reconfigure { n_ctx, reply } => {
                 let _ = reply.send(self.reconfigure(n_ctx));
             }
@@ -1108,7 +1143,7 @@ impl<'m> Engine<'m> {
         }
         if self.active.is_empty() {
             while let Some(job) = self.deferred.pop_front() {
-                self.run_idle_job(job);
+                self.run_idle_job(mtmd, job);
             }
         }
     }
@@ -1828,6 +1863,193 @@ impl<'m> Engine<'m> {
     }
 
     // ---- embeddings ---------------------------------------------------------------------
+
+    /// Speaks `job.prompt` on slot 0 (the engine is idle, every slot is free): the context
+    /// outputs hidden states for the duration, libmtmd's helper turns the backbone's states into
+    /// audio frames and its codec into a WAV file, as llama.cpp's `tools/tts` does.
+    fn speak(&mut self, mtmd: &mut Option<MtmdContext>, job: &SpeakJob) -> Result<SpeechReply> {
+        use llama_cpp_sys_2 as sys;
+        use std::ffi::CString;
+        let Some(m) = mtmd.as_ref() else {
+            return Err(HypnosError::ModalityMismatch {
+                model: self.cfg.id.clone(),
+                expected: self.cfg.modality,
+                actual: Modality::TextToSpeech,
+            });
+        };
+        let mctx = unsafe { m.as_raw_ptr() };
+        if unsafe { sys::mtmd_gen_audio_get_info(mctx) }.type_ == sys::MTMD_GEN_AUDIO_TYPE_NONE {
+            return Err(HypnosError::Config(format!(
+                "'{}': its projector has no speech decoder (an mmproj converted without the audio tokenizer?)",
+                self.cfg.id
+            )));
+        }
+        let cstr = |s: &str| {
+            CString::new(s)
+                .map_err(|_| HypnosError::InvalidRequest("text contains a NUL byte".into()))
+        };
+        let prompt = cstr(&job.prompt)?;
+        let lang = job.language.as_deref().map(cstr).transpose()?;
+        let voice = job.voice.as_deref().map(cstr).transpose()?;
+        self.clear_slot(0);
+        let seq_id = self.slots.slots[0].seq_id;
+        let lctx = unsafe { self.ctx.as_raw_ptr() };
+
+        /// Frees the helper and the speaker bitmap, switches hidden-state output off and clears
+        /// the slot, whichever way the generation ends.
+        struct Cleanup {
+            lctx: *mut sys::llama_context,
+            gen: *mut sys::mtmd_helper_gen_audio,
+            speaker: *mut sys::mtmd_bitmap,
+        }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                unsafe {
+                    if !self.gen.is_null() {
+                        sys::mtmd_helper_gen_audio_free(self.gen);
+                    }
+                    if !self.speaker.is_null() {
+                        sys::mtmd_bitmap_free(self.speaker);
+                    }
+                    sys::llama_set_embeddings(self.lctx, false);
+                }
+            }
+        }
+        unsafe { sys::llama_set_embeddings(lctx, true) };
+        let mut guard = Cleanup {
+            lctx,
+            gen: std::ptr::null_mut(),
+            speaker: std::ptr::null_mut(),
+        };
+        let result = (|| {
+            if let Some(bytes) = &job.speaker_ref {
+                let w = unsafe {
+                    sys::mtmd_helper_bitmap_init_from_buf(
+                        mctx,
+                        bytes.as_ptr(),
+                        bytes.len(),
+                        false,
+                        sys::mtmd_helper_init_opt_default(),
+                    )
+                };
+                if w.bitmap.is_null() {
+                    return Err(HypnosError::InvalidRequest(
+                        "the speaker reference is not an audio file libmtmd can read (wav, mp3, flac)".into(),
+                    ));
+                }
+                guard.speaker = w.bitmap;
+            }
+            guard.gen = unsafe { sys::mtmd_helper_gen_audio_init(lctx, mctx) };
+            if guard.gen.is_null() {
+                return Err(HypnosError::BackendError(
+                    "libmtmd could not start audio generation".into(),
+                ));
+            }
+            let mut inp = unsafe { sys::mtmd_helper_gen_audio_inp_default() };
+            inp.seq_id = seq_id;
+            inp.prompt = prompt.as_ptr();
+            inp.prompt_len = job.prompt.len();
+            inp.speaker_ref = guard.speaker;
+            inp.lang = lang.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
+            inp.voice = voice.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
+            inp.top_k = job.params.top_k as i32;
+            inp.top_p = job.params.top_p;
+            inp.seed = job.params.seed;
+            inp.out_type = sys::MTMD_HELPER_GEN_AUDIO_OUTTYPE_WAV;
+            if unsafe { sys::mtmd_helper_gen_audio_set_input(guard.gen, &inp) } != 0 {
+                return Err(HypnosError::BackendError(
+                    "libmtmd refused the speech input".into(),
+                ));
+            }
+            let started = Instant::now();
+            loop {
+                if !job.rctx.should_continue() {
+                    return Err(HypnosError::Cancelled);
+                }
+                let left = unsafe {
+                    sys::mtmd_helper_gen_audio_step_prompt(guard.gen, self.n_batch as i32)
+                };
+                if left < 0 {
+                    return Err(HypnosError::BackendError(
+                        "speech prompt processing failed".into(),
+                    ));
+                }
+                if left == 0 {
+                    break;
+                }
+            }
+            let prompt_ms = ms_since(started);
+            let gen_started = Instant::now();
+            let mut sampler = make_sampler(&job.params);
+            let mut sample = |ctx: &LlamaContext| {
+                let t = sampler.sample(ctx, -1);
+                sampler.accept(t);
+                t
+            };
+            let mut sampled = sample(&self.ctx);
+            let mut h_state = unsafe { sys::llama_get_embeddings_ith(lctx, -1) } as *const f32;
+            let mut frames = 0u32;
+            let mut stop = false;
+            while !stop && frames < job.max_frames {
+                if !job.rctx.should_continue() {
+                    return Err(HypnosError::Cancelled);
+                }
+                let mut h_next: *const f32 = std::ptr::null();
+                let rc = unsafe {
+                    sys::mtmd_helper_gen_audio_step_gen(
+                        guard.gen,
+                        sampled.0,
+                        h_state,
+                        &mut h_next,
+                        &mut stop,
+                    )
+                };
+                if rc != 0 {
+                    return Err(HypnosError::BackendError(format!(
+                        "speech generation failed at frame {frames}"
+                    )));
+                }
+                if h_next.is_null() {
+                    break;
+                }
+                frames += 1;
+                h_state = h_next;
+                sampled = sample(&self.ctx);
+            }
+            let gen_ms = ms_since(gen_started);
+            let (mut rate, mut data, mut len, mut samples) = (0i32, std::ptr::null(), 0usize, 0i64);
+            if unsafe {
+                sys::mtmd_helper_gen_audio_get_output(
+                    guard.gen,
+                    &mut rate,
+                    &mut data,
+                    &mut len,
+                    &mut samples,
+                )
+            } != 0
+                || data.is_null()
+            {
+                return Err(HypnosError::BackendError(
+                    "the speech decoder produced no audio".into(),
+                ));
+            }
+            let wav = unsafe { std::slice::from_raw_parts(data as *const u8, len) }.to_vec();
+            Ok(SpeechReply {
+                wav,
+                sample_rate: rate.max(0) as u32,
+                samples,
+                frames,
+                prompt_ms,
+                gen_ms,
+            })
+        })();
+        drop(guard);
+        self.clear_slot(0);
+        if let Err(e) = self.ctx.clear_kv_cache_seq(Some(seq_id as u32), None, None) {
+            warn!(model = %self.cfg.id, error = ?e, "could not clear the speech slot");
+        }
+        result
+    }
 
     fn embed(&mut self, job: EmbedJob) {
         let EmbedJob {
