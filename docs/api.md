@@ -185,7 +185,7 @@ Authentication and quota errors add `"param": null` and `"code"` (section 2).
 | 404 | `model_disabled` | the model is configured but switched off | `POST /v1/models/{id}/enable` (if allowed) or pick another |
 | 404 | `not_found` | unknown document id or picture index, unknown log record | nothing to retry |
 | 408 | (plain text) | `request_timeout_secs` elapsed before the response headers were sent | retry with a smaller request or a shorter `max_tokens` |
-| 413 | (plain text) | body above `max_body_bytes` | shrink the upload |
+| 413 | (plain text), or `payload_too_large` | body above `max_body_bytes`: plain text from the body-limit layer for JSON bodies, the JSON error naming the limit from the multipart routes (documents, transcription, image edits) | shrink the upload |
 | 429 | `model_busy` | more than `max_queue_per_model` requests queued or running for this model | back off and retry; there is no `Retry-After` on this one |
 | 429 | `rate_limit_error` | per-key limit, see section 2 | wait `Retry-After` seconds |
 | 429 | `model_busy` | `POST /v1/memory/tier` or `.../disable` while the model is leased | retry when idle |

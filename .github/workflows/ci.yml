@@ -59,6 +59,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Vendor engine sources
+        # The backend workspace's path dependencies must exist for `cargo metadata`.
+        run: ./backend/scripts/vendor.sh
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           manifest-path: backend/Cargo.toml
@@ -84,6 +87,33 @@ jobs:
         run: |
           python3 -m venv /tmp/audit && /tmp/audit/bin/pip install --quiet pip-audit
           /tmp/audit/bin/pip-audit --strict ./sdk/python
+
+  # The parsers that read untrusted input, a minute each under libFuzzer (TEST-6; backend/fuzz,
+  # its own workspace, so no engine sources are needed). A crash fails the job and its input is
+  # kept as an artifact: add it as a regression test next to the parser.
+  fuzz:
+    name: fuzz (1 min per parser)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: nightly
+      - name: cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz
+        working-directory: backend
+        run: |
+          for target in $(cargo +nightly fuzz list); do
+            echo "== $target"
+            cargo +nightly fuzz run "$target" -- -max_total_time=60
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: fuzz-artifacts
+          path: backend/fuzz/artifacts/
 
   build-test:
     name: build + test (${{ matrix.name }})

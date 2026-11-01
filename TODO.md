@@ -69,13 +69,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       shows the version and its notes, downloads in the background and restarts on the user's
       OK (Settings: check automatically, on / off). The macOS app updates its bundled server with
       it. Needs DESK-19's signing for macOS and Windows to accept the new build.
-- [ ] 🟨 **TEST-6** `P1` Tests at real sizes, and fuzzing of the untrusted parsers
-      BUG-8 lived because every upload test used tiny files. Router tests with a 20 MB PDF, a 50
-      MB audio file and several images for edits, a prompt near the context limit, a long chat
-      with tool rounds, the limits' edges (`max_*_bytes` just under and just over). `cargo fuzz`
-      targets for the GGUF header reader (`gguf.rs`), the multipart parsers, the tool-call
-      parsers (`tools.rs` Gemma / Qwen / GLM formats), the config and catalog TOML and the
-      media decoders; a short fuzz run in CI, longer ones by hand.
 - [ ] 🟨 **TEST-7** `P2` Desktop UI smoke tests in CI
       Turn `desktop/screenshots/` (Chrome against `mock.js`, DOC-7) into tests: the mock server
       in place of a real one, scripted checks that the chat streams, the tool and thinking
@@ -225,6 +218,28 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       cache, the second shows the time.
 
 ## Done
+
+- [x] 🟥 **BUG-9** `P0` A crafted GGUF header crashed the server (stack overflow)
+      `gguf.rs` skipped arrays of arrays recursively, one level per 12 bytes of header and no
+      depth limit: a file of nested arrays overflowed the stack and aborted the process when the
+      server read its header (startup detection, `POST /v1/models`). Found reading the parser for
+      TEST-6's fuzz target. Arrays nest at most 8 deep now (`MAX_ARRAY_DEPTH`), deeper is an error;
+      `deeply_nested_arrays_are_refused_not_a_stack_overflow` aborted with SIGABRT before the fix.
+
+- [x] 🟨 **TEST-6** `P1` Tests at real sizes, and fuzzing of the untrusted parsers
+      BUG-8 lived because every upload test used tiny files. Router tests with a 20 MB PDF, a 50
+      MB audio file and several images for edits, a prompt near the context limit, a long chat
+      with tool rounds, the limits' edges (`max_*_bytes` just under and just over). `cargo fuzz`
+      targets for the GGUF header reader (`gguf.rs`), the multipart parsers, the tool-call
+      parsers (`tools.rs` Gemma / Qwen / GLM formats), the config and catalog TOML and the
+      media decoders; a short fuzz run in CI, longer ones by hand.
+      Done: `backend/fuzz/` with gguf_header, config_toml, catalog_toml, openai_requests and
+      tool_calls (1-2 million inputs each in a minute, clean after the BUG-9 fix), a `fuzz` job in
+      ci.yml; `tests/limits.rs` (multipart and JSON uploads just under and over each limit, bodies
+      over max_body_bytes). Found BUG-9 and that over-size multipart bodies answered a misleading
+      400: now 413 `payload_too_large`. Not covered: long chats with tool rounds and prompts near
+      the context limit need a real engine (max_prompt_chars is enforced in the engines), left
+      for TEST-8's soak run.
 
 - [x] ⬜ **DOC-9** `P1` SECURITY.md, CHANGELOG.md, CONTRIBUTING.md
       How to report a vulnerability and what is supported; a changelog per release (from the

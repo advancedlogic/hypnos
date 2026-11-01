@@ -11,6 +11,11 @@ config, and its notes say so).
 ### Fixed
 - Multipart uploads above 2 MB were refused (documents, transcription, image edits): the routes
   now use the configured body limit (BUG-8).
+- A crafted model file header (arrays nested thousands deep) overflowed the stack and crashed
+  the server when it read the file at startup or when the model was added (BUG-9).
+- A multipart body over `max_body_bytes` now answers 413 `payload_too_large` naming the limit,
+  instead of 400 "Error parsing multipart/form-data request"; size errors name the `limits.max_*`
+  setting to raise (TEST-6).
 
 ### Added
 - Desktop: the Models dialog's **In use** tab lists what the server runs, by job, with each
@@ -20,6 +25,8 @@ config, and its notes say so).
 - `SECURITY.md`, `CONTRIBUTING.md` and this changelog (DOC-9).
 
 ### Build and CI
+- Fuzz targets for the parsers of untrusted input, a minute each in CI, and upload tests at
+  real sizes (TEST-6).
 - CI runs on every push to main and every pull request; a dependency audit (cargo-deny, npm
   audit, pip-audit), Dependabot, and every action pinned to a commit (BUILD-14, BUILD-15).
 - The engines' CMake builds are reused between CI runs while their pins, patches and settings are

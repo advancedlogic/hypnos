@@ -32,7 +32,7 @@ pub fn load_media(media: &MediaRef, limits: &LimitsConfig) -> Result<Vec<u8>> {
 fn check_size(actual: usize, limit: u64, what: &str) -> Result<()> {
     if actual as u64 > limit {
         return Err(HypnosError::InvalidRequest(format!(
-            "{what} payload is {actual} bytes, above the configured limit of {limit} bytes"
+            "{what} payload is {actual} bytes, above limits.max_{what}_bytes ({limit})"
         )));
     }
     Ok(())

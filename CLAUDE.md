@@ -294,6 +294,15 @@ in a task-local that `AppState::new_request` reads, and returns `x-hypnos-estima
 and per `x-hypnos-workflow` (`metrics.rs`: `hypnos_request_e2e_ms`, `hypnos_workflow_e2e_ms`,
 p50/p95/p99 in `/v1/memory/status` `latency`).
 
+Untrusted input (TEST-6): `backend/fuzz/` (its own workspace, nightly, cargo-fuzz) fuzzes the GGUF
+header reader (`GgufArchMetadata::from_reader`), the config and catalog TOML, the API's JSON
+requests and the tool-call parsers (`tools.rs` compiled in through `#[path]`, so no engines);
+ci.yml's `fuzz` job runs each for a minute. `hypnos-server/tests/limits.rs` sends megabyte uploads
+to every upload route at the edges of `max_*_bytes` and `max_body_bytes`; multipart bodies over the
+body limit answer 413 `payload_too_large` (`multipart_error` in lib.rs). Locally the repo's
+`.cargo/config.toml` rustc pin hides nightly: `CARGO_BUILD_RUSTC=$(rustup which --toolchain nightly
+rustc) rustup run nightly cargo fuzz run <target>`.
+
 Hardening (TEST-4): `faults.rs` `concurrent_clients_and_cancellations_leave_nothing_behind` (300
 clients, three models in room for two, cancellations at every stage: no lease, slot or booking
 left); `hypnos-core/tests/compat.rs` loads every released example config (`tests/fixtures/`);

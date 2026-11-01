@@ -100,13 +100,20 @@ async fn parse_request(
             output_format: "markdown".into(),
             ..Default::default()
         };
-        while let Some(field) = multipart.next_field().await.map_err(bad)? {
+        while let Some(field) = multipart
+            .next_field()
+            .await
+            .map_err(|e| crate::multipart_error(state, e))?
+        {
             let name = field.name().unwrap_or("").to_string();
             if name == "file" {
                 if req.filename.is_none() {
                     req.filename = field.file_name().map(str::to_string);
                 }
-                let bytes = field.bytes().await.map_err(bad)?;
+                let bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|e| crate::multipart_error(state, e))?;
                 if bytes.len() as u64 > max {
                     return Err(bad(format!(
                         "document is {} bytes, above limits.max_document_bytes ({max})",
@@ -116,7 +123,10 @@ async fn parse_request(
                 req.file_bytes = bytes.to_vec();
                 continue;
             }
-            let value = field.text().await.map_err(bad)?;
+            let value = field
+                .text()
+                .await
+                .map_err(|e| crate::multipart_error(state, e))?;
             match name.as_str() {
                 "model" => req.model = value,
                 "url" => req.url = Some(value),
@@ -622,6 +632,7 @@ impl DocumentSse {
         let message = error.to_string();
         let kind = match error {
             HypnosError::InvalidRequest(_) => "invalid_request_error",
+            HypnosError::PayloadTooLarge(_) => "payload_too_large",
             HypnosError::Cancelled | HypnosError::Timeout(_) => "cancelled",
             _ => "server_error",
         };

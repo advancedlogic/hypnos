@@ -64,6 +64,9 @@ const T_F64: u32 = 12;
 const MAX_DECODED_ARRAY: u64 = 4096;
 /// Sanity cap for key and string lengths, so a corrupt header cannot request huge allocations.
 const MAX_STRING: u64 = 1 << 20;
+/// Arrays of arrays are skipped recursively; real files nest one level at most. Deeper is a
+/// corrupt or hostile header, refused before the recursion can overflow the stack (TEST-6).
+const MAX_ARRAY_DEPTH: u32 = 8;
 
 struct Reader<R> {
     r: R,
@@ -133,6 +136,13 @@ impl<R: Read + Seek> Reader<R> {
     }
 
     fn value(&mut self, ty: u32, decode: bool) -> io::Result<Value> {
+        self.value_at(ty, decode, 0)
+    }
+
+    fn value_at(&mut self, ty: u32, decode: bool, depth: u32) -> io::Result<Value> {
+        if depth > MAX_ARRAY_DEPTH {
+            return Err(invalid("arrays nested too deeply"));
+        }
         match ty {
             T_STRING if decode => Ok(Value::Str(self.string()?)),
             T_STRING => self.skip_string().map(|_| Value::Other),
@@ -159,7 +169,7 @@ impl<R: Read + Seek> Reader<R> {
                     Some(size) => self.skip(n.saturating_mul(size))?,
                     None => {
                         for _ in 0..n {
-                            self.value(elem, false)?;
+                            self.value_at(elem, false, depth + 1)?;
                         }
                     }
                 }
@@ -182,9 +192,12 @@ type Metadata = (HashMap<String, Value>, Option<u64>);
 fn read_metadata(path: &Path) -> io::Result<Option<Metadata>> {
     let file = File::open(path)?;
     let file_len = file.metadata()?.len();
-    let mut r = Reader {
-        r: BufReader::new(file),
-    };
+    parse_metadata(BufReader::new(file), file_len)
+}
+
+/// [`read_metadata`] on any reader (`len`: the bytes it holds, for the last tensor's size).
+fn parse_metadata<R: Read + Seek>(reader: R, file_len: u64) -> io::Result<Option<Metadata>> {
+    let mut r = Reader { r: reader };
     if &r.bytes::<4>()? != b"GGUF" {
         return Ok(None);
     }
@@ -259,7 +272,17 @@ impl GgufArchMetadata {
     /// Reads the architecture values from a GGUF file. `Ok(None)` when the file is not GGUF or
     /// has no `general.architecture` (e.g. a diffusion checkpoint converted without metadata).
     pub fn read(path: &Path) -> io::Result<Option<Self>> {
-        let Some((kv, experts)) = read_metadata(path)? else {
+        Self::from_parts(read_metadata(path)?)
+    }
+
+    /// [`Self::read`] on bytes in any reader (`len`: how many it holds). Used by the fuzz targets
+    /// and tests: the header is untrusted input (a model file someone downloaded or added).
+    pub fn from_reader<R: Read + Seek>(reader: R, len: u64) -> io::Result<Option<Self>> {
+        Self::from_parts(parse_metadata(reader, len)?)
+    }
+
+    fn from_parts(parsed: Option<Metadata>) -> io::Result<Option<Self>> {
+        let Some((kv, experts)) = parsed else {
             return Ok(None);
         };
         Ok(Self::from_metadata(&kv).map(|m| Self {
@@ -390,6 +413,40 @@ impl GgufArchMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A header whose array holds an array holds an array… (12 bytes a level) must fail cleanly,
+    /// not recurse once per level until the stack overflows (found by reading for TEST-6).
+    #[test]
+    fn deeply_nested_arrays_are_refused_not_a_stack_overflow() {
+        let mut b = Vec::new();
+        b.extend_from_slice(b"GGUF");
+        b.extend_from_slice(&3u32.to_le_bytes()); // version
+        b.extend_from_slice(&0u64.to_le_bytes()); // tensors
+        b.extend_from_slice(&1u64.to_le_bytes()); // keys
+        b.extend_from_slice(&1u64.to_le_bytes());
+        b.push(b'k');
+        b.extend_from_slice(&T_ARRAY.to_le_bytes());
+        for _ in 0..200_000 {
+            b.extend_from_slice(&T_ARRAY.to_le_bytes()); // element type
+            b.extend_from_slice(&1u64.to_le_bytes()); // one element
+        }
+        let len = b.len() as u64;
+        let err = GgufArchMetadata::from_reader(std::io::Cursor::new(b), len).unwrap_err();
+        assert!(err.to_string().contains("nested"), "{err}");
+    }
+
+    /// Lengths and counts from a corrupt header never allocate or loop without bound.
+    #[test]
+    fn huge_counts_and_lengths_fail_fast() {
+        let mut b = Vec::new();
+        b.extend_from_slice(b"GGUF");
+        b.extend_from_slice(&3u32.to_le_bytes());
+        b.extend_from_slice(&u64::MAX.to_le_bytes()); // tensors
+        b.extend_from_slice(&u64::MAX.to_le_bytes()); // keys
+        b.extend_from_slice(&u64::MAX.to_le_bytes()); // a key "longer than 1 MiB"
+        let len = b.len() as u64;
+        assert!(GgufArchMetadata::from_reader(std::io::Cursor::new(b), len).is_err());
+    }
     use std::io::Write;
 
     /// Writes a GGUF v3 header with the given metadata and no tensors.

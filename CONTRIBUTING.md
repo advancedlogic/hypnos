@@ -37,6 +37,12 @@ cd sdk/rust && cargo test
 cd desktop/src-tauri && cargo test
 ```
 
+The parsers that read untrusted input (model file headers, the config and catalog, the API's
+JSON, the tool-call formats) have fuzz targets in `backend/fuzz/` (nightly Rust and `cargo install
+cargo-fuzz`): `cd backend && cargo +nightly fuzz run gguf_header -- -max_total_time=300`. CI runs
+each for a minute. A crash leaves its input in `backend/fuzz/artifacts/`: turn it into a
+regression test next to the parser.
+
 Tests that need real models are `#[ignore]`d and say in their doc comment what they need (a
 running server in `HYPNOS_TEST_URL`, files in `backend/models/`). Run the ones your change
 touches. `./backend/scripts/smoke_test.sh` sends one real request per modality to a running

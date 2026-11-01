@@ -74,6 +74,10 @@ pub enum HypnosError {
     #[error("Invalid request parameter: {0}")]
     InvalidRequest(String),
 
+    /// A request body above `limits.max_body_bytes` (HTTP 413, `payload_too_large`).
+    #[error("{0}")]
+    PayloadTooLarge(String),
+
     /// A resource addressed by the URL (a stored document, a log entry) does not exist.
     #[error("Not found: {0}")]
     NotFound(String),

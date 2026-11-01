@@ -1180,6 +1180,23 @@ async fn audio_transcriptions(
     }
 }
 
+/// A multipart reading error as the client sees it: a body over the router's limit is a 413 that
+/// names `limits.max_body_bytes` (axum's text says only "Error parsing multipart/form-data
+/// request", the BUG-8 symptom); anything else a 400 with axum's text.
+pub(crate) fn multipart_error(
+    state: &AppState,
+    e: axum::extract::multipart::MultipartError,
+) -> HypnosError {
+    if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        HypnosError::PayloadTooLarge(format!(
+            "request body is above limits.max_body_bytes ({} bytes)",
+            state.limits.max_body_bytes
+        ))
+    } else {
+        HypnosError::InvalidRequest(e.body_text())
+    }
+}
+
 /// `extensions` carry the router's body limit into the rebuilt multipart request (see
 /// `documents::parse_request`).
 async fn audio_transcriptions_inner(
@@ -1216,22 +1233,16 @@ async fn audio_transcriptions_inner(
         while let Some(field) = multipart
             .next_field()
             .await
-            .map_err(|e| HypnosError::InvalidRequest(e.to_string()))?
+            .map_err(|e| multipart_error(state, e))?
         {
             let name = field.name().unwrap_or("").to_string();
             match name.as_str() {
                 "model" => {
-                    model = field
-                        .text()
-                        .await
-                        .map_err(|e| HypnosError::InvalidRequest(e.to_string()))?;
+                    model = field.text().await.map_err(|e| multipart_error(state, e))?;
                 }
                 "file" => {
                     filename = field.file_name().map(|s| s.to_string());
-                    let bytes = field
-                        .bytes()
-                        .await
-                        .map_err(|e| HypnosError::InvalidRequest(e.to_string()))?;
+                    let bytes = field.bytes().await.map_err(|e| multipart_error(state, e))?;
                     if bytes.len() > max_audio {
                         return Err(HypnosError::InvalidRequest(format!(
                             "audio file is {} bytes, above limits.max_audio_bytes ({max_audio})",
@@ -1242,20 +1253,10 @@ async fn audio_transcriptions_inner(
                     audio_bytes = bytes.to_vec();
                 }
                 "language" => {
-                    language = Some(
-                        field
-                            .text()
-                            .await
-                            .map_err(|e| HypnosError::InvalidRequest(e.to_string()))?,
-                    );
+                    language = Some(field.text().await.map_err(|e| multipart_error(state, e))?);
                 }
                 "prompt" => {
-                    prompt = Some(
-                        field
-                            .text()
-                            .await
-                            .map_err(|e| HypnosError::InvalidRequest(e.to_string()))?,
-                    );
+                    prompt = Some(field.text().await.map_err(|e| multipart_error(state, e))?);
                 }
                 _ => {}
             }
@@ -1620,11 +1621,18 @@ async fn parse_image_edit(
     let mut fields: std::collections::HashMap<String, String> = Default::default();
     let mut images = Vec::new();
     let mut mask = None;
-    while let Some(field) = form.next_field().await.map_err(|e| bad(e.to_string()))? {
+    while let Some(field) = form
+        .next_field()
+        .await
+        .map_err(|e| ApiError::from(multipart_error(state, e)))?
+    {
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
             "image" | "image[]" | "mask" => {
-                let bytes = field.bytes().await.map_err(|e| bad(e.to_string()))?;
+                let bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|e| ApiError::from(multipart_error(state, e)))?;
                 if bytes.len() > max_image {
                     return Err(bad(format!(
                         "{name} is {} bytes, above limits.max_image_bytes ({max_image})",
@@ -1638,7 +1646,10 @@ async fn parse_image_edit(
                 }
             }
             _ => {
-                let text = field.text().await.map_err(|e| bad(e.to_string()))?;
+                let text = field
+                    .text()
+                    .await
+                    .map_err(|e| ApiError::from(multipart_error(state, e)))?;
                 fields.insert(name, text);
             }
         }
@@ -1809,6 +1820,7 @@ impl IntoResponse for ApiError {
             HypnosError::ModalityMismatch { .. } | HypnosError::InvalidRequest(_) => {
                 (StatusCode::BAD_REQUEST, "invalid_request_error")
             }
+            HypnosError::PayloadTooLarge(_) => (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large"),
             HypnosError::InsufficientMemory { .. } => {
                 (StatusCode::INSUFFICIENT_STORAGE, "insufficient_vram_or_ram")
             }

@@ -1,0 +1,59 @@
+# Fuzz targets for the parsers that read untrusted input (TEST-6). Not part of the backend
+# workspace: cargo-fuzz needs nightly. From backend/:
+#   rustup run nightly cargo fuzz run gguf_header           # until stopped; add -- -max_total_time=60
+#   rustup run nightly cargo fuzz list
+# CI runs each for a minute (ci.yml, `fuzz` job). A crash is saved under fuzz/artifacts/<target>/:
+# add it as a regression test next to the parser and fix it.
+[package]
+name = "hypnos-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+hypnos-core = { path = "../crates/hypnos-core" }
+serde_json = "1"
+
+[workspace]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "gguf_header"
+path = "fuzz_targets/gguf_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config_toml"
+path = "fuzz_targets/config_toml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "catalog_toml"
+path = "fuzz_targets/catalog_toml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "openai_requests"
+path = "fuzz_targets/openai_requests.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tool_calls"
+path = "fuzz_targets/tool_calls.rs"
+test = false
+doc = false
+bench = false
