@@ -57,6 +57,22 @@ the client will call next, loaded in the background while this request runs, so 
 not wait for it. A voice turn sends it on the transcription (naming the chat model) and on the chat
 (naming the speech model). Unknown ids are ignored; the header never changes the response.
 
+**Deadlines and estimated waits.** `x-hypnos-deadline-ms: <ms>` (**Hypnos extension**) is the
+longest the request may wait before it starts: when the scheduler's estimate (requests ahead
+beyond the model's slots x its average service time, plus a load when the model is not resident)
+is longer, the request is refused at once with 503 `deadline_unmeetable` and a `Retry-After`,
+instead of being queued. The server can apply its workload profile's objective as an implicit
+deadline (`limits.overload = "shed"`). Every admitted request's response carries
+`x-hypnos-estimated-wait-ms`, the estimate made when it arrived (absent before the model has
+served anything while busy).
+
+**Workflows.** `x-hypnos-workflow: <name>/<id>` marks the requests of one multi-step task (a voice
+turn: transcription, chat, speech); `x-hypnos-workflow-end: true` on the last one closes it (or
+30 s without a request does). Their end-to-end time, first start to last byte, is reported per
+name as p50 / p95 / p99 in `/v1/memory/status` `latency.workflows` and as
+`hypnos_workflow_e2e_ms` on `/metrics`, next to the same per route (`latency.routes`,
+`hypnos_request_e2e_ms`).
+
 **CORS.** Browsers may call the API from any loopback origin by default; the operator can list
 other origins (`server.allowed_origins`, `http://host:*` wildcards). The methods are GET, POST
 and OPTIONS (DELETE is not in the CORS allow-list, so release stored pictures from a non-browser
@@ -174,6 +190,7 @@ Authentication and quota errors add `"param": null` and `"code"` (section 2).
 | 429 | `model_busy` | `POST /v1/memory/tier` or `.../disable` while the model is leased | retry when idle |
 | 499 | `cancelled` | the client disconnected or the server is shutting down (rarely seen by the client) | none |
 | 503 | `model_not_available` | still staging (section 3), or the model cannot be served as configured | poll `/ready`, retry later |
+| 503 | `deadline_unmeetable` | the estimated wait before the request could start exceeds its `x-hypnos-deadline-ms` (or the profile's objective with `limits.overload = "shed"`) | retry after `Retry-After`, or with a longer deadline |
 | 504 | `timeout` | an engine-side timeout | retry |
 | 507 | `insufficient_vram_or_ram` | the model does not fit next to the models currently leased | retry later; the operator can lower `min_gpu_layer_ratio` or priorities |
 | 507 | `process_memory_cap` | loading would exceed `hardware.max_process_memory_bytes` | retry later |
@@ -959,6 +976,11 @@ weighs within a priority: the model whose loss costs least (reload time x rate) 
 `full_gpu_placement`, `process_memory_cap`, `device_out_of_memory`). `gpu` is
 present on NVIDIA devices with `nvidia-smi` available and is sampled at most every few seconds.
 Additional fields may appear in later versions; clients should ignore unknown ones.
+
+`latency` holds end-to-end p50 / p95 / p99 (ms, bucket upper bounds) with `count`, per route
+(`routes`) and per declared workflow (`workflows`, see section 1). Each model also has
+`service_ms` (average time a request holds it, once measured) and `estimated_wait_ms` (what a
+new request would wait now).
 
 With `[server] profile` set, the status also carries `"profile": {"name": "voice_assistant",
 "objective": {"metric": "first_audio", "target_ms": 1500}}` (`metric`: `first_token`,

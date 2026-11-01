@@ -728,3 +728,78 @@ async fn a_declared_next_model_is_loaded_in_the_background() {
     );
     assert!(a.resident.load(Ordering::SeqCst), "the current one too");
 }
+
+/// PERF-10: a deadline the estimated wait cannot meet is refused at once with Retry-After; the
+/// estimate comes back on admitted requests; workflows get end-to-end percentiles.
+#[tokio::test]
+async fn deadlines_are_checked_at_admission_and_workflows_are_timed() {
+    let st = state(engine("m"));
+    let scheduler = st.scheduler.clone();
+    let app = build_router(st, &[]);
+    let chat = r#"{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":4}"#;
+    let send_with = |headers: Vec<(&'static str, &'static str)>| {
+        let app = app.clone();
+        async move {
+            let mut req = Request::builder()
+                .method(Method::POST)
+                .uri("/v1/chat/completions")
+                .header(header::CONTENT_TYPE, "application/json");
+            for (k, v) in headers {
+                req = req.header(k, v);
+            }
+            app.oneshot(req.body(Body::from(chat)).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+    // Load the model, then pretend a request takes 500 ms and one is running.
+    assert_eq!(send_with(vec![]).await.status(), 200);
+    scheduler.memory().record_service("m", 500.0);
+    for _ in 0..10 {
+        scheduler.memory().record_service("m", 500.0);
+    }
+    let ctx = hypnos_core::request::RequestContext::unbounded();
+    let running = scheduler.acquire_model("m", None, 1, &ctx).await.unwrap();
+
+    let resp = send_with(vec![("x-hypnos-deadline-ms", "100")]).await;
+    assert_eq!(resp.status(), 503);
+    assert!(resp.headers().contains_key(header::RETRY_AFTER));
+    assert!(text(resp).await.contains("deadline_unmeetable"));
+
+    let resp = send_with(vec![("x-hypnos-deadline-ms", "5000")]).await;
+    assert_eq!(resp.status(), 200);
+    let wait: u64 = resp.headers()["x-hypnos-estimated-wait-ms"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(wait >= 400, "one request ahead of ~500 ms: {wait}");
+    let _ = text(resp).await;
+    drop(running);
+
+    // A two-request workflow, closed by its last request.
+    let r = send_with(vec![("x-hypnos-workflow", "voice_turn/abc")]).await;
+    let _ = text(r).await;
+    let r = send_with(vec![
+        ("x-hypnos-workflow", "voice_turn/abc"),
+        ("x-hypnos-workflow-end", "true"),
+    ])
+    .await;
+    let _ = text(r).await;
+    let status: serde_json::Value =
+        serde_json::from_str(&text(get(&app, "/v1/memory/status").await).await).unwrap();
+    assert_eq!(
+        status["latency"]["workflows"]["voice_turn"]["count"], 1,
+        "{}",
+        status["latency"]
+    );
+    assert!(
+        status["latency"]["routes"]["/v1/chat/completions"]["count"]
+            .as_u64()
+            .unwrap()
+            >= 4
+    );
+    let metrics = text(get(&app, "/metrics").await).await;
+    assert!(metrics.contains("hypnos_workflow_e2e_ms_count{workflow=\"voice_turn\"} 1"));
+    assert!(metrics.contains("hypnos_request_e2e_ms_bucket{route=\"/v1/chat/completions\""));
+}

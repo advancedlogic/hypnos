@@ -56,21 +56,39 @@ impl Histogram {
     }
 
     fn render(&self, out: &mut String, name: &str, model: &str) {
+        self.render_labeled(out, name, "model", model);
+    }
+
+    fn render_labeled(&self, out: &mut String, name: &str, key: &str, value: &str) {
         for (i, b) in self.bounds.iter().enumerate() {
             let _ = writeln!(
                 out,
-                "{name}_bucket{{model=\"{model}\",le=\"{b}\"}} {}",
+                "{name}_bucket{{{key}=\"{value}\",le=\"{b}\"}} {}",
                 self.counts[i]
             );
         }
         let _ = writeln!(
             out,
-            "{name}_bucket{{model=\"{model}\",le=\"+Inf\"}} {}",
+            "{name}_bucket{{{key}=\"{value}\",le=\"+Inf\"}} {}",
             self.count
         );
-        let _ = writeln!(out, "{name}_sum{{model=\"{model}\"}} {:.3}", self.sum);
-        let _ = writeln!(out, "{name}_count{{model=\"{model}\"}} {}", self.count);
-        let _ = writeln!(out, "{name}_last{{model=\"{model}\"}} {:.3}", self.last);
+        let _ = writeln!(out, "{name}_sum{{{key}=\"{value}\"}} {:.3}", self.sum);
+        let _ = writeln!(out, "{name}_count{{{key}=\"{value}\"}} {}", self.count);
+        let _ = writeln!(out, "{name}_last{{{key}=\"{value}\"}} {:.3}", self.last);
+    }
+
+    /// The value below which `q` of the observations fall, read from the buckets (the upper
+    /// bound of the bucket that crosses it; `None` without data or above the last bound).
+    fn quantile(&self, q: f64) -> Option<f64> {
+        if self.count == 0 {
+            return None;
+        }
+        let rank = (q * self.count as f64).ceil() as u64;
+        self.bounds
+            .iter()
+            .zip(&self.counts)
+            .find(|(_, c)| **c >= rank)
+            .map(|(b, _)| *b)
     }
 }
 
@@ -88,6 +106,13 @@ const TOKENS_PER_S: &[f64] = &[
 ];
 const RTF: &[f64] = &[0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0];
 const SECONDS: &[f64] = &[1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0, 300.0, 600.0];
+/// End-to-end latency of requests and workflows (ms), with the resolution p50 / p95 / p99 need.
+const E2E_MS: &[f64] = &[
+    25.0, 50.0, 100.0, 200.0, 300.0, 500.0, 750.0, 1000.0, 1500.0, 2000.0, 3000.0, 5000.0, 7500.0,
+    10000.0, 15000.0, 20000.0, 30000.0, 60000.0, 120000.0, 300000.0,
+];
+/// A workflow ends after this long without a request (or when one says it ended).
+const WORKFLOW_IDLE: Duration = Duration::from_secs(30);
 
 /// Every execution histogram, in exposition order. Each is keyed by model id.
 const ENGINE_METRICS: &[EngineMetric] = &[
@@ -167,6 +192,20 @@ pub struct Metrics {
     engine: Mutex<BTreeMap<(&'static str, String), Histogram>>,
     /// `(metric name, model id)` -> counter.
     counters: Mutex<BTreeMap<(&'static str, String), u64>>,
+    /// Route -> end-to-end latency (start to the last byte of the body; PERF-10).
+    request_e2e: Mutex<BTreeMap<String, Histogram>>,
+    /// Workflow name -> end-to-end latency (first request's start to the last one's end).
+    workflow_e2e: Mutex<BTreeMap<String, Histogram>>,
+    /// Workflow id -> (name, started, last end, requests still running).
+    workflows_open: Mutex<BTreeMap<String, OpenWorkflow>>,
+}
+
+#[derive(Debug)]
+struct OpenWorkflow {
+    name: String,
+    started: std::time::Instant,
+    last_end: std::time::Instant,
+    running: usize,
 }
 
 impl Metrics {
@@ -184,6 +223,100 @@ impl Metrics {
         if ms > entry.latency_ms_max {
             entry.latency_ms_max = ms;
         }
+    }
+
+    /// A request ended (its body was sent or dropped) `elapsed` after it started.
+    pub fn record_e2e(&self, route: &str, elapsed: Duration) {
+        self.request_e2e
+            .lock()
+            .entry(route.to_string())
+            .or_insert_with(|| Histogram::new(E2E_MS))
+            .observe(elapsed.as_secs_f64() * 1000.0);
+    }
+
+    /// `x-hypnos-workflow: <name>/<id>` (or just `<name>`, one workflow per request): a request
+    /// of the workflow starts.
+    pub fn workflow_begin(&self, header: &str) -> String {
+        let (name, id) = match header.split_once('/') {
+            Some((n, i)) => (n.trim(), i.trim().to_string()),
+            None => (header.trim(), uuid::Uuid::new_v4().simple().to_string()),
+        };
+        let key = format!("{name}/{id}");
+        let now = std::time::Instant::now();
+        self.finish_idle_workflows(now);
+        let mut open = self.workflows_open.lock();
+        let w = open.entry(key.clone()).or_insert_with(|| OpenWorkflow {
+            name: name.chars().take(64).collect(),
+            started: now,
+            last_end: now,
+            running: 0,
+        });
+        w.running += 1;
+        key
+    }
+
+    /// A request of workflow `key` ended; `last` (`x-hypnos-workflow-end`) closes the workflow,
+    /// otherwise it closes after `WORKFLOW_IDLE` without requests.
+    pub fn workflow_end(&self, key: &str, last: bool) {
+        let now = std::time::Instant::now();
+        let done = {
+            let mut open = self.workflows_open.lock();
+            let Some(w) = open.get_mut(key) else { return };
+            w.running = w.running.saturating_sub(1);
+            w.last_end = now;
+            (last && w.running == 0).then(|| open.remove(key)).flatten()
+        };
+        if let Some(w) = done {
+            self.observe_workflow(&w);
+        }
+    }
+
+    fn observe_workflow(&self, w: &OpenWorkflow) {
+        self.workflow_e2e
+            .lock()
+            .entry(w.name.clone())
+            .or_insert_with(|| Histogram::new(E2E_MS))
+            .observe(w.last_end.duration_since(w.started).as_secs_f64() * 1000.0);
+    }
+
+    fn finish_idle_workflows(&self, now: std::time::Instant) {
+        let idle: Vec<OpenWorkflow> = {
+            let mut open = self.workflows_open.lock();
+            let keys: Vec<String> = open
+                .iter()
+                .filter(|(_, w)| w.running == 0 && now.duration_since(w.last_end) >= WORKFLOW_IDLE)
+                .map(|(k, _)| k.clone())
+                .collect();
+            keys.iter().filter_map(|k| open.remove(k)).collect()
+        };
+        for w in &idle {
+            self.observe_workflow(w);
+        }
+    }
+
+    /// p50 / p95 / p99 per route and per workflow (ms), for `/v1/memory/status`-style reports.
+    pub fn percentiles(&self) -> serde_json::Value {
+        self.finish_idle_workflows(std::time::Instant::now());
+        let table = |m: &BTreeMap<String, Histogram>| -> serde_json::Value {
+            m.iter()
+                .map(|(k, h)| {
+                    (
+                        k.clone(),
+                        serde_json::json!({
+                            "count": h.count,
+                            "p50_ms": h.quantile(0.50),
+                            "p95_ms": h.quantile(0.95),
+                            "p99_ms": h.quantile(0.99),
+                        }),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>()
+                .into()
+        };
+        serde_json::json!({
+            "routes": table(&self.request_e2e.lock()),
+            "workflows": table(&self.workflow_e2e.lock()),
+        })
     }
 
     fn observe(&self, name: &'static str, model: &str, value: Option<f64>) {
@@ -533,6 +666,33 @@ impl Metrics {
             let _ = writeln!(out, "# TYPE {}_last gauge", metric.name);
             for (model, h) in series {
                 h.render(&mut out, metric.name, &model.replace('"', ""));
+            }
+        }
+
+        self.finish_idle_workflows(std::time::Instant::now());
+        for (name, help, key, family) in [
+            (
+                "hypnos_request_e2e_ms",
+                "Request start to the last byte of its response, streams included (ms).",
+                "route",
+                &self.request_e2e,
+            ),
+            (
+                "hypnos_workflow_e2e_ms",
+                "A workflow (x-hypnos-workflow) from its first request's start to its last one's end (ms).",
+                "workflow",
+                &self.workflow_e2e,
+            ),
+        ] {
+            let family = family.lock();
+            if family.is_empty() {
+                continue;
+            }
+            let _ = writeln!(out, "# HELP {name} {help}");
+            let _ = writeln!(out, "# TYPE {name} histogram");
+            let _ = writeln!(out, "# TYPE {name}_last gauge");
+            for (label, h) in family.iter() {
+                h.render_labeled(&mut out, name, key, &label.replace('"', ""));
             }
         }
 

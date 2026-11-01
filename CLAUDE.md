@@ -259,6 +259,17 @@ cold moving averages, size-based estimate before one); `idle_*_eviction_candidat
 priority, then `eviction_cost` (reload time x rate), then LRU. `x-hypnos-next-model` (middleware
 `prestage_next`, innermost) makes `ModelScheduler::prestage` load the next stage in the background.
 
+Deadline-aware admission (PERF-10): leases record their service time on drop
+(`record_service`, not for pre-stages); `ModelScheduler::estimated_wait_ms` = requests ahead
+beyond the slots x average service + a load when not resident; `acquire_model` writes it into
+`RequestContext::estimated_wait_ms` and refuses with `DeadlineUnmeetable` (503
+`deadline_unmeetable`, `Retry-After`) past `start_deadline_ms`. The middleware `admission_scope`
+(innermost) puts `x-hypnos-deadline-ms` (or the profile objective with `limits.overload = "shed"`)
+in a task-local that `AppState::new_request` reads, and returns `x-hypnos-estimated-wait-ms`.
+`observe_request` wraps response bodies (`done_body.rs`) to record end-to-end latency per route
+and per `x-hypnos-workflow` (`metrics.rs`: `hypnos_request_e2e_ms`, `hypnos_workflow_e2e_ms`,
+p50/p95/p99 in `/v1/memory/status` `latency`).
+
 ### Engines (`hypnos-backends`)
 
 - `llama.rs`: `ggml_llama`. Text, vision, audio-in (via mtmd), embeddings, tool calling (`tools.rs`:

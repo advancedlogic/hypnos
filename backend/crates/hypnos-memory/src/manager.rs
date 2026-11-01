@@ -33,6 +33,8 @@ pub struct ManagedModelMemory {
     /// Measured reload times (moving averages, ms): from warm memory (Tier 2) and from disk.
     pub reload_warm_ms: Option<f64>,
     pub reload_cold_ms: Option<f64>,
+    /// How long a request holds the model once admitted (moving average, ms; PERF-10).
+    pub service_ms: Option<f64>,
 }
 
 /// Time constant of the request-rate decay.
@@ -176,6 +178,12 @@ pub struct ModelTierSnapshot {
     /// eviction, the two factors eviction weighs within a priority (MEM-6).
     pub requests_per_minute: f64,
     pub reload_estimate_ms: f64,
+    /// Average time a request holds the model (ms), once measured, and the wait a new request
+    /// would have now (filled by the scheduler; PERF-10).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_wait_ms: Option<f64>,
 }
 
 /// Coordinates memory placement across Tier 1 (GPU VRAM / Wired UMA),
@@ -568,6 +576,7 @@ impl TieredMemoryManager {
             decayed_at: Instant::now(),
             reload_warm_ms: None,
             reload_cold_ms: None,
+            service_ms: None,
         })
     }
 
@@ -949,6 +958,29 @@ impl TieredMemoryManager {
         candidates.into_iter().map(|(id, _)| id.clone()).collect()
     }
 
+    /// Records how long a request held `model_id` (moving average), for wait estimates (PERF-10).
+    pub fn record_service(&self, model_id: &str, ms: f64) {
+        if let Some(entry) = self.models.write().get_mut(model_id) {
+            entry.service_ms = Some(match entry.service_ms {
+                Some(avg) => avg * 0.8 + ms * 0.2,
+                None => ms,
+            });
+        }
+    }
+
+    /// The average time a request holds `model_id`, once measured.
+    pub fn service_ms(&self, model_id: &str) -> Option<f64> {
+        self.models.read().get(model_id).and_then(|m| m.service_ms)
+    }
+
+    /// The expected reload time of `model_id` (see [`ManagedModelMemory::reload_estimate_ms`]).
+    pub fn reload_estimate_ms(&self, model_id: &str) -> Option<f64> {
+        self.models
+            .read()
+            .get(model_id)
+            .map(ManagedModelMemory::reload_estimate_ms)
+    }
+
     /// Records how long bringing `model_id` into Tier 1 took from `from` (moving average), so
     /// eviction can weigh what losing it costs (MEM-6).
     pub fn record_reload(&self, model_id: &str, from: MemoryTier, ms: f64) {
@@ -994,6 +1026,8 @@ impl TieredMemoryManager {
                 total_requests_served: m.total_requests_served,
                 requests_per_minute: (m.requests_per_minute() * 100.0).round() / 100.0,
                 reload_estimate_ms: m.reload_estimate_ms().round(),
+                service_ms: m.service_ms.map(f64::round),
+                estimated_wait_ms: None,
             })
             .collect();
 

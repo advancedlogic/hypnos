@@ -878,3 +878,57 @@ async fn a_declared_next_stage_is_loaded_ahead() {
     );
     assert!(sched.prestage("unknown").await.is_err());
 }
+
+// ---- deadline-aware admission (PERF-10) ----------------------------------------------------
+
+#[tokio::test]
+async fn a_request_that_cannot_start_in_time_is_refused_at_once() {
+    let (sched, _) = build(
+        12,
+        vec![model(
+            "m",
+            2,
+            ModelPriority::Normal,
+            MemoryTier::Tier3NvmeSsd,
+        )],
+        4,
+    );
+    let ctx = RequestContext::unbounded();
+    assert_eq!(
+        sched.estimated_wait_ms("m").map(|w| w > 0.0),
+        Some(true),
+        "cold: the load is the wait"
+    );
+    // One request held for ~100 ms measures the service time.
+    let lease = sched.acquire_model("m", None, 1, &ctx).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    drop(lease);
+    assert_eq!(sched.estimated_wait_ms("m"), Some(0.0), "resident and free");
+
+    let busy = sched.acquire_model("m", None, 1, &ctx).await.unwrap();
+    let wait = sched.estimated_wait_ms("m").unwrap();
+    assert!(wait >= 90.0, "one request ahead on one slot: {wait}");
+
+    let mut hurried = RequestContext::unbounded();
+    hurried.start_deadline_ms = Some(10);
+    match sched.acquire_model("m", None, 1, &hurried).await {
+        Err(HypnosError::DeadlineUnmeetable {
+            estimated_ms,
+            deadline_ms,
+            ..
+        }) => assert!(estimated_ms >= 90 && deadline_ms == 10),
+        Err(e) => panic!("unexpected error: {e}"),
+        Ok(_) => panic!("admitted past its deadline"),
+    }
+    assert!(
+        hurried
+            .estimated_wait_ms
+            .load(std::sync::atomic::Ordering::Relaxed)
+            >= 90,
+        "the estimate is handed back to the caller"
+    );
+    let mut patient = RequestContext::unbounded();
+    patient.start_deadline_ms = Some(5000);
+    assert!(sched.acquire_model("m", None, 1, &patient).await.is_ok());
+    drop(busy);
+}

@@ -730,6 +730,20 @@ pub struct LimitsConfig {
     /// only data: URLs and uploads.
     #[serde(default = "default_true")]
     pub allow_remote_image_urls: bool,
+    /// What a request does when its model is busy (PERF-10): `queue` waits for its turn (up to
+    /// `max_queue_per_model`); `shed` refuses at once with 503 `deadline_unmeetable` when the
+    /// estimated wait exceeds the workload profile's objective. An explicit
+    /// `x-hypnos-deadline-ms` on a request applies either way.
+    #[serde(default)]
+    pub overload: OverloadPolicy,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OverloadPolicy {
+    #[default]
+    Queue,
+    Shed,
 }
 
 fn default_request_timeout_secs() -> u64 {
@@ -773,6 +787,7 @@ impl Default for LimitsConfig {
             max_tokens_cap: default_max_tokens_cap(),
             max_images_per_request: default_max_images_per_request(),
             allow_remote_image_urls: true,
+            overload: OverloadPolicy::Queue,
         }
     }
 }

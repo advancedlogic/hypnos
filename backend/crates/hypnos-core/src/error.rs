@@ -42,6 +42,16 @@ pub enum HypnosError {
         limit: usize,
     },
 
+    /// The estimated wait before this request could start exceeds the deadline it gave (PERF-10).
+    #[error(
+        "Model '{model}' cannot start within {deadline_ms} ms: the estimated wait is {estimated_ms} ms; retry later or with a longer deadline"
+    )]
+    DeadlineUnmeetable {
+        model: String,
+        estimated_ms: u64,
+        deadline_ms: u64,
+    },
+
     /// The client went away or the server is shutting down.
     #[error("Request cancelled")]
     Cancelled,

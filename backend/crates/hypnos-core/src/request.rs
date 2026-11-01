@@ -2,7 +2,7 @@
 //! cooperative cancellation, a deadline, and the input limits the request must respect.
 
 use crate::config::LimitsConfig;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -14,6 +14,13 @@ pub struct RequestContext {
     pub limits: LimitsConfig,
     /// Correlation id for logs (e.g. `req-3f9a…`).
     pub request_id: String,
+    /// The longest wait for execution to start the client accepts (`x-hypnos-deadline-ms`, or the
+    /// profile's objective with `limits.overload = "shed"`); beyond it the request is refused at
+    /// admission instead of queued (PERF-10).
+    pub start_deadline_ms: Option<u64>,
+    /// The scheduler's estimate of this request's wait, written at admission (`u64::MAX` = none);
+    /// shared with the HTTP layer for `x-hypnos-estimated-wait-ms`.
+    pub estimated_wait_ms: Arc<AtomicU64>,
 }
 
 impl RequestContext {
@@ -23,6 +30,8 @@ impl RequestContext {
             deadline: timeout.map(|t| Instant::now() + t),
             limits,
             request_id,
+            start_deadline_ms: None,
+            estimated_wait_ms: Arc::new(AtomicU64::new(u64::MAX)),
         }
     }
 

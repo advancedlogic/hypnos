@@ -2,6 +2,7 @@ pub mod auth;
 pub mod catalog;
 pub mod default_profile;
 mod documents;
+mod done_body;
 mod entities;
 pub mod measure;
 pub mod metrics;
@@ -162,11 +163,17 @@ impl AppState {
 
     /// A fresh request context bound to the configured timeout and limits.
     pub fn new_request(&self) -> RequestContext {
-        RequestContext::new(
+        let mut ctx = RequestContext::new(
             self.limits.clone(),
             Some(Duration::from_secs(self.limits.request_timeout_secs)),
             format!("req-{}", Uuid::new_v4().simple()),
-        )
+        );
+        // The deadline and the estimate slot of the HTTP request being served (PERF-10).
+        let _ = ADMISSION.try_with(|a| {
+            ctx.start_deadline_ms = a.deadline_ms;
+            ctx.estimated_wait_ms = a.estimated_wait_ms.clone();
+        });
+        ctx
     }
 
     pub fn request_timeout(&self) -> Duration {
@@ -287,6 +294,10 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
         // Inside observe_request (rejections get a request id, metrics and a log entry) and inside
         // CORS (preflights are answered before it, and a 401 still carries CORS headers).
         // Innermost: only requests that passed the key check and the readiness gate.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            admission_scope,
+        ))
         .layer(middleware::from_fn_with_state(state.clone(), prestage_next))
         .layer(middleware::from_fn_with_state(state.clone(), require_ready))
         .layer(middleware::from_fn_with_state(
@@ -333,6 +344,47 @@ fn open_while_staging(method: &axum::http::Method, route: &str) -> bool {
         || route == "/v1/advisor"
         // Stored pictures are served from disk, no model involved.
         || (route.starts_with("/v1/documents/") && route != "/v1/documents/convert")
+}
+
+/// What the HTTP layer hands to the scheduler's admission for the request being served.
+#[derive(Clone)]
+struct Admission {
+    deadline_ms: Option<u64>,
+    estimated_wait_ms: Arc<std::sync::atomic::AtomicU64>,
+}
+
+tokio::task_local! {
+    static ADMISSION: Admission;
+}
+
+/// Deadline-aware admission (PERF-10): `x-hypnos-deadline-ms: <ms>` (or, with
+/// `limits.overload = "shed"`, the workload profile's objective) bounds how long the request may
+/// wait to start; the scheduler refuses it at once with 503 `deadline_unmeetable` beyond that.
+/// The estimated wait comes back as `x-hypnos-estimated-wait-ms`.
+async fn admission_scope(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    let explicit = req
+        .headers()
+        .get("x-hypnos-deadline-ms")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok());
+    let deadline_ms = explicit.or_else(|| {
+        (state.limits.overload == hypnos_core::config::OverloadPolicy::Shed)
+            .then(|| state.pool.profile().and_then(|p| p.objective().target_ms))
+            .flatten()
+    });
+    let estimate = Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX));
+    let scope = Admission {
+        deadline_ms,
+        estimated_wait_ms: estimate.clone(),
+    };
+    let mut resp = ADMISSION.scope(scope, next.run(req)).await;
+    let wait = estimate.load(Ordering::Relaxed);
+    if wait != u64::MAX {
+        if let Ok(v) = HeaderValue::from_str(&wait.to_string()) {
+            resp.headers_mut().insert("x-hypnos-estimated-wait-ms", v);
+        }
+    }
+    resp
 }
 
 /// `x-hypnos-next-model: <id>` (MEM-6): the request names the model its client calls next (a
@@ -402,7 +454,33 @@ async fn observe_request(State(state): State<AppState>, mut req: Request, next: 
     let start = Instant::now();
     let request_id = format!("req-{}", Uuid::new_v4().simple());
     req.extensions_mut().insert(RequestId(request_id.clone()));
+    // A request of a declared workflow (`x-hypnos-workflow: <name>/<id>`; PERF-10).
+    let (workflow_header, workflow_last) = {
+        let header = |name: &str| {
+            req.headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+        };
+        (
+            header("x-hypnos-workflow").filter(|w| !w.trim().is_empty()),
+            header("x-hypnos-workflow-end").is_some_and(|v| v.trim() != "false"),
+        )
+    };
+    let workflow = workflow_header.map(|w| state.metrics.workflow_begin(&w));
     let mut resp = next.run(req).await;
+    // End to end: when the body's last byte is sent (or the client goes away).
+    if route.starts_with("/v1/") && is_logged_route(&route) {
+        let (metrics, route_e2e) = (state.metrics.clone(), route.clone());
+        resp = resp.map(|body| {
+            done_body::DoneBody::wrap(body, move || {
+                metrics.record_e2e(&route_e2e, start.elapsed());
+                if let Some(key) = workflow {
+                    metrics.workflow_end(&key, workflow_last);
+                }
+            })
+        });
+    }
     let status = resp.status();
     state
         .metrics
@@ -520,6 +598,8 @@ async fn memory_status(State(state): State<AppState>) -> Json<serde_json::Value>
             "kv_park".into(),
             serde_json::to_value(state.kv_park.status()).unwrap_or_default(),
         );
+        // End-to-end p50 / p95 / p99 per route and per declared workflow (PERF-10).
+        map.insert("latency".into(), state.metrics.percentiles());
         if let Some(profile) = state.pool.profile() {
             map.insert(
                 "profile".into(),
@@ -1595,6 +1675,9 @@ impl IntoResponse for ApiError {
                 (StatusCode::INSUFFICIENT_STORAGE, "device_out_of_memory")
             }
             HypnosError::Busy { .. } => (StatusCode::TOO_MANY_REQUESTS, "model_busy"),
+            HypnosError::DeadlineUnmeetable { .. } => {
+                (StatusCode::SERVICE_UNAVAILABLE, "deadline_unmeetable")
+            }
             HypnosError::Timeout(_) => (StatusCode::GATEWAY_TIMEOUT, "timeout"),
             HypnosError::Cancelled => (
                 StatusCode::from_u16(499).unwrap_or(StatusCode::BAD_REQUEST),
@@ -1617,6 +1700,10 @@ impl IntoResponse for ApiError {
             }
         });
 
+        if let HypnosError::DeadlineUnmeetable { estimated_ms, .. } = &self.0 {
+            let retry = estimated_ms.div_ceil(1000).max(1).to_string();
+            return (status, [(header::RETRY_AFTER, retry)], Json(payload)).into_response();
+        }
         (status, Json(payload)).into_response()
     }
 }

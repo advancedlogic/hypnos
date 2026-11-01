@@ -1962,6 +1962,7 @@ dependencies = [
  "bytes",
  "chrono",
  "futures",
+ "http-body",
  "hypnos-backends",
  "hypnos-core",
  "hypnos-memory",

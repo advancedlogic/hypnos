@@ -32,6 +32,10 @@ pub struct ActiveModelLease {
     /// Where the switch spent its time when this lease loaded the model (llama.cpp engines).
     pub load_phases: Option<LoadPhases>,
     _admission: OwnedSemaphorePermit,
+    /// When the lease was granted; its drop records the service time (PERF-10) unless this
+    /// lease is not a request (a pre-stage).
+    granted_at: Instant,
+    records_service: bool,
 }
 
 impl ActiveModelLease {
@@ -54,6 +58,12 @@ impl ActiveModelLease {
 
 impl Drop for ActiveModelLease {
     fn drop(&mut self) {
+        if self.records_service {
+            self.memory.record_service(
+                &self.model_id,
+                self.granted_at.elapsed().as_secs_f64() * 1000.0,
+            );
+        }
         self.memory.decrement_lease(&self.model_id);
     }
 }
@@ -170,7 +180,37 @@ impl ModelScheduler {
     }
 
     pub fn status(&self) -> MemoryHierarchyStatus {
-        self.memory.status_snapshot()
+        let mut status = self.memory.status_snapshot();
+        for m in &mut status.models {
+            m.estimated_wait_ms = self.estimated_wait_ms(&m.id).map(f64::round);
+        }
+        status
+    }
+
+    /// The wait a new request for `model_id` would have before it starts (PERF-10): the requests
+    /// ahead beyond the model's slots, in batches of `slots`, times its average service time,
+    /// plus a load when the model is not resident. `None` before any service time was measured
+    /// and with nothing to wait for.
+    pub fn estimated_wait_ms(&self, model_id: &str) -> Option<f64> {
+        let backend = self.backend(model_id)?;
+        let cfg = backend.config();
+        let slots = if cfg.engine == hypnos_core::config::EngineKind::GgmlLlama {
+            cfg.slots.max(1) as usize
+        } else {
+            1
+        };
+        let ahead = (self.in_flight(model_id) + 1).saturating_sub(slots);
+        let load = if backend.is_resident() {
+            0.0
+        } else {
+            self.memory.reload_estimate_ms(model_id).unwrap_or(0.0)
+        };
+        let queue = match self.memory.service_ms(model_id) {
+            Some(service) => ahead.div_ceil(slots) as f64 * service,
+            None if ahead > 0 => return None,
+            None => 0.0,
+        };
+        Some(load + queue)
     }
 
     pub fn backend(&self, model_id: &str) -> Option<Arc<dyn ModelBackend>> {
@@ -251,6 +291,21 @@ impl ModelScheduler {
             return Err(HypnosError::ModelDisabled(model_id.to_string()));
         }
 
+        // Deadline-aware admission (PERF-10): refuse at once what cannot start in time.
+        if let Some(wait) = self.estimated_wait_ms(model_id) {
+            let wait = wait.round() as u64;
+            ctx.estimated_wait_ms.store(wait, Ordering::Relaxed);
+            if let Some(deadline) = ctx.start_deadline_ms {
+                if wait > deadline {
+                    return Err(HypnosError::DeadlineUnmeetable {
+                        model: model_id.to_string(),
+                        estimated_ms: wait,
+                        deadline_ms: deadline,
+                    });
+                }
+            }
+        }
+
         // Admission control: bounded queue per model.
         let sem = self
             .admission
@@ -300,6 +355,8 @@ impl ModelScheduler {
                         evicted_models: Vec::new(),
                         load_phases: None,
                         _admission: admission,
+                        granted_at: Instant::now(),
+                        records_service: true,
                     });
                 }
             }
@@ -338,6 +395,8 @@ impl ModelScheduler {
                     evicted_models: Vec::new(),
                     load_phases: None,
                     _admission: admission,
+                    granted_at: Instant::now(),
+                    records_service: true,
                 });
             }
         }
@@ -524,6 +583,8 @@ impl ModelScheduler {
             evicted_models,
             load_phases,
             _admission: admission,
+            granted_at: Instant::now(),
+            records_service: true,
         })
     }
 
@@ -750,7 +811,8 @@ impl ModelScheduler {
             return Ok(false);
         }
         let ctx = RequestContext::unbounded();
-        let lease = self.acquire_model(model_id, None, 1, &ctx).await?;
+        let mut lease = self.acquire_model(model_id, None, 1, &ctx).await?;
+        lease.records_service = false;
         let loaded = lease.tier_switch_latency_ms > 0.0;
         drop(lease);
         Ok(loaded)

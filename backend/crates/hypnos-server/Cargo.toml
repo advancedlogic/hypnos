@@ -26,6 +26,7 @@ hypnos-backends.workspace = true
 tokio.workspace = true
 parking_lot.workspace = true
 axum.workspace = true
+http-body = "1"
 tower-http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
