@@ -149,7 +149,10 @@ screenshots/capture.mjs` (`--only <scene>` for one).
   model (playable, with the share of words heard back). "Choose models myself" opens the Models
   dialog instead.
 
-- **Models** (Local server dialog > Models…; on the first launch of the bundled server without
+- **Models** (DESK-29: two tabs, **In use**, the connected server's models by job with their
+  tier, Thinking, "Make default for…", Enable / Disable and, for catalog models, variant, Replace
+  and Remove, with a Download box for the config's models whose files are missing; and
+  **Catalog**, the models to add, by job. The details below predate the tabs) (Local server dialog > Models…; on the first launch of the bundled server without
   a server binary to ask for advice, it opens instead of the guided setup): the lineup from `models.manifest` (the one `./run.sh models`
   reads) with each model's modality, size and state. Tick the ones to download: files go to
   `<file>.part` first and resume where they stopped (Stop keeps them; `fetch-models.sh` uses the
@@ -280,8 +283,9 @@ the webview has no HTTP permission at all. Failed commands reject with
 ids: the model chosen for the job (Settings, or "Make default for…" on a model's row in the
 Models dialog, which also sets the model new chats start with; applied on the next request, no
 restart), then the chat's model when it serves the
-modality, then an enabled model that serves it, preferring one already in Tier 1. The Lineup tab
-lists the manifest's models and, after them, the models added to the pool from the Catalog tab.
+modality, then an enabled model that serves it, preferring one already in Tier 1. The Models dialog's In use tab
+(DESK-29) lists the connected server's models from `/v1/memory/status` (disabled ones included;
+the config's when no server runs), joined with the files on disk and the catalog entry.
 
 ## Layout
 

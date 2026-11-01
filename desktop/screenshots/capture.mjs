@@ -100,12 +100,12 @@ const scenes = {
     await shot(page, 'stats-panel', page.locator('aside'));
     return page;
   },
-  async 'models-lineup'() {
-    const page = await open('dolomites', { scale: 2, width: 1360, height: 1000 });
+  async 'models-in-use'() {
+    const page = await open('dolomites', { scale: 2, width: 1360, height: 1300 });
     await page.getByRole('button', { name: 'Models', exact: true }).click();
-    await page.getByRole('tab', { name: 'Lineup' }).click();
-    await page.waitForTimeout(1200);
-    await shot(page, 'models-lineup', page.locator('div.fixed > div').first());
+    await page.getByRole('tab', { name: /^In use/ }).click();
+    await page.waitForTimeout(1500);
+    await shot(page, 'models-in-use', page.locator('div.fixed > div').first());
     return page;
   },
   async 'models-catalog'() {
@@ -114,14 +114,6 @@ const scenes = {
     await page.getByRole('tab', { name: /Catalog/ }).waitFor();
     await page.waitForTimeout(1500);
     await shot(page, 'models-catalog', page.locator('div.fixed > div').first());
-    return page;
-  },
-  async 'models-catalog-pool'() {
-    const page = await open('dolomites', { scale: 2, width: 1360, height: 1000 });
-    await page.getByRole('button', { name: 'Models', exact: true }).click();
-    await page.getByRole('tab', { name: /^In the pool/ }).click();
-    await page.waitForTimeout(800);
-    await shot(page, 'models-catalog-pool', page.locator('div.fixed > div').first());
     return page;
   },
   async settings() {

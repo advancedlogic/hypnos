@@ -87,6 +87,7 @@ pub fn run() {
             hypnos::hypnos_kv_park,
             hypnos::hypnos_set_kv_park,
             hypnos::hypnos_set_moe_offload,
+            hypnos::hypnos_set_model_enabled,
             attachments::attachment_from_path,
             attachments::attachment_from_bytes,
             web::url_extract,

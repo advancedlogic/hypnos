@@ -968,6 +968,22 @@ pub async fn hypnos_set_kv_park(
         .await?)
 }
 
+/// Enables or disables a model on the server (`POST /v1/models/{id}/enable|disable`, DESK-29):
+/// disabling evicts it to Tier 3 and refuses its requests until it is enabled again.
+#[tauri::command]
+pub async fn hypnos_set_model_enabled(
+    hypnos: State<'_, Hypnos>,
+    model: String,
+    enabled: bool,
+) -> CmdResult<hypnos_client::ModelSwitch> {
+    let client = hypnos.client().await?;
+    Ok(if enabled {
+        client.enable_model(&model).await?
+    } else {
+        client.disable_model(&model).await?
+    })
+}
+
 /// Sets a model's MoE expert offload (`off`, `auto`, `on`; MEM-5).
 #[tauri::command]
 pub async fn hypnos_set_moe_offload(

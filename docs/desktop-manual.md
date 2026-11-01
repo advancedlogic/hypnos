@@ -282,50 +282,56 @@ that do not support tool calls can still make images, but do not get the other t
 ## 10. Choosing models
 
 Click **Models** in the header. The dialog shows the folder your models are in (with the free
-space) and two tabs.
+space) and two tabs: **In use**, what the server runs, and **Catalog**, models you can add.
 
-### Lineup: the models you have
+### In use: what the server runs
 
-![The Lineup tab: each model with what it does, its size, its thinking level and its "Make default for…" menu](images/desktop/models-lineup.png)
+![The In use tab: the server's models by job, each with its tier, size and variant, its thinking level, "Make default for…", Disable and Remove](images/desktop/models-in-use.png)
 
-Each row is one model: a tick when its files are downloaded, its name, its main job, and its
-size. For models the server is running:
+The models are grouped by their main job (Chat, Speech to text, Text to speech, Embeddings,
+Image generation, Documents, Entities). Each row shows:
 
+- a dot and a line for where the model is: **Tier 1 · loaded** (green), **Tier 2 · warm**
+  (amber) or **Tier 3 · on disk** (grey), see section 13. Or why it does not run: **Disabled**,
+  **Files missing**, or **Not on the server** (it is in the configuration, but the server you
+  are connected to does not run it);
+- its size, the variant it runs (Q4_0, Q8_0, …) and green badges for the jobs it is the
+  default for. The × on a badge gives the job back to the automatic choice (the chat model when
+  it can do the job, else a model that is already loaded).
+
+On the right:
+
+- **Thinking** (on models that can think) sets how much the model reasons before it answers
+  (section 5).
 - **Make default for…** chooses this model for a job it can do: **Chat** (the model every chat
   answers with), images in messages, speech to text, text to speech, image generation, or
   documents and links. The change applies to the next request; no restart.
-- A green badge shows what a model is the default for ("Chat", "Image generation"); the × on
-  it gives the job back to the automatic choice (the chat model when it can do the job, else a
-  model that is already loaded).
-- **Thinking** (on models that can think) sets how much the model reasons before it answers
-  (section 5).
+- **Disable** takes the model out of memory and refuses its requests until you **Enable** it
+  again; it stays in the configuration.
+- For models from the catalog: a **variant** menu with **Replace** (switch to another variant,
+  downloading it if needed) and **Remove** (take it out of the server; its files stay on disk).
 
-Models you added from the Catalog are listed last, with an **added** badge and their variant.
-
-To download models that are missing, tick them and click **Download**. Files resume where they
-stopped if you click **Stop** or lose the connection, and each file is checked when it arrives.
-The app then restarts its server so the new models are used.
+A model whose files are missing has a **Download** box: tick the ones you want and click
+**Download** at the bottom. Files resume where they stopped if you click **Stop** or lose the
+connection, and each file is checked when it arrives. The app then restarts its server so the
+models are used.
 
 **Change…** moves your models to another folder (an external drive, for example); tick "Move
 the files to the new folder" to take the downloaded files along.
 
 ### Catalog: models to add
 
-![The Catalog tab, Not in the pool: tested models grouped by job, with a variant and Add](images/desktop/models-catalog.png)
+![The Catalog tab: tested models grouped by job, with a variant and Add](images/desktop/models-catalog.png)
 
-The catalog lists the models Hypnos has been tested with, in two tabs: **Not in the pool** (the
-ones you can add) and **In the pool** (the ones the server has). In each, the models are grouped
-by their main job: Chat, Vision, Speech to text, Text to speech, Embeddings, Image generation,
-Documents, Entities. The buttons above the list (All, Chat 15, Vision 2, …) show one group alone.
+The catalog lists the tested models the server does not have yet, grouped by their main job:
+Chat, Vision, Speech to text, Text to speech, Embeddings, Image generation, Documents, Entities.
+The buttons above the list (All, Chat 15, Vision 2, …) show one group alone.
 
 Each model shows its name, maker, license, what it does (Chat, Vision, Speech to text, …),
 **Thinking** and **Tools** when it supports them, and a short description. Pick a **variant** (a
 smaller one is faster and uses less memory, a larger one is a little better) and click **Add**:
-the app downloads it if needed and adds it to the running server, with no restart. In the
-**In the pool** tab each model has **Replace** (switch to another variant) and **Remove**, and
-the same Thinking and "Make default for…" menus as in the Lineup.
-
-![The In the pool tab: the server's models grouped by job, with Replace and Remove](images/desktop/models-catalog-pool.png)
+the app downloads it if needed and adds it to the running server, with no restart. It then
+appears under In use.
 
 Some models come from repositories that need you to accept a license first, such as Black
 Forest Labs' FLUX originals. Their variants say **needs a Hugging Face token**: accept the
@@ -481,7 +487,7 @@ out of memory; the answer shows where the model is loading from. Smaller image m
 klein, Iris) and fewer steps ("a quick sketch") are faster.
 
 **The microphone does nothing.** Allow Hypnos in System Settings > Privacy & Security >
-Microphone (macOS), and check that a speech-to-text model is in the lineup.
+Microphone (macOS), and check under Models > In use that a speech-to-text model runs.
 
 **A download says the repository is gated.** Accept the model's license on its Hugging Face page
 with your account, then save a read token in Settings.

@@ -148,6 +148,23 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Done
 
+- [x] 🩵 **DESK-29** `P1` Models dialog: an "In use" tab from the server in place of Lineup
+      The Lineup tab mixed the manifest's download list (files on disk, `docling-gpu` "not in
+      config"), the pool's added models and the per-model menus, which only showed for models the
+      connected server runs, so a ticked model could have no menus without saying why; it also
+      overlapped the Catalog's "In the pool" tab, and badges wrapped the name. Now two tabs: **In
+      use** lists what the connected server has (`/v1/memory/status`, disabled models included),
+      grouped by job, each with its tier, size, variant, defaults, Thinking and "Make default
+      for…", Enable / Disable (`hypnos_set_model_enabled`), and for catalog models a variant with
+      Replace and Remove; a config model the server lacks or whose files are missing says so, with
+      a checkbox for Download. **Catalog** keeps only the models to add, grouped by job. Unused
+      manifest files are no longer listed. Without a running server, In use lists the config's
+      models. Manual and screenshots follow.
+      Done: checked against the lineup server with moss-image disabled (Disabled + Enable) and
+      FLUX.3 in the pool (variant menu, Replace / Remove); the Download button shows only when
+      a model's files are missing. Screenshot `models-in-use` replaces `models-lineup`; the
+      Catalog's In the pool tab (DESK-28) is gone.
+
 - [x] 🩵 **DESK-28** `P2` The Catalog tab: pool and not-pool tabs, models grouped by job
       Two tabs inside Catalog, "Not in the pool" and "In the pool" (with counts), and in each the
       models grouped by their main modality (Chat, Vision, Speech to text, Text to speech,

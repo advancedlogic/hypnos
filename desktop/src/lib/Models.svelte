@@ -3,7 +3,8 @@
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import * as models from './models.js';
   import { DEFAULT_JOBS } from './jobs.js';
-  import { THINKING_LEVELS } from './hypnos.js';
+  import * as api from './hypnos.js';
+  const { THINKING_LEVELS } = api;
 
   /**
    * The local server's model files (DESK-17): pick from the lineup, download with progress,
@@ -24,7 +25,9 @@
     inUse = [], routes = {}, onroutes = null, chatModel = null, onchatmodel = null,
     thinking = {}, onthinking = null,
   } = $props();
-  let view = $state(untrack(() => tab)); // 'lineup' | 'catalog'
+  // 'inuse': what the connected server has (DESK-29); 'catalog': the models to add. `tab = 'lineup'`
+  // (the old name) opens In use.
+  let view = $state(untrack(() => (tab === 'catalog' ? 'catalog' : 'inuse')));
 
   let cat = $state(null);
   let loadError = $state(null);
@@ -43,6 +46,8 @@
   let confirming = $state(null); // id whose Remove waits for a second click
   let shownBlock = $state(null); // { id, quant, text } for a config the app does not write
   let copied = $state(false);
+  /** The connected server's models, disabled ones included (`/v1/memory/status`); null offline. */
+  let serverModels = $state(null);
 
   const MODALITY = {
     text_generation: 'Chat',
@@ -73,13 +78,19 @@
       live = false;
       entriesError = String(e?.message ?? e);
     }
+    try {
+      serverModels = live ? (await api.memoryStatus()).models : null;
+    } catch {
+      serverModels = null;
+    }
   }
 
   onMount(() => {
     untrack(refresh);
   });
 
-  let missing = $derived(cat ? cat.models.filter((m) => !m.installed) : []);
+  // The config's models whose files are not all there: In use offers to download them.
+  let missing = $derived(cat ? cat.models.filter((m) => m.inConfig && !m.installed) : []);
   let selectedBytes = $derived(
     cat ? cat.models.filter((m) => selected.has(m.id)).reduce((n, m) => n + Math.max(0, (m.size ?? 0) - m.have), 0) : 0,
   );
@@ -168,7 +179,7 @@
   let available = $derived(entries ? entries.filter((m) => !m.inPool) : []);
   let pooled = $derived(entries ? entries.filter((m) => m.inPool) : []);
 
-  // The Catalog tab: the models not in the pool or the ones in it, grouped by their main job.
+  // Both tabs group their models by the main job.
   const GROUPS = [
     ['text_generation', 'Chat'],
     ['vision', 'Vision'],
@@ -179,46 +190,75 @@
     ['document_conversion', 'Documents'],
     ['entity_extraction', 'Entities'],
   ];
-  let poolView = $state('available'); // 'available' | 'pooled'
-  let mode = $state(null); // a modality to show alone, or all
-  let listed = $derived(poolView === 'pooled' ? pooled : available);
-  let groups = $derived.by(() => {
+  function grouped(list) {
     const known = new Set(GROUPS.map(([m]) => m));
-    const all = [...GROUPS, ['other', 'Other']].map(([modality, label]) => ({
-      modality,
-      label,
-      models: listed.filter((m) => (modality === 'other' ? !known.has(m.modality) : m.modality === modality)),
-    }));
-    return all.filter((g) => g.models.length);
-  });
+    return [...GROUPS, ['other', 'Other']]
+      .map(([modality, label]) => ({
+        modality,
+        label,
+        models: list.filter((m) => (modality === 'other' ? !known.has(m.modality) : m.modality === modality)),
+      }))
+      .filter((g) => g.models.length);
+  }
+  let mode = $state(null); // the Catalog's group shown alone, or all
+  let groups = $derived(grouped(available));
   let shownGroups = $derived(mode && groups.some((g) => g.modality === mode) ? groups.filter((g) => g.modality === mode) : groups);
 
-  function showPool(which) {
-    poolView = which;
-    mode = null;
+  /**
+   * In use (DESK-29): every model the connected server has, disabled ones included; without a
+   * server, the config's. Each row joins the server's state, the files on disk (the manifest's
+   * models) and the catalog entry (name, thinking, the variant in use, Replace / Remove).
+   */
+  let usedRows = $derived.by(() => {
+    const rows = new Map();
+    for (const m of serverModels ?? []) {
+      rows.set(m.id, { id: m.id, modality: m.modality, tier: m.current_tier, enabled: m.enabled, bytes: m.total_weight_bytes, onServer: true });
+    }
+    for (const c of cat?.models ?? []) {
+      if (c.inConfig && !rows.has(c.id)) rows.set(c.id, { id: c.id, modality: c.modality, tier: null, enabled: c.enabled, bytes: c.size, onServer: false });
+    }
+    if (!serverModels) {
+      for (const e of pooled) {
+        if (!rows.has(e.id)) rows.set(e.id, { id: e.id, modality: e.modality, tier: null, enabled: e.enabled, bytes: null, onServer: false });
+      }
+    }
+    return [...rows.values()].map((r) => {
+      const files = cat?.models.find((c) => c.id === r.id && c.inConfig);
+      const entry = entries?.find((e) => e.id === r.id && e.inPool) ?? null;
+      return { ...r, files, entry, filesMissing: !!files && !files.installed };
+    });
+  });
+  let usedGroups = $derived(grouped(usedRows));
+
+  const TIER = {
+    tier1_gpu_vram: ['Tier 1 · loaded', 'bg-emerald-400', 'In GPU memory: answers at once'],
+    tier2_pinned_ram: ['Tier 2 · warm', 'bg-amber-400', 'Kept warm in memory: about a second to load'],
+    tier3_nvme_ssd: ['Tier 3 · on disk', 'bg-slate-500', 'On disk: loads at its first request'],
+  };
+
+  /** The state line of an In use row: its tier, or why it does not run. */
+  function rowState(r) {
+    if (r.filesMissing) return ['Files missing', 'bg-rose-500', 'Its files are not all in the models folder: download them'];
+    if (r.enabled === false) return ['Disabled', 'bg-slate-600', 'Switched off: its requests are refused until it is enabled'];
+    if (!r.onServer) return [live ? 'Not on the server' : 'Server not running', 'bg-slate-600', 'The config has it; the connected server does not run it'];
+    return TIER[r.tier] ?? [r.tier ?? '', 'bg-slate-500', ''];
   }
 
-  /**
-   * The lineup is the manifest's models; models added to the pool from the catalog, and any other
-   * model the running server has, are listed after them so the lineup shows what is configured.
-   */
-  let added = $derived.by(() => {
-    if (!cat) return [];
-    const listed = new Set(cat.models.map((m) => m.id));
-    const rows = [];
-    for (const e of pooled) {
-      if (listed.has(e.id)) continue;
-      listed.add(e.id);
-      const v = e.variants.find((x) => x.quant === e.currentQuant);
-      rows.push({ id: e.id, modality: e.modality, enabled: e.enabled, quant: e.currentQuant, size: v?.size ?? null, installed: v?.installed ?? true });
+  async function setEnabled(id, on) {
+    error = null;
+    note = null;
+    busy = 'pool';
+    try {
+      await api.setModelEnabled(id, on);
+      note = on ? `${id} is enabled.` : `${id} is disabled: it left memory and its requests are refused until you enable it.`;
+    } catch (e) {
+      error = String(e?.message ?? e);
+    } finally {
+      busy = null;
     }
-    for (const m of inUse) {
-      if (listed.has(m.id)) continue;
-      listed.add(m.id);
-      rows.push({ id: m.id, modality: m.modalities[0], enabled: true, quant: null, size: null, installed: true });
-    }
-    return rows;
-  });
+    await refresh();
+    await onpool?.();
+  }
 
   /** A running model that thinks (`capabilities` of its catalog entry). */
   function thinks(id) {
@@ -417,6 +457,78 @@
   {/if}
 {/snippet}
 
+{#snippet usedRow(r)}
+  {@const [stateLabel, dot, stateTitle] = rowState(r)}
+  {@const e = r.entry}
+  {@const v = e ? variantOf(e) : null}
+  {@const same = e && e.currentQuant === v?.quant}
+  <li class="px-5 py-2.5 flex gap-3">
+    <span class="mt-1.5 w-2 h-2 shrink-0 rounded-full {dot}" title={stateTitle}></span>
+    <div class="min-w-0 flex-1 space-y-1">
+      <div class="flex items-baseline gap-2 min-w-0">
+        <span class="font-mono text-xs text-slate-200 truncate" title={r.id}>{r.id}</span>
+        {#if e}<span class="text-xs text-slate-500 truncate">{e.name}</span>{/if}
+      </div>
+      <div class="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+        <span title={stateTitle} class={r.filesMissing ? 'text-rose-300' : r.enabled === false ? 'text-slate-400' : ''}>{stateLabel}</span>
+        {#if r.bytes}<span>· {models.gb(r.bytes)}</span>{/if}
+        {#if e?.currentQuant}<span>· {e.currentQuant}</span>{/if}
+        {#if r.filesMissing && r.files}
+          <span>· {r.files.have > 0 ? `${models.gb(r.files.have)} of ${models.gb(r.files.size)} here` : `${models.gb(r.files.size)} to download`}</span>
+        {/if}
+        {@render defaults(r.id)}
+      </div>
+    </div>
+    <div class="shrink-0 flex flex-col items-end gap-1.5">
+      <div class="flex items-center gap-1.5">
+        {@render defaultMenu(r.id)}
+      </div>
+      <div class="flex items-center gap-2 text-[11px]">
+        {#if r.filesMissing}
+          <label class="flex items-center gap-1 text-slate-300">
+            <input type="checkbox" class="accent-indigo-500" checked={selected.has(r.id)} onchange={() => toggle(r.id)}
+              disabled={!!busy} />
+            Download
+          </label>
+        {/if}
+        {#if adding?.id === r.id}
+          <span class="text-slate-400">{adding.label}</span>
+        {:else if live && r.onServer}
+          {#if e && confirming === r.id}
+            <span class="text-rose-300">Remove {r.id} from the server?</span>
+            <button class="px-2 py-0.5 rounded-md bg-rose-600 hover:bg-rose-500 text-white" onclick={() => change(e, 'remove')}>Remove</button>
+            <button class="px-2 py-0.5 rounded-md border border-slate-700 text-slate-300 hover:bg-slate-800" onclick={() => (confirming = null)}>Cancel</button>
+          {:else}
+            {#if e && e.variants.length > 1}
+              <select class="rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-slate-300 disabled:opacity-40"
+                value={v.quant} onchange={(ev) => (chosen = { ...chosen, [e.id]: ev.currentTarget.value })}
+                disabled={!!busy} aria-label="Variant of {r.id}">
+                {#each e.variants as o (o.quant)}
+                  <option value={o.quant}>{o.quant}, {models.gb(o.size)}{o.quant === e.currentQuant ? ' (in use)' : ''}</option>
+                {/each}
+              </select>
+              {#if !same}
+                <button class="px-2 py-0.5 rounded-md border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                  onclick={() => change(e, 'replace')} disabled={!!busy || !cat?.dirExists}
+                  title="Serve {r.id} with {v.quant} from now on">Replace</button>
+              {/if}
+            {/if}
+            <button class="px-2 py-0.5 rounded-md border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+              onclick={() => setEnabled(r.id, r.enabled === false)} disabled={!!busy}
+              title={r.enabled === false ? 'Load it again when it is needed' : 'Take it out of memory and refuse its requests'}>
+              {r.enabled === false ? 'Enable' : 'Disable'}
+            </button>
+            {#if e}
+              <button class="px-2 py-0.5 rounded-md border border-rose-900 text-rose-300 hover:bg-rose-950 disabled:opacity-40"
+                onclick={() => (confirming = r.id)} disabled={!!busy} title="Take it out of the server's pool">Remove</button>
+            {/if}
+          {/if}
+        {/if}
+      </div>
+    </div>
+  </li>
+{/snippet}
+
 {#snippet row(m)}
   {@const v = variantOf(m)}
   {@const short = cat?.freeBytes != null && missingBytes(v) > cat.freeBytes}
@@ -571,7 +683,7 @@
 
     <div class="flex-1 min-h-0 overflow-y-auto border-t border-slate-800">
       <div class="sticky top-0 z-10 flex gap-1 px-5 pt-2 bg-slate-900 border-b border-slate-800" role="tablist">
-        {#each [['lineup', 'Lineup'], ['catalog', `Catalog${entries ? ` (${available.length})` : ''}`]] as [id, label] (id)}
+        {#each [['inuse', `In use${usedRows.length ? ` (${usedRows.length})` : ''}`], ['catalog', `Catalog${entries ? ` (${available.length})` : ''}`]] as [id, label] (id)}
           <button role="tab" aria-selected={view === id}
             class="px-3 py-1.5 text-xs -mb-px border-b-2 {view === id ? 'border-indigo-400 text-slate-100' : 'border-transparent text-slate-400 hover:text-slate-200'}"
             onclick={() => (view = id)}>{label}</button>
@@ -581,63 +693,33 @@
         <!-- the catalog, below -->
       {:else if loadError}
         <p class="p-5 text-xs text-rose-300">{loadError}</p>
-      {:else if !cat}
-        <p class="p-5 text-xs text-slate-500">Reading the lineup…</p>
+      {:else if !cat || !entries}
+        <p class="p-5 text-xs text-slate-500">Reading the models…</p>
       {:else}
-        {#if cat.errors.length}
-          <p class="px-5 pt-3 text-xs text-amber-300">
+        <p class="px-5 pt-3 text-xs text-slate-500">
+          {#if live}
+            What the server runs, by job. Choose the model for each job, its thinking level, switch it off and on, or
+            change its variant; the Catalog adds more.
+          {:else}
+            The models of {config.split('/').pop()}: {offline}. Start the server to change them.
+          {/if}
+        </p>
+        {#if cat.errors.length && missing.length}
+          <p class="px-5 pt-2 text-xs text-amber-300">
             Could not reach every host (offline?): some sizes are unknown and those models cannot be downloaded now.
           </p>
         {/if}
-        <ul class="divide-y divide-slate-800">
-          {#each cat.models as m (m.id)}
-            <li class="px-5 py-2.5 flex items-center gap-3 text-sm">
-              {#if m.installed}
-                <span class="w-4 h-4 text-emerald-400" title="Downloaded">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12l5 5L20 7" /></svg>
-                </span>
-              {:else}
-                <input type="checkbox" class="accent-indigo-500" checked={selected.has(m.id)} onchange={() => toggle(m.id)}
-                  disabled={!!busy} aria-label="Download {m.id}" />
-              {/if}
-              <span class="font-mono text-xs text-slate-200">{m.id}</span>
-              <span class="text-xs text-slate-500">{MODALITY[m.modality] ?? m.modality ?? ''}</span>
-              {#if m.inConfig && m.enabled === false && m.installed}
-                <span class="text-[10px] px-1.5 rounded bg-slate-800 text-slate-400" title="Disabled in the config">off</span>
-              {/if}
-              {#if !m.inConfig}
-                <span class="text-[10px] px-1.5 rounded bg-slate-800 text-slate-500" title="Not in this config: downloading it changes nothing until a [[models]] block uses it">not in config</span>
-              {/if}
-              {@render defaults(m.id)}
-              <span class="ml-auto text-xs tabular-nums {m.installed ? 'text-slate-500' : 'text-slate-300'}">
-                {#if m.installed}
-                  {models.gb(m.have)}
-                {:else if m.have > 0}
-                  {models.gb(m.have)} of {models.gb(m.size)}
-                {:else}
-                  {models.gb(m.size)}
-                {/if}
-              </span>
-              {@render defaultMenu(m.id)}
-            </li>
-          {/each}
-          {#each added as m (m.id)}
-            <li class="px-5 py-2.5 flex items-center gap-3 text-sm">
-              <span class="w-4 h-4 {m.installed ? 'text-emerald-400' : 'text-amber-300'}" title={m.installed ? 'Downloaded' : 'Files missing'}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12l5 5L20 7" /></svg>
-              </span>
-              <span class="font-mono text-xs text-slate-200">{m.id}</span>
-              <span class="text-xs text-slate-500">{MODALITY[m.modality] ?? m.modality ?? ''}</span>
-              <span class="text-[10px] px-1.5 rounded bg-indigo-950 text-indigo-300" title="Added to the pool (the Catalog tab changes or removes it)">added{m.quant ? ` · ${m.quant}` : ''}</span>
-              {#if m.enabled === false}
-                <span class="text-[10px] px-1.5 rounded bg-slate-800 text-slate-400" title="Disabled">off</span>
-              {/if}
-              {@render defaults(m.id)}
-              <span class="ml-auto text-xs tabular-nums text-slate-500">{m.size != null ? models.gb(m.size) : ''}</span>
-              {@render defaultMenu(m.id)}
-            </li>
-          {/each}
-        </ul>
+        {#if !usedRows.length}
+          <p class="px-5 py-3 text-xs text-slate-500">No models yet: add them from the Catalog, or use the guided setup.</p>
+        {/if}
+        {#each usedGroups as g (g.modality)}
+          <h3 class="px-5 pt-4 pb-1 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800">{g.label}</h3>
+          <ul class="divide-y divide-slate-800">
+            {#each g.models as r (r.id)}
+              {@render usedRow(r)}
+            {/each}
+          </ul>
+        {/each}
       {/if}
 
       {#if view === 'catalog' && !entries}
@@ -647,8 +729,8 @@
           <div class="px-5 pt-3 pb-1">
             <p class="text-xs text-slate-500">
               {#if live}
-                Tested models, added to the running server and taken out of it without a restart. Add downloads the chosen
-                variant if needed; the server keeps the change next to {config.split('/').pop()}.
+                Tested models to add to the running server, without a restart: Add downloads the chosen variant if needed;
+                the server keeps the change next to {config.split('/').pop()}. The ones it has are under In use.
               {:else if cat?.managed}
                 Working from the config: {offline}. Add downloads the chosen variant, adds it to the config and
                 (re)starts the local server; with the server running, models are added, replaced and removed live.
@@ -661,13 +743,6 @@
           {#if entriesError}
             <p class="px-5 py-2 text-xs text-amber-300">{entriesError}</p>
           {/if}
-          <div class="px-5 pt-3 flex items-center gap-1" role="tablist" aria-label="Catalog models">
-            {#each [['available', 'Not in the pool', available.length], ['pooled', 'In the pool', pooled.length]] as [id, label, count] (id)}
-              <button role="tab" aria-selected={poolView === id}
-                class="px-3 py-1 rounded-md text-xs {poolView === id ? 'bg-slate-800 text-slate-100' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'}"
-                onclick={() => showPool(id)}>{label} <span class="text-slate-500">{count}</span></button>
-            {/each}
-          </div>
           {#if groups.length > 1}
             <div class="px-5 pt-2 flex flex-wrap gap-1" aria-label="Show one kind of model">
               <button class="px-2 py-0.5 rounded-full text-[11px] border {mode === null ? 'border-indigo-500 text-indigo-200' : 'border-slate-700 text-slate-400 hover:text-slate-200'}"
@@ -678,10 +753,8 @@
               {/each}
             </div>
           {/if}
-          {#if !listed.length && !entriesError}
-            <p class="px-5 py-3 text-xs text-slate-500">
-              {poolView === 'pooled' ? 'No catalog model is in the pool yet: add one from "Not in the pool".' : 'The server has every model of the catalog.'}
-            </p>
+          {#if !available.length && !entriesError}
+            <p class="px-5 py-3 text-xs text-slate-500">The server has every model of the catalog: see In use.</p>
           {/if}
           {#each shownGroups as g (g.modality)}
             <h3 class="px-5 pt-4 pb-1 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800">{g.label}</h3>
@@ -733,10 +806,13 @@
           <button class="px-3 py-1.5 rounded-lg text-sm border border-slate-700 hover:bg-slate-800" onclick={models.cancel}>Stop</button>
         {:else}
           <button class="px-3 py-1.5 rounded-lg text-sm border border-slate-700 hover:bg-slate-800 disabled:opacity-40" onclick={onclose} disabled={!!busy}>Close</button>
-          <button class="px-3 py-1.5 rounded-lg text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50"
-            onclick={download} disabled={!!busy || !selected.size || tooBig || !cat?.dirExists}>
-            Download
-          </button>
+          {#if missing.length}
+            <button class="px-3 py-1.5 rounded-lg text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50"
+              onclick={download} disabled={!!busy || !selected.size || tooBig || !cat?.dirExists}
+              title="Download the files of the models ticked under In use">
+              Download
+            </button>
+          {/if}
         {/if}
       </div>
     </div>

@@ -17,6 +17,9 @@ export const test = (url, apiKey) => invoke('hypnos_test', { url, apiKey: apiKey
 
 export const memoryStatus = () => invoke('hypnos_memory_status');
 
+/** Enables or disables a model on the server (disabling evicts it); resolves to `{ model, enabled }`. */
+export const setModelEnabled = (model, enabled) => invoke('hypnos_set_model_enabled', { model, enabled });
+
 /** The enabled models with all their `modalities` and their tier. */
 export const models = () => invoke('hypnos_models');
 
