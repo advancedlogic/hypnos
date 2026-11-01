@@ -86,6 +86,7 @@ fn model(id: &str, weight_gb: u64, priority: ModelPriority, initial: MemoryTier)
         enabled: true,
         use_mmap: None,
         moe_offload: Default::default(),
+        image: Default::default(),
         modality: Modality::TextGeneration,
         additional_modalities: vec![],
         engine: EngineKind::GgmlLlama,

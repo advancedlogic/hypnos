@@ -320,7 +320,10 @@ remote fetches go through `media.rs` `PublicOnly` (no loopback / private / link-
   projector and text-encoder files with the weights (`ManagedModelMemory::aux_buffers`), so the
   pinned budget must cover `total_weight_bytes` as a whole; the manager warns when the budget
   exceeds half of physical RAM. Measurements: `docs/bench/swap-cuda-2026-10-30.md`.
-- `diffusion.rs`: `ggml_diffusion` (stable-diffusion.cpp, MOSS-Image). sd.cpp is built as a
+- `diffusion.rs`: `ggml_diffusion` (stable-diffusion.cpp: MOSS-Image, Z-Image-Turbo, FLUX.2
+  klein 4B, ERNIE-Image-Turbo; any DiT + LLM encoder + VAE family sd.cpp knows). `[models.image]`
+  (`ImageDefaults`: steps, cfg_scale, sample_method, flow_shift) holds the model card's request
+  defaults; a request's `steps` / `cfg_scale` win. sd.cpp is built as a
   **shared** library so its ggml does not clash with llama.cpp's; the vendored build script copies
   the DLL/.so next to the binary.
 - `kokoro.rs`: `onnx_runtime` TTS on CPU (`AutoDevicePolicy::PreferCPU`) with espeak-ng G2P. Use the

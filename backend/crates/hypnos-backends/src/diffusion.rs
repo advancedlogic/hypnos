@@ -1,9 +1,11 @@
-//! stable-diffusion.cpp engine (MOSS-Image), linked in-process through the vendored
-//! `diffusion-rs-sys` FFI bindings (sd.cpp master-1024 with MOSS-Image support).
+//! stable-diffusion.cpp engine, linked in-process through the vendored `diffusion-rs-sys` FFI
+//! bindings (sd.cpp master-1024).
 //!
-//! MOSS-Image is a 5B diffusion transformer that needs three companion files, all configured per
-//! model: `weights_path` (DiT GGUF), `text_encoder_path` (Qwen3.5-9B GGUF), `aux_weights_path`
-//! (FLUX.2 VAE) and `tokenizer_path` (MOSS tokenizer.json).
+//! The models it serves are diffusion transformers with an LLM text encoder and a VAE (MOSS-Image,
+//! Z-Image, FLUX.2 klein, ERNIE-Image, ...): `weights_path` (the diffusion model GGUF),
+//! `text_encoder_path` (the LLM GGUF), `aux_weights_path` (the VAE) and, where the model needs
+//! one, `tokenizer_path`. sd.cpp recognizes the family from the weights. `[models.image]` holds
+//! the steps, guidance, sampler and flow shift its model card recommends.
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::io::Cursor;
@@ -213,6 +215,9 @@ struct ImageJob {
     height: u32,
     steps: u32,
     cfg_scale: f32,
+    /// sd.cpp's sampler name (`[models.image] sample_method`); `None` = the model's default.
+    sample_method: Option<String>,
+    flow_shift: Option<f32>,
     seed: i64,
     count: u32,
 }
@@ -294,6 +299,20 @@ fn run_image_job_inner(loaded: &LoadedSd, job: &ImageJob) -> Result<Vec<Vec<u8>>
         g.batch_count = job.count as i32;
         g.sample_params.sample_steps = job.steps as i32;
         g.sample_params.guidance.txt_cfg = job.cfg_scale;
+        if let Some(name) = job.sample_method.as_deref() {
+            let c = CString::new(name)
+                .map_err(|_| HypnosError::Config("sample_method contains a NUL byte".into()))?;
+            let method = sd::str_to_sample_method(c.as_ptr());
+            if method == sd::sample_method_t::SAMPLE_METHOD_COUNT {
+                return Err(HypnosError::Config(format!(
+                    "[models.image] sample_method {name:?} is not a stable-diffusion.cpp sampler"
+                )));
+            }
+            g.sample_params.sample_method = method;
+        }
+        if let Some(shift) = job.flow_shift {
+            g.sample_params.flow_shift = shift;
+        }
 
         let mut result: *mut sd::sd_image_generation_result_t = std::ptr::null_mut();
         let ok = sd::generate_image(loaded.ctx, &g, &mut result);
@@ -420,8 +439,17 @@ impl ModelBackend for GgmlDiffusionBackend {
             negative_prompt: req.negative_prompt.clone().unwrap_or_default(),
             width,
             height,
-            steps: req.steps.unwrap_or(DEFAULT_STEPS).clamp(1, 100),
-            cfg_scale: req.cfg_scale.unwrap_or(DEFAULT_CFG_SCALE),
+            steps: req
+                .steps
+                .or(self.config.image.steps)
+                .unwrap_or(DEFAULT_STEPS)
+                .clamp(1, 100),
+            cfg_scale: req
+                .cfg_scale
+                .or(self.config.image.cfg_scale)
+                .unwrap_or(DEFAULT_CFG_SCALE),
+            sample_method: self.config.image.sample_method.clone(),
+            flow_shift: self.config.image.flow_shift,
             seed,
             count: req.n.clamp(1, max_n),
         };

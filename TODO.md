@@ -107,14 +107,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       probably makes llama.cpp b11982 re-capture its CUDA graph every step again. Check with the
       graph counters / `GGML_CUDA_DISABLE_GRAPHS`, try 2 slots and 4 x 8k, and ship the shape that
       batches well (on Metal 4 slots gave 1.43x).
-- [ ] 🟩 **ENG-7** `P1` Image models on the existing sd.cpp file set; per-model sampling defaults
-      `diffusion.rs` uses one `DEFAULT_STEPS` / CFG for every model; turbo models want ~4-8 steps
-      and CFG 1. Add `[models.arch]`-style `default_steps` / `default_cfg_scale` (sample method,
-      flow shift if needed) and generalize the module docs beyond MOSS. Catalog, all DiT + LLM
-      encoder + VAE: Z-Image-Turbo (3.9 GB Q4_K + Qwen3 4B, Apache-2.0), FLUX.2 klein 4B
-      (Apache-2.0; the 9B is non-commercial), ERNIE-Image-Turbo (5 GB + Ministral 3 3B,
-      Apache-2.0), FLUX.3 Image Klein (3.5 GB + Qwen3-VL 4B, FLUX.2 VAE; FLUX Kommunity license:
-      check the terms first). Memory measured per model (TEST-3).
 - [ ] 🟩 **ENG-8** `P2` Speech output through llama.cpp (LFM3-Audio, Qwen3-TTS)
       b11982's libmtmd generates audio (`mtmd-helper-gen.cpp`, `tools/tts`): an engine path for
       `text_to_speech` on `ggml_llama` models, WAV / streamed PCM like Kokoro. First LFM3-Audio
@@ -146,6 +138,20 @@ _No cards yet._
 
 ## Done
 
+- [x] 🟩 **ENG-7** `P1` Image models on the existing sd.cpp file set; per-model sampling defaults
+      `diffusion.rs` uses one `DEFAULT_STEPS` / CFG for every model; turbo models want ~4-8 steps
+      and CFG 1. Add `[models.arch]`-style `default_steps` / `default_cfg_scale` (sample method,
+      flow shift if needed) and generalize the module docs beyond MOSS. Catalog, all DiT + LLM
+      encoder + VAE: Z-Image-Turbo (3.9 GB Q4_K + Qwen3 4B, Apache-2.0), FLUX.2 klein 4B
+      (Apache-2.0; the 9B is non-commercial), ERNIE-Image-Turbo (5 GB + Ministral 3 3B,
+      Apache-2.0), FLUX.3 Image Klein (3.5 GB + Qwen3-VL 4B, FLUX.2 VAE; FLUX Kommunity license:
+      check the terms first). Memory measured per model (TEST-3).
+      Done: `[models.image]` (`ImageDefaults`: steps, cfg_scale, sample_method via sd.cpp's
+      `str_to_sample_method`, flow_shift); catalog Z-Image-Turbo (8 steps), FLUX.2 klein 4B
+      (4 steps), ERNIE-Image-Turbo (8 steps), all CFG 1, Apache-2.0, generated and measured at
+      1024x1024 on the M5 Max (18-44 s with the load; working memory peak + 0.25 GiB). FLUX.3
+      Image Klein left out: its FLUX Kommunity license is gated and was not read. None of the image
+      models fits a 16 GB Mac at 1024x1024.
 - [x] 🟩 **ENG-6** `P1` Qwen chat format: Qwen 3.5 / 3.6 / 3.8 and the models built on them
       One renderer (`qwen_prompt`: ChatML, `<think>` thinking with the budget/close logic of
       `lfm3_prompt`, Qwen's `<tool_call>` JSON tool format in `tools.rs`, vision markers) and

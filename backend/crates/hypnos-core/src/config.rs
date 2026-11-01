@@ -343,6 +343,35 @@ pub struct ModelConfig {
     /// Architecture parameters for KV cache & layer-split math
     #[serde(default)]
     pub arch: ModelArchitectureParams,
+    /// Request defaults of an image model (`[models.image]`, ENG-7).
+    #[serde(default, skip_serializing_if = "ImageDefaults::is_empty")]
+    pub image: ImageDefaults,
+}
+
+/// What an image model's requests use when they do not say: the settings its model card
+/// recommends (a distilled "turbo" model wants a few steps at CFG 1, a base model 20+ at CFG 3-5).
+/// A request's `steps` / `cfg_scale` win; unset keys keep the engine's defaults.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ImageDefaults {
+    /// Denoising steps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steps: Option<u32>,
+    /// Classifier-free guidance scale (1.0 = no guidance, for distilled models).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cfg_scale: Option<f32>,
+    /// stable-diffusion.cpp's sampler name (`euler`, `euler_a`, `dpm++2m`, ...); unset = the
+    /// model's own default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_method: Option<String>,
+    /// Flow-matching time shift; unset = the model's own default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow_shift: Option<f32>,
+}
+
+impl ImageDefaults {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 impl ModelConfig {
@@ -1785,5 +1814,28 @@ weights_path = "encoder.onnx"
             .errors
             .iter()
             .any(|e| e.contains("only implements entity_extraction")));
+    }
+
+    /// `[models.image]` (ENG-7), as a table and in the inline form catalog blocks use.
+    #[test]
+    fn image_defaults_parse_as_table_and_inline() {
+        let block = |image: &str| {
+            format!(
+                "[[models]]\nid = \"z\"\nmodality = \"image_generation\"\nengine = \"ggml_diffusion\"\nweights_path = \"z.gguf\"\n{image}"
+            )
+        };
+        for toml in [
+            block("[models.image]\nsteps = 8\ncfg_scale = 1.0\nsample_method = \"euler\""),
+            block("image = { steps = 8, cfg_scale = 1.0, sample_method = \"euler\" }"),
+        ] {
+            let c = HypnosConfig::from_toml_str(&toml).unwrap();
+            assert!(c.unknown_keys.is_empty(), "{:?}", c.unknown_keys);
+            let i = &c.models[0].image;
+            assert_eq!((i.steps, i.cfg_scale), (Some(8), Some(1.0)));
+            assert_eq!(i.sample_method.as_deref(), Some("euler"));
+            assert_eq!(i.flow_shift, None);
+        }
+        let c = HypnosConfig::from_toml_str(&block("")).unwrap();
+        assert!(c.models[0].image.is_empty());
     }
 }

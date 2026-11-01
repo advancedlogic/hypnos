@@ -359,6 +359,7 @@ mod tests {
             enabled: true,
             use_mmap: None,
             moe_offload: Default::default(),
+            image: Default::default(),
             modality: Modality::TextGeneration,
             additional_modalities: vec![Modality::Vision],
             engine: EngineKind::GgmlLlama,

@@ -2218,6 +2218,7 @@ mod tests {
             enabled: true,
             use_mmap: None,
             moe_offload: Default::default(),
+            image: Default::default(),
             modality: Modality::TextGeneration,
             additional_modalities: vec![],
             engine: hypnos_core::config::EngineKind::GgmlLlama,

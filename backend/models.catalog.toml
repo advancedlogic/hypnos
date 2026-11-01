@@ -1097,6 +1097,111 @@ files = [
 ]
 
 [[models]]
+id = "z-image-turbo"
+name = "Z-Image-Turbo"
+publisher = "Tongyi-MAI (Alibaba)"
+license = "apache-2.0"
+architecture = "z-image"
+modality = "image_generation"
+engine = "ggml_diffusion"
+summary = "Fast 6B text-to-image model (8 steps): photorealistic images and legible text in about 10 GB."
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = false
+priority = "low"
+image = { steps = 8, cfg_scale = 1.0 }
+
+[models.config.arch]
+num_layers = 30
+head_dim = 128
+default_context_len = 512
+max_context_len = 1024
+kv_dtype = "f16"
+non_layer_overhead_bytes = 3221225472
+activation_workspace_bytes = 6979321856 # measured peak minus weights, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[[models.variants]]
+quant = "Q4_K"
+default = true
+files = [
+  { role = "weights", repo = "leejet/Z-Image-Turbo-GGUF", remote = "z_image_turbo-Q4_K.gguf", local = "z_image_turbo-Q4_K.gguf", size = 3864250304 },
+  { role = "text_encoder", repo = "unsloth/Qwen3-4B-Instruct-2507-GGUF", remote = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf", local = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf", size = 2497281120 },
+  { role = "aux", repo = "Comfy-Org/Z-Image-Turbo", remote = "split_files/vae/ae.safetensors", local = "flux1-vae.safetensors", size = 335304388 },
+]
+
+[[models]]
+id = "flux2-klein:4b"
+name = "FLUX.2 klein 4B"
+publisher = "Black Forest Labs"
+license = "apache-2.0"
+architecture = "flux2-klein"
+modality = "image_generation"
+engine = "ggml_diffusion"
+summary = "The quickest image model in the catalog (4 steps): FLUX.2 quality in about 9 GB."
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = false
+priority = "low"
+image = { steps = 4, cfg_scale = 1.0 }
+
+[models.config.arch]
+num_layers = 30
+head_dim = 128
+default_context_len = 512
+max_context_len = 1024
+kv_dtype = "f16"
+non_layer_overhead_bytes = 3221225472
+activation_workspace_bytes = 6442450944 # measured peak minus weights, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[[models.variants]]
+quant = "Q4_0"
+default = true
+files = [
+  { role = "weights", repo = "leejet/FLUX.2-klein-4B-GGUF", remote = "flux-2-klein-4b-Q4_0.gguf", local = "flux-2-klein-4b-Q4_0.gguf", size = 2460378560 },
+  { role = "text_encoder", repo = "unsloth/Qwen3-4B-GGUF", remote = "Qwen3-4B-Q4_K_M.gguf", local = "Qwen3-4B-Q4_K_M.gguf", size = 2497281312 },
+  { role = "aux", repo = "Comfy-Org/MOSS-Image", remote = "vae/flux2-vae.safetensors", local = "flux2-vae.safetensors", size = 336211292 },
+]
+
+[[models]]
+id = "ernie-image-turbo"
+name = "ERNIE-Image-Turbo"
+publisher = "Baidu"
+license = "apache-2.0"
+architecture = "ernie-image"
+modality = "image_generation"
+engine = "ggml_diffusion"
+summary = "Distilled text-to-image model (8 steps) with a Ministral 3B text encoder."
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = false
+priority = "low"
+image = { steps = 8, cfg_scale = 1.0 }
+
+[models.config.arch]
+num_layers = 30
+head_dim = 128
+default_context_len = 512
+max_context_len = 1024
+kv_dtype = "f16"
+non_layer_overhead_bytes = 2684354560
+activation_workspace_bytes = 6979321856 # measured peak minus weights, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[[models.variants]]
+quant = "Q4_K_M"
+default = true
+files = [
+  { role = "weights", repo = "unsloth/ERNIE-Image-Turbo-GGUF", remote = "ernie-image-turbo-Q4_K_M.gguf", local = "ernie-image-turbo-Q4_K_M.gguf", size = 5019124416 },
+  { role = "text_encoder", repo = "unsloth/Ministral-3-3B-Instruct-2512-GGUF", remote = "Ministral-3-3B-Instruct-2512-Q4_K_M.gguf", local = "Ministral-3-3B-Instruct-2512-Q4_K_M.gguf", size = 2146497824 },
+  { role = "aux", repo = "Comfy-Org/MOSS-Image", remote = "vae/flux2-vae.safetensors", local = "flux2-vae.safetensors", size = 336211292 },
+]
+
+[[models]]
 id = "docling"
 name = "docling"
 publisher = "docling-project"

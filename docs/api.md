@@ -772,9 +772,9 @@ the non-streaming form.
 | `n` | 1 | up to `max_images_per_request` (4) |
 | `size` | `1024x1024` | `WIDTHxHEIGHT`; each side is clamped to 256..2048 and rounded down to a multiple of 16 (`1000x700` becomes `992x688`) |
 | `response_format` | `b64_json` | only `b64_json` is implemented; `url` is accepted but still answers base64 |
-| `steps` | 20 | **Hypnos extension**, clamped to 1..100 |
+| `steps` | the model's | **Hypnos extension**, clamped to 1..100; default from the model's `[models.image]` (4-8 for the turbo models, 20 otherwise) |
 | `seed` | random | **Hypnos extension** |
-| `cfg_scale` | 3.0 | **Hypnos extension** |
+| `cfg_scale` | the model's | **Hypnos extension**; default from `[models.image]` (1.0 for the distilled models, else 3.0) |
 
 `quality`, `style` and `user` are ignored.
 
