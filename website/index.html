@@ -294,7 +294,7 @@ print(client.chat.completions.create(
         <div class="section-head">
           <p class="eyebrow">Default lineup</p>
           <h2>Seven models, every modality, about 33 GB of files.</h2>
-          <p class="section-lede">Downloaded with one command from public Hugging Face repositories. Smaller machines can use Liquid AI's LFM3 text, vision and audio models (about 6.4 GB together), and <code>hypnos advise</code> picks a lineup from the catalog for any machine. Bring your own: any GGUF that llama.cpp loads works for chat and embeddings, with the chat template read from the file.</p>
+          <p class="section-lede">Downloaded with one command from public Hugging Face repositories. Below them, the catalog: 27 more tested models, from a 0.8B chat model to 35B Mixture-of-Experts models, speech models that hear and speak, and image models that edit. <code>hypnos advise</code> picks a lineup from it for any machine. Bring your own: any GGUF that llama.cpp loads works for chat and embeddings, with the chat template read from the file.</p>
         </div>
         <div class="table-wrap">
           <table class="models">
@@ -309,6 +309,83 @@ print(client.chat.completions.create(
               <tr><td><code>gliner2.5-multi</code></td><td>Entity extraction</td><td>gliner</td><td>1.15 GiB</td><td><span class="pill">normal</span> CPU, host RAM only, loads in under a second</td></tr>
             </tbody>
           </table>
+        </div>
+        <div class="catalog">
+          <h3 class="catalog-title">The catalog: 34 models, each tested on Hypnos</h3>
+          <p class="catalog-lede">The lineup above plus 27 more. Thinking, tool calls, images, transcription, speech and memory were checked on each before it went in. Pick from it in the desktop app, the playground or with <code>hypnos advise</code>; add one to a running server with <code>POST /v1/models</code>.</p>
+          <h4 class="catalog-group">Chat, reasoning and agents</h4>
+          <div class="table-wrap">
+            <table class="catalog-table">
+              <thead><tr><th>Model</th><th>Files</th><th>Can</th><th>Good for</th></tr></thead>
+              <tbody>
+                <tr><td><code>qwen3.6:35b-a3b</code></td><td>21.3 GB</td><td><span class="pill">thinking</span><span class="pill">tools</span><span class="pill">sees</span></td><td>Strongest model that stays fast: 3B active parameters, 256k context</td></tr>
+                <tr><td><code>nemotron3.5-lightning:30b-a3b</code></td><td>18.9 GB</td><td><span class="pill">thinking</span><span class="pill">tools</span></td><td>Very long documents (1M-token context) and agents</td></tr>
+                <tr><td><code>qwen3.8:27b</code></td><td>19.9 GB</td><td><span class="pill">thinking</span><span class="pill">tools</span><span class="pill">sees</span></td><td>The best dense answers, with vision</td></tr>
+                <tr><td><code>gemma4:31b-q4</code></td><td>19.2 GB</td><td><span class="pill">thinking</span><span class="pill">tools</span><span class="pill">sees</span></td><td>Gemma&#x27;s strongest answers and image understanding</td></tr>
+                <tr><td><code>gemma4:26b-q4</code></td><td>15.8 GB</td><td><span class="pill">thinking</span><span class="pill">tools</span><span class="pill">sees</span><span class="pill pill-high">lineup</span></td><td>The lineup&#x27;s chat model: strong and fast (4B active)</td></tr>
+                <tr><td><code>glm-4.7-flash</code></td><td>18.2 GB</td><td><span class="pill">thinking</span><span class="pill">tools</span></td><td>Tool use and multi-step agents</td></tr>
+                <tr><td><code>qwen3-coder:30b-a3b</code></td><td>18.0 GB</td><td><span class="pill">tools</span></td><td>Code and coding agents</td></tr>
+                <tr><td><code>lfm2.5:24b-a2b</code></td><td>14.5 GB</td><td><span class="pill">thinking</span></td><td>Fast thinking chat on large machines (2B active)</td></tr>
+                <tr><td><code>gemma4:12b-q4</code></td><td>7.4 GB</td><td><span class="pill">thinking</span><span class="pill">tools</span><span class="pill">sees</span><span class="pill">hears</span></td><td>A 16-24 GB machine&#x27;s main model</td></tr>
+                <tr><td><code>qwen3.5:9b</code></td><td>6.6 GB</td><td><span class="pill">thinking</span><span class="pill">tools</span><span class="pill">sees</span></td><td>Mid-size chat and vision</td></tr>
+                <tr><td><code>nemotron3.5-bolt:e4b</code></td><td>8.0 GB</td><td><span class="pill">thinking</span><span class="pill">tools</span></td><td>Quick text chat and tool use, 64k context</td></tr>
+                <tr><td><code>gemma4:e4b-q4</code></td><td>5.6 GB</td><td><span class="pill">thinking</span><span class="pill">tools</span><span class="pill">sees</span><span class="pill">hears</span><span class="pill pill-high">lineup</span></td><td>Hears, sees and chats on small machines</td></tr>
+                <tr><td><code>qwen3.5:4b</code></td><td>3.4 GB</td><td><span class="pill">thinking</span><span class="pill">tools</span><span class="pill">sees</span></td><td>Compact chat and vision</td></tr>
+                <tr><td><code>gemma4:e2b-q4</code></td><td>3.8 GB</td><td><span class="pill">thinking</span><span class="pill">tools</span><span class="pill">sees</span><span class="pill">hears</span></td><td>The smallest Gemma, in 8 GB</td></tr>
+                <tr><td><code>qwen3.5:2b</code></td><td>2.0 GB</td><td><span class="pill">thinking</span><span class="pill">tools</span><span class="pill">sees</span></td><td>Small chat and vision</td></tr>
+                <tr><td><code>lfm3:1.7b</code></td><td>1.8 GB</td><td><span class="pill">thinking</span><span class="pill">tools</span></td><td>The fastest chat on any machine</td></tr>
+                <tr><td><code>qwen3.5:0.8b</code></td><td>1.0 GB</td><td><span class="pill">thinking</span><span class="pill">tools</span><span class="pill">sees</span></td><td>Captions and simple tool calls</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h4 class="catalog-group">Vision</h4>
+          <div class="table-wrap">
+            <table class="catalog-table">
+              <thead><tr><th>Model</th><th>Files</th><th>Can</th><th>Good for</th></tr></thead>
+              <tbody>
+                <tr><td><code>minicpm-v:4.6</code></td><td>1.6 GB</td><td><span class="pill">sees</span><span class="pill">tools</span></td><td>Image questions and OCR in very little memory</td></tr>
+                <tr><td><code>lfm3-vl:2b</code></td><td>2.2 GB</td><td><span class="pill">sees</span><span class="pill">thinking</span><span class="pill">tools</span></td><td>Describing images, with thinking</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h4 class="catalog-group">Speech</h4>
+          <div class="table-wrap">
+            <table class="catalog-table">
+              <thead><tr><th>Model</th><th>Files</th><th>Can</th><th>Good for</th></tr></thead>
+              <tbody>
+                <tr><td><code>lfm3-omni:2b</code></td><td>2.8 GB</td><td><span class="pill">hears</span><span class="pill">speaks</span><span class="pill">sees</span><span class="pill">tools</span></td><td>One small model for text, images, transcription and speech (19 languages)</td></tr>
+                <tr><td><code>lfm3-audio:2b</code></td><td>2.4 GB</td><td><span class="pill">hears</span><span class="pill">speaks</span><span class="pill">tools</span></td><td>Voice assistants: hears, chats and speaks</td></tr>
+                <tr><td><code>qwen3-asr:1.7b</code></td><td>2.8 GB</td><td><span class="pill">hears</span></td><td>The most accurate transcription: 30 languages, detects the language</td></tr>
+                <tr><td><code>qwen3-asr:0.6b</code></td><td>1.2 GB</td><td><span class="pill">hears</span></td><td>The same recognizer, smaller</td></tr>
+                <tr><td><code>qwen3-tts:1.7b</code></td><td>2.5 GB</td><td><span class="pill">speaks</span></td><td>10 languages and voice cloning from a reference clip</td></tr>
+                <tr><td><code>kokoro-82m-q4</code></td><td>0.4 GB</td><td><span class="pill">speaks</span><span class="pill pill-high">lineup</span></td><td>Fast, clear English speech on the CPU</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h4 class="catalog-group">Images</h4>
+          <div class="table-wrap">
+            <table class="catalog-table">
+              <thead><tr><th>Model</th><th>Files</th><th>Can</th><th>Good for</th></tr></thead>
+              <tbody>
+                <tr><td><code>flux2-klein:4b</code></td><td>5.3 GB</td><td><span class="pill">edits</span></td><td>The quickest (4 steps), and it edits images</td></tr>
+                <tr><td><code>iris-3b-turbo</code></td><td>8.5 GB</td><td></td><td>Seconds per image: 4 steps, no VAE</td></tr>
+                <tr><td><code>z-image-turbo</code></td><td>6.7 GB</td><td></td><td>Photorealism and legible text (8 steps)</td></tr>
+                <tr><td><code>ernie-image-turbo</code></td><td>7.5 GB</td><td></td><td>Distilled 8-step generation</td></tr>
+                <tr><td><code>moss-image</code></td><td>9.4 GB</td><td><span class="pill pill-high">lineup</span></td><td>The lineup&#x27;s image model</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h4 class="catalog-group">Retrieval, documents and entities</h4>
+          <div class="table-wrap">
+            <table class="catalog-table">
+              <thead><tr><th>Model</th><th>Files</th><th>Can</th><th>Good for</th></tr></thead>
+              <tbody>
+                <tr><td><code>gemmaembedding2</code></td><td>0.3 GB</td><td><span class="pill pill-high">lineup</span></td><td>Vector embeddings for search and RAG</td></tr>
+                <tr><td><code>docling</code></td><td>0.3 GB</td><td><span class="pill pill-high">lineup</span></td><td>PDF, Office and HTML to Markdown and JSON</td></tr>
+                <tr><td><code>gliner2.5-multi</code></td><td>1.2 GB</td><td><span class="pill pill-high">lineup</span></td><td>Zero-shot named entities, multilingual</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
         <figure class="code code-single">
           <figcaption>backend/my.toml · a single-model config</figcaption>

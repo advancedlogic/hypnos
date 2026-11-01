@@ -233,14 +233,10 @@ print(client.chat.completions.create(
 
 ## Bring your own models
 
-The quickest way is the catalog (`backend/models.catalog.toml`): the default lineup plus other
-models Hypnos has been tested with (the other Gemma 4 sizes E2B, 12B and 31B, NVIDIA's Nemotron
-3.5 Bolt E4B, Qwen 3.5 / 3.6 / 3.8 from 0.8B to 35B-A3B with thinking and tool calling, MiniCPM-V
-4.6, the Qwen3-ASR speech recognizers, Qwen3-TTS with voice cloning, Liquid AI's LFM3 text, vision,
-audio and omni models (the audio and omni models also speak), and
-LFM2.5 24B-A2B, Qwen3-Coder 30B-A3B, NVIDIA Nemotron 3.5 Lightning, GLM-4.7-Flash, and the image
-models Z-Image-Turbo, FLUX.2 klein 4B (which also edits images, `POST /v1/images/edits`),
-ERNIE-Image-Turbo and Iris-3B Turbo), each in several quantizations where they come in several.
+The quickest way is the catalog (`backend/models.catalog.toml`): the default lineup plus 27 other
+models Hypnos has been tested with, from a 0.8B chat model to 35B Mixture-of-Experts models, speech
+models that hear and speak, and five image models. [Model catalog](#model-catalog) lists them by
+what they are good for.
 
 ```bash
 hypnos advise --needs chat,voice,documents             # this machine; or --vram 24G --ram 64G, --unified --ram 32G
@@ -390,6 +386,82 @@ Notes:
   budgets live in `backend/hypnos.example.toml`.
 
 ---
+
+## Model catalog
+
+Every model below has been run on Hypnos: each answered chat, thinking, image, tool, transcription,
+speech or image requests (whichever it serves) and had its memory measured. **Memory** is the
+measured peak on an M5 Max at the catalog's settings (one model alone, 16k context; the CUDA
+builds book the same). **Bold** ids are the default lineup. Download one with
+`./run.sh models <id>`, add it to a running server with `POST /v1/models {"catalog": "<id>"}`, or
+let `hypnos advise` pick a lineup for your machine.
+
+### Chat, reasoning and agents
+
+All of these think (`reasoning_effort`) and call tools, except where noted.
+
+| Model | Files | Memory | License | Good for |
+| :--- | ---: | ---: | :--- | :--- |
+| `qwen3.6:35b-a3b` | 21.3 GB | 22.1 GB | Apache-2.0 | The strongest general model in the catalog that stays fast: 3B active parameters, vision, 256k context |
+| `nemotron3.5-lightning:30b-a3b` | 18.9 GB | 17.7 GB | OpenMDW-1.1 | Very long documents (1M-token context) and agents; tiny KV cache (hybrid Mamba) |
+| `qwen3.8:27b` | 19.9 GB | 20.9 GB | Apache-2.0 | The best dense answers, with vision; slower than the MoE models |
+| `gemma4:31b-q4` | 19.2 GB | 24.3 GB | Apache-2.0 | Gemma's strongest answers and image understanding |
+| **`gemma4:26b-q4`** | 15.8 GB | 17.7 GB | Gemma | The lineup's chat model: strong, fast (4B active), sees images |
+| `glm-4.7-flash` | 18.2 GB | 17.6 GB | MIT | Tool use and multi-step agents |
+| `qwen3-coder:30b-a3b` | 18.0 GB | 17.6 GB | Apache-2.0 | Code and coding agents (tools; no thinking) |
+| `lfm2.5:24b-a2b` | 14.5 GB | 14.0 GB | LFM 1.0 | Fast thinking chat on large machines (2B active; no tools) |
+| `gemma4:12b-q4` | 7.4 GB | 11.2 GB | Apache-2.0 | A 16-24 GB machine's main model: chat, vision and transcription in one |
+| `qwen3.5:9b` | 6.6 GB | 8.3 GB | Apache-2.0 | Mid-size chat and vision |
+| `nemotron3.5-bolt:e4b` | 8.0 GB | 5.9 GB | Apache-2.0 | Quick text-only chat and tool use, 64k context |
+| **`gemma4:e4b-q4`** | 5.6 GB | 6.4 GB | Gemma | Hears, sees and chats on small machines (the lineup's speech-to-text) |
+| `qwen3.5:4b` | 3.4 GB | 6.1 GB | Apache-2.0 | Compact chat and vision |
+| `gemma4:e2b-q4` | 3.8 GB | 5.0 GB | Apache-2.0 | The smallest Gemma: hears, sees and chats in 8 GB |
+| `qwen3.5:2b` | 2.0 GB | 4.2 GB | Apache-2.0 | Small chat and vision |
+| `lfm3:1.7b` | 1.8 GB | 2.1 GB | LFM 1.0 | The fastest chat on any machine, with tools |
+| `qwen3.5:0.8b` | 1.0 GB | 3.3 GB | Apache-2.0 | Captions and simple tool calls; weak at facts and arithmetic |
+
+### Vision
+
+Every chat model above with vision also answers image questions; these are small vision specialists.
+
+| Model | Files | Memory | License | Good for |
+| :--- | ---: | ---: | :--- | :--- |
+| `minicpm-v:4.6` | 1.6 GB | 3.7 GB | Apache-2.0 | Image questions and OCR in very little memory |
+| `lfm3-vl:2b` | 2.2 GB | 3.7 GB | LFM 1.0 | Describing images, with thinking and tools |
+
+### Speech
+
+| Model | Files | Memory | License | Hears | Speaks | Good for |
+| :--- | ---: | ---: | :--- | :---: | :---: | :--- |
+| `lfm3-omni:2b` | 2.8 GB | 4.3 GB | LFM 1.0 | yes | yes | One small model for text, images, transcription and speech (19 languages, female / male voice) |
+| `lfm3-audio:2b` | 2.4 GB | 3.6 GB | LFM 1.0 | yes | yes | Voice assistants: hears, chats and speaks (19 languages) |
+| `qwen3-asr:1.7b` | 2.8 GB | 5.0 GB | Apache-2.0 | yes | | The most accurate transcription: 30 languages, 22 Chinese dialects, detects the language |
+| `qwen3-asr:0.6b` | 1.2 GB | 3.7 GB | Apache-2.0 | yes | | The same recognizer, smaller |
+| `qwen3-tts:1.7b` | 2.5 GB | 5.9 GB | Apache-2.0 | | yes | 10 languages and voice cloning from a reference clip (`voices_path`) |
+| **`kokoro-82m-q4`** | 0.4 GB | 0.4 GB (RAM) | Apache-2.0 | | yes | Fast, clear English speech on the CPU (the lineup's) |
+
+### Images
+
+| Model | Files | Memory | License | Good for |
+| :--- | ---: | ---: | :--- | :--- |
+| `flux2-klein:4b` | 5.3 GB | 10.7 GB | Apache-2.0 | The quickest (4 steps), and the one that edits images (`/v1/images/edits`) |
+| `iris-3b-turbo` | 8.5 GB | 9.8 GB | Apache-2.0 | Seconds per image (4 steps, pixel space, no VAE) |
+| `z-image-turbo` | 6.7 GB | 12.5 GB | Apache-2.0 | Photorealism and legible text in images (8 steps) |
+| `ernie-image-turbo` | 7.5 GB | 13.2 GB | Apache-2.0 | Distilled 8-step generation, strong prompt following |
+| **`moss-image`** | 9.4 GB | 14.2 GB | Apache-2.0 | The lineup's: 20 steps, a Qwen3.5 9B prompt encoder |
+
+### Retrieval, documents and entities
+
+| Model | Files | Memory | License | Good for |
+| :--- | ---: | ---: | :--- | :--- |
+| **`gemmaembedding2`** | 0.3 GB | 0.4 GB | Gemma | Vector embeddings for search and RAG |
+| **`docling`** | 0.3 GB | 1.8 GB (RAM) | MIT | PDF, Office and HTML to Markdown / JSON, with tables, OCR and pictures |
+| **`gliner2.5-multi`** | 1.2 GB | 2.8 GB (RAM) | Apache-2.0 | Zero-shot named entities in any label set, multilingual |
+
+**Which to pick.** A 16 GB Mac: `gemma4:e4b-q4` (or `lfm3-omni:2b` to keep room) plus Kokoro.
+A 24 GB GPU or a 32 GB Mac: `gemma4:26b-q4` or `nemotron3.5-lightning:30b-a3b` with
+`lfm3-omni:2b` to hear and speak. 64 GB and up: `qwen3.6:35b-a3b`, an image model, and room for
+the rest. `hypnos advise --needs ...` works this out for any machine.
 
 ## Building from source
 

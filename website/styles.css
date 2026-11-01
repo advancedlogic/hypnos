@@ -236,6 +236,19 @@ td code { white-space: nowrap; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pill-pinned { background: #fff; color: var(--navy); } }
 .pill-low { background: var(--surface-2); color: var(--text-muted); }
 
+/* Model catalog (under the default lineup) */
+.catalog { margin-top: 48px; }
+.catalog-title { font-size: 1.35rem; }
+.catalog-lede { color: var(--text-muted); max-width: 760px; margin-bottom: 8px; }
+.catalog-group { font-family: var(--font-display); font-size: 0.82rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent-text); margin: 28px 0 10px; }
+.catalog-table { table-layout: fixed; }
+.catalog-table th:nth-child(1) { width: 29%; }
+.catalog-table th:nth-child(2) { width: 10%; }
+.catalog-table th:nth-child(3) { width: 25%; }
+.catalog-table td:nth-child(2) { white-space: nowrap; color: var(--text-muted); }
+.catalog-table td:first-child code { white-space: normal; overflow-wrap: anywhere; }
+.catalog-table td:nth-child(3) { white-space: nowrap; }
+
 /* Code blocks */
 .code { position: relative; margin: 0; background: var(--code-bg); border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); }
 .code figcaption { font-family: var(--font-mono); font-size: 0.75rem; color: #a9adde; background: var(--code-head); padding: 8px 14px; }
