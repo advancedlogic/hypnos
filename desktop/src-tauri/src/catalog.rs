@@ -98,6 +98,9 @@ pub(crate) struct CatalogFile {
     /// `all`, `macos-arm64` or `other`, as in `models.manifest`.
     #[serde(default = "all")]
     platform: String,
+    /// A gated Hugging Face repository: needs a token whose account accepted the license.
+    #[serde(default)]
+    pub(crate) gated: bool,
 }
 
 fn all() -> String {
@@ -519,6 +522,8 @@ pub struct VariantView {
     size: u64,
     have: u64,
     installed: bool,
+    /// Some file comes from a gated repository: the download needs a Hugging Face token.
+    gated: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -600,6 +605,7 @@ fn entries_view(
                         size: v.files_for(apple_silicon).map(|f| f.size).sum(),
                         have,
                         installed,
+                        gated: v.files_for(apple_silicon).any(|f| f.gated),
                     }
                 })
                 .collect();

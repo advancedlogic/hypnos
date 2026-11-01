@@ -71,3 +71,12 @@ export function gb(bytes) {
   const v = bytes / 1e9;
   return v >= 10 ? `${v.toFixed(0)} GB` : v >= 0.1 ? `${v.toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`;
 }
+
+/** Whether downloads have a Hugging Face token: `{ saved, fromEnv }` (never the token). */
+export const hfTokenState = () => invoke('hf_token_state');
+
+/** Saves the Hugging Face token in the OS keychain (`null` forgets it). */
+export const setHfToken = (token) => invoke('hf_token_set', { token: token || null });
+
+/** The Hugging Face account a token belongs to; rejects when Hugging Face refuses it. */
+export const checkHfToken = (token) => invoke('hf_token_check', { token });

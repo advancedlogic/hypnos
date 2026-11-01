@@ -6,7 +6,9 @@
   Before downloading, the missing files' sizes are checked against free disk space, keeping
   HYPNOS_MODELS_MIN_FREE_GB (default 2) free; nothing is fetched when they do not fit.
   HYPNOS_MODELS_DIR overrides the target folder (the configs expect backend\models\).
-  HF_TOKEN, when set, is sent to Hugging Face (higher rate limits); the repositories are public.
+  HF_TOKEN, when set, is sent to Hugging Face (higher rate limits). Gated repositories (FLUX's
+  originals, gated = true in models.catalog.toml) need it, from an account that accepted the
+  model's license on its Hugging Face page.
   A manifest repo that is an https:// URL is a plain download base (no token is sent there).
 
   An id that is not in the manifest is looked up in the model catalog (models.catalog.toml)
@@ -150,7 +152,12 @@ function Get-ModelFile([string]$repoName, [string]$remote, [string]$dest) {
         Move-Item -Force -LiteralPath "$dest.part" -Destination $dest
         $script:fetched++
     } else {
+        $code = $LASTEXITCODE
         Write-Host "[models] FAILED: $repoName/$remote (partial data kept in $dest.part; rerun to resume)"
+        # curl -f exits 22 on an HTTP error: a gated repository answers 401 / 403.
+        if ($code -eq 22 -and -not $repoName.StartsWith('https://')) {
+            Write-Host "[models]   gated? accept the license at $hf/$repoName and set HF_TOKEN (a read token of that account)"
+        }
         $script:failed++
     }
 }

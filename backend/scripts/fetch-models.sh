@@ -14,7 +14,9 @@
 # Before downloading, the missing files' sizes are checked against free disk space, keeping
 # HYPNOS_MODELS_MIN_FREE_GB (default 2) free; nothing is fetched when they do not fit.
 # HYPNOS_MODELS_DIR overrides the target folder (the configs expect backend/models/; symlink it).
-# HF_TOKEN, when set, is sent to Hugging Face (higher rate limits); the repositories are public.
+# HF_TOKEN, when set, is sent to Hugging Face (higher rate limits). Gated repositories (FLUX's
+# originals, `gated = true` in models.catalog.toml) need it, from an account that accepted the
+# model's license on its Hugging Face page.
 # A manifest repo that is an https:// URL is a plain download base (no token is sent there).
 set -uo pipefail
 
@@ -130,7 +132,12 @@ download() {
         mv -f "$dest.part" "$dest"
         fetched=$((fetched + 1))
     else
+        local code=$?
         echo "[models] FAILED: $repo/$remote (partial data kept in ${dest#$ROOT/}.part; rerun to resume)"
+        # curl -f exits 22 on an HTTP error: a gated repository answers 401 / 403.
+        if [ "$code" = 22 ] && [[ "$repo" != https://* ]]; then
+            echo "[models]   gated? accept the license at $HF/$repo and set HF_TOKEN (a read token of that account)"
+        fi
         failed=$((failed + 1))
     fi
 }

@@ -4,6 +4,7 @@
   import { appPrefs, applyAppPrefs, isMac } from './appPrefs.js';
   import { normalizeUrl } from './connection.js';
   import { JOBS, servingModels as serving } from './jobs.js';
+  import * as modelFiles from './models.js';
 
   /** `routes`: modality -> model id; `models`: the enabled models with their `modalities`. */
   let { connection, routes, models, onsave, onclose } = $props();
@@ -25,6 +26,44 @@
   const VOICES = ['af_heart', 'af_bella', 'af_nova', 'af_sarah', 'am_adam', 'am_michael', 'bf_emma', 'bm_george'];
 
   const servingModels = (modality) => serving(models, modality);
+  // The Hugging Face token for model downloads (gated repositories such as FLUX), kept in the
+  // OS keychain and saved on its own, not with the form.
+  let hf = $state(null); // { saved, fromEnv }
+  let hfToken = $state('');
+  let hfBusy = $state(false);
+  let hfResult = $state(null); // { text, tone }
+  modelFiles.hfTokenState().then((v) => (hf = v)).catch(() => (hf = { saved: false, fromEnv: false }));
+
+  async function saveHfToken() {
+    hfBusy = true;
+    hfResult = null;
+    try {
+      const name = await modelFiles.checkHfToken(hfToken);
+      await modelFiles.setHfToken(hfToken);
+      hf = await modelFiles.hfTokenState();
+      hfToken = '';
+      hfResult = { text: `Saved: account ${name}`, tone: 'text-emerald-300' };
+    } catch (e) {
+      hfResult = { text: String(e?.message ?? e), tone: 'text-rose-300' };
+    } finally {
+      hfBusy = false;
+    }
+  }
+
+  async function forgetHfToken() {
+    hfBusy = true;
+    hfResult = null;
+    try {
+      await modelFiles.setHfToken(null);
+      hf = await modelFiles.hfTokenState();
+      hfResult = { text: 'Forgotten', tone: 'text-slate-400' };
+    } catch (e) {
+      hfResult = { text: String(e?.message ?? e), tone: 'text-rose-300' };
+    } finally {
+      hfBusy = false;
+    }
+  }
+
   let showKey = $state(false);
   let testing = $state(false);
   let saving = $state(false);
@@ -155,6 +194,29 @@
       <input type="checkbox" bind:checked={imageTool} class="accent-indigo-500" />
       Let the chat model create images (when the server has an image model)
     </label>
+
+    <div class="space-y-1.5 pt-1">
+      <label for="hf-token" class="block text-xs text-slate-400">Hugging Face token <span class="text-slate-600">(model downloads)</span></label>
+      <div class="flex gap-2">
+        <input id="hf-token" type="password" bind:value={hfToken} spellcheck="false" autocomplete="off"
+          placeholder={hf?.saved ? 'saved' : hf?.fromEnv ? 'from HF_TOKEN' : 'hf_…'}
+          class="flex-1 rounded-md bg-slate-950 border border-slate-700 px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+        <button type="button" class="px-2 py-1 rounded-md text-xs border border-slate-700 hover:bg-slate-800 disabled:opacity-40"
+          onclick={saveHfToken} disabled={hfBusy || !hfToken.trim()}>{hfBusy ? 'Checking…' : 'Check and save'}</button>
+        {#if hf?.saved}
+          <button type="button" class="px-2 py-1 rounded-md text-xs text-slate-400 hover:text-slate-200 disabled:opacity-40"
+            onclick={forgetHfToken} disabled={hfBusy}>Forget</button>
+        {/if}
+      </div>
+      <span class="block text-[11px] {hfResult?.tone ?? 'text-slate-500'}">
+        {#if hfResult}
+          {hfResult.text}
+        {:else}
+          Needed for gated models (FLUX): accept the license on the model's Hugging Face page, then paste a read token
+          from huggingface.co/settings/tokens. Kept in the system keychain, sent only to huggingface.co.
+        {/if}
+      </span>
+    </div>
 
     <div class="space-y-1.5 pt-1">
       <h3 class="text-xs text-slate-400">App</h3>

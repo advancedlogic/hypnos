@@ -120,9 +120,26 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## In Progress
 
-_No cards yet._
+- [ ] 🟩 **ENG-11** `P1` FLUX.3 Image Klein in the catalog
+      sd.cpp master-1024 runs it (FLUX.3 DiT + Qwen3-VL 4B encoder + the FLUX.2 VAE; 16 steps,
+      CFG 1, euler; edits with up to 10 reference images). Variants: Q4_K (default) and Q8_0 from
+      `leejet/flux-3-image-klein-GGUF` (public), BF16 from `black-forest-labs/flux-3-image-klein`
+      (gated, DESK-21). License FLUX Kommunity 1.0: non-commercial, or commercial output for
+      Qualifying Users (under US$5M revenue) with content filters; say so in the catalog summary,
+      the README and the website. Generate, edit and measure the memory on the M5 Max (TEST-3).
 
 ## Done
+
+- [x] 🩵 **DESK-21** `P1` A Hugging Face token for model downloads (gated repositories)
+      Gated repositories (Black Forest Labs' FLUX originals) answer 401 without a token from an
+      account that accepted the license. Settings: a "Hugging Face token" field (Check and save
+      asks `whoami-v2`; kept in the OS keychain, `HF_TOKEN` as the fallback, never shown again);
+      `models.rs` sends it only to huggingface.co (`get_url`; reqwest drops it on the CDN
+      redirect) for listings and downloads, and a 401 / 403 says what to do (`http_error`). The
+      catalog marks such files `gated = true`, the Catalog tab shows "needs a Hugging Face token".
+      `fetch-models.sh|.ps1` already send `HF_TOKEN`; they now explain a gated failure.
+      Done: checked against black-forest-labs/flux-3-image-klein (401 without the token, 206 with
+      it; `gated_repository_needs_the_token`, ignored, needs `HF_TOKEN`). `.env` is git-ignored.
 
 - [x] 🩵 **DESK-20** `P1` The lineup shows the pool; choose the model for each job there
       The Models dialog's Lineup tab lists only `models.manifest`'s models, so a model added to the

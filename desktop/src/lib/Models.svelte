@@ -413,6 +413,9 @@
         {/if}
         {#if short && !v.installed}: more than the free space{/if}
       </span>
+      {#if v.gated && !v.installed}
+        <span class="text-amber-300" title="A gated Hugging Face repository: accept the model's license on its Hugging Face page with your account, then save a read token in Settings">needs a Hugging Face token</span>
+      {/if}
       <span class="ml-auto"></span>
       {#if adding?.id === m.id}
         <span class="text-slate-400">{adding.label}</span>

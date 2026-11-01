@@ -137,14 +137,70 @@ fn github_release_api(base: &str) -> Option<String> {
     }
 }
 
+/// Where the Hugging Face token lives in the OS keychain (`hf_token_set`).
+const HF_KEYCHAIN_USER: &str = "huggingface.co";
+
+fn hf_keychain() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(crate::KEYCHAIN_SERVICE, HF_KEYCHAIN_USER).map_err(|e| e.to_string())
+}
+
+/// The Hugging Face token for downloads: the one saved in Settings, else `HF_TOKEN`. It opens
+/// gated repositories whose license the account accepted (FLUX models) and raises rate limits.
+pub(crate) fn hf_token() -> Option<String> {
+    hf_keychain()
+        .ok()
+        .and_then(|e| e.get_password().ok())
+        .or_else(|| std::env::var("HF_TOKEN").ok())
+        .filter(|t| !t.trim().is_empty())
+        .map(|t| t.trim().to_string())
+}
+
+/// `GET url`, with the Hugging Face token only for huggingface.co (reqwest drops it on the
+/// redirect to the CDN, whose signed URL needs none).
+fn get_url(client: &reqwest::Client, url: &str, token: Option<&str>) -> reqwest::RequestBuilder {
+    let req = client.get(url);
+    match token {
+        Some(t) if url.starts_with(HF) => req.bearer_auth(t),
+        _ => req,
+    }
+}
+
+/// The repository of a huggingface.co URL (`org/name`), for messages.
+fn hf_repo(url: &str) -> Option<&str> {
+    let path = url.strip_prefix(HF)?.trim_start_matches('/');
+    let path = path.strip_prefix("api/models/").unwrap_or(path);
+    let mut parts = path.splitn(3, '/');
+    let (org, name) = (parts.next()?, parts.next()?);
+    Some(&path[..org.len() + 1 + name.len()])
+}
+
+/// A failed request as the UI shows it: a gated Hugging Face repository says what to do.
+fn http_error(url: &str, e: reqwest::Error, token: bool) -> String {
+    let status = e.status().map(|s| s.as_u16());
+    match (status, hf_repo(url)) {
+        (Some(401 | 403), Some(repo)) if token => format!(
+            "{repo} refused the Hugging Face token: accept the model's license at {HF}/{repo} \
+             with the token's account, and check the token can read gated repositories"
+        ),
+        (Some(401 | 403), Some(repo)) => format!(
+            "{repo} is gated: accept its license at {HF}/{repo}, then add a Hugging Face token \
+             (huggingface.co/settings/tokens, read access) in Settings"
+        ),
+        _ => format!("{url}: {e}"),
+    }
+}
+
 async fn listing(client: &reqwest::Client, repo: &str) -> Result<Listing, String> {
-    let get = |url: String| async move {
-        client
-            .get(&url)
-            .send()
-            .await
-            .and_then(|r| r.error_for_status())
-            .map_err(|e| format!("{url}: {e}"))
+    let token = hf_token();
+    let get = |url: String| {
+        let token = token.clone();
+        async move {
+            get_url(client, &url, token.as_deref())
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| http_error(&url, e, token.is_some()))
+        }
     };
     if !repo.starts_with("https://") {
         let entries: Vec<HfEntry> = get(format!("{HF}/api/models/{repo}/tree/main?recursive=true"))
@@ -268,6 +324,72 @@ async fn listings(
         .filter_map(|r| cached.get(r).map(|l| (r.to_string(), l.clone())))
         .collect();
     (out, errors)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HfTokenState {
+    /// A token is saved in the keychain.
+    saved: bool,
+    /// No saved token, but `HF_TOKEN` is set in the app's environment.
+    from_env: bool,
+}
+
+/// Whether downloads have a Hugging Face token (never the token itself).
+#[tauri::command]
+pub fn hf_token_state() -> HfTokenState {
+    let saved = hf_keychain().ok().is_some_and(|e| e.get_password().is_ok());
+    HfTokenState {
+        saved,
+        from_env: !saved && std::env::var("HF_TOKEN").is_ok_and(|t| !t.trim().is_empty()),
+    }
+}
+
+/// Saves (or, with none, forgets) the Hugging Face token; listings are asked again with it.
+#[tauri::command]
+pub async fn hf_token_set(
+    state: State<'_, ModelFiles>,
+    token: Option<String>,
+) -> Result<(), String> {
+    let entry = hf_keychain()?;
+    match token
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+    {
+        Some(t) => entry.set_password(&t).map_err(|e| e.to_string())?,
+        None => match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(e) => return Err(e.to_string()),
+        },
+    }
+    state.listings.lock().await.clear();
+    Ok(())
+}
+
+/// Asks Hugging Face who a token belongs to: the account name, or why it was refused.
+#[tauri::command]
+pub async fn hf_token_check(token: String) -> Result<String, String> {
+    #[derive(Deserialize)]
+    struct WhoAmI {
+        name: String,
+    }
+    let url = format!("{HF}/api/whoami-v2");
+    let resp = http()?
+        .get(&url)
+        .bearer_auth(token.trim())
+        .send()
+        .await
+        .map_err(|e| format!("could not reach Hugging Face: {e}"))?;
+    if matches!(resp.status().as_u16(), 401 | 403) {
+        return Err("Hugging Face refused the token".into());
+    }
+    let who: WhoAmI = resp
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(who.name)
 }
 
 /// `models.manifest`: the bundled copy, else this checkout's.
@@ -636,7 +758,8 @@ async fn fetch(
 
     let complete_already = f.size.is_some_and(|s| s == from && s > 0);
     if !complete_already {
-        let mut req = client.get(&f.url);
+        let token = hf_token();
+        let mut req = get_url(client, &f.url, token.as_deref());
         if from > 0 {
             req = req.header(reqwest::header::RANGE, format!("bytes={from}-"));
         }
@@ -644,7 +767,7 @@ async fn fetch(
             .send()
             .await
             .and_then(|r| r.error_for_status())
-            .map_err(|e| format!("{}: {e}", f.url))?;
+            .map_err(|e| http_error(&f.url, e, token.is_some()))?;
         // 206: the range is honoured; 200: the host sends the whole file again.
         let append = from > 0 && resp.status() == reqwest::StatusCode::PARTIAL_CONTENT;
         if !append {
@@ -879,6 +1002,69 @@ mod tests {
         tts    org/tts        onnx/fp32.onnx tts/model.onnx      macos-arm64\n\
         tts    org/tts        voices/        tts/voices/         all\n\
         doc    https://github.com/o/r/releases/download/models-v1  layout.onnx  doc/layout.onnx  all\n";
+
+    #[test]
+    fn hugging_face_repos_and_gated_errors() {
+        assert_eq!(
+            hf_repo(
+                "https://huggingface.co/api/models/black-forest-labs/flux-3-image-klein/tree/main"
+            ),
+            Some("black-forest-labs/flux-3-image-klein")
+        );
+        assert_eq!(
+            hf_repo("https://huggingface.co/org/chat-GGUF/resolve/main/chat.gguf"),
+            Some("org/chat-GGUF")
+        );
+        assert_eq!(hf_repo("https://github.com/org/repo/releases/x"), None);
+    }
+
+    #[test]
+    fn the_token_goes_only_to_hugging_face() {
+        let client = http().unwrap();
+        let hf = get_url(
+            &client,
+            "https://huggingface.co/org/m/resolve/main/a",
+            Some("t"),
+        )
+        .build()
+        .unwrap();
+        assert_eq!(hf.headers()["authorization"], "Bearer t");
+        let gh = get_url(
+            &client,
+            "https://github.com/org/r/releases/download/a",
+            Some("t"),
+        )
+        .build()
+        .unwrap();
+        assert!(gh.headers().get("authorization").is_none());
+    }
+
+    /// Against Hugging Face with a token whose account accepted FLUX.3's license:
+    /// `HF_TOKEN=... cargo test -- --ignored gated_repository`.
+    #[tokio::test]
+    #[ignore]
+    async fn gated_repository_needs_the_token() {
+        let url = "https://huggingface.co/black-forest-labs/flux-3-image-klein/resolve/main/model.safetensors";
+        let client = http().unwrap();
+        let refused = get_url(&client, url, None)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+            .unwrap_err();
+        let message = http_error(url, refused, false);
+        assert!(
+            message.contains("is gated") && message.contains("Settings"),
+            "{message}"
+        );
+        let token = hf_token().expect("HF_TOKEN");
+        let resp = get_url(&client, url, Some(&token))
+            .header(reqwest::header::RANGE, "bytes=0-15")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::PARTIAL_CONTENT);
+        assert_eq!(resp.bytes().await.unwrap().len(), 16);
+    }
 
     #[test]
     fn manifest_lines_for_this_platform() {

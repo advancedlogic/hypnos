@@ -324,6 +324,7 @@ that modality (primary or additional).
 | `variants[].size_bytes` | this machine's files (`files[].platform`: `all`, `macos-arm64`, `other`) |
 | `files[].role` | the config key the file fills: `weights`, `aux` (projector or VAE), `text_encoder`, `tokenizer`, `voices`; `data` = needed beside the weights, named by no key |
 | `files[].repo`, `remote` | a Hugging Face repository (download `https://huggingface.co/<repo>/resolve/main/<remote>`) or an `https://` base URL `remote` is appended to; a `remote` ending in `/` is a whole folder |
+| `files[].gated` | present (`true`) only for a file from a gated Hugging Face repository: the download needs a token from an account that accepted the model's license |
 | `files[].local` | path under `models_dir`; `entry`, when present, is the file inside a folder the config names |
 | `files[].present`, `outdated` | on disk (a folder: not empty); `outdated` = present with another size than listed |
 | `installed`, `outdated` | every file present; some present file has another size (re-download it) |

@@ -159,6 +159,10 @@ pub struct CatalogFile {
     pub size: u64,
     #[serde(default)]
     pub platform: Platform,
+    /// A gated Hugging Face repository: the download needs a token whose account accepted the
+    /// model's license (`HF_TOKEN` for the fetch scripts, Settings in the desktop app).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub gated: bool,
 }
 
 impl ModelCatalog {

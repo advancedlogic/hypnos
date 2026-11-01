@@ -13,7 +13,7 @@ mod web;
 use tauri::Manager;
 
 /// The keychain service name; the account is the server's origin, so each server keeps its key.
-const KEYCHAIN_SERVICE: &str = "dev.hypnos.desktop";
+pub(crate) const KEYCHAIN_SERVICE: &str = "dev.hypnos.desktop";
 
 /// `http://host:port` of a server URL; only http and https are accepted.
 fn origin_of(server_url: &str) -> Result<String, String> {
@@ -109,6 +109,9 @@ pub fn run() {
             local_server::local_server_stop_port,
             models::models_catalog,
             models::models_download,
+            models::hf_token_state,
+            models::hf_token_set,
+            models::hf_token_check,
             models::models_cancel,
             models::models_set_dir,
             catalog::models_catalog_entries,
