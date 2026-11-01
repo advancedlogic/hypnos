@@ -241,7 +241,7 @@ the model pool). See `docs/security-review-2026-11-01.md`.
 
 ```bash
 docker run --gpus all -p 9999:9999 -v ./models:/opt/hypnos/models \
-  -e HYPNOS_API_KEYS=... --restart unless-stopped ghcr.io/advancedlogic/hypnos:0.6.0
+  -e HYPNOS_API_KEYS=... --restart unless-stopped ghcr.io/advancedlogic/hypnos:0.7.0
 ```
 
 Mount your own `hypnos.toml` over `/opt/hypnos/hypnos.toml` or point `HYPNOS_CONFIG` at a

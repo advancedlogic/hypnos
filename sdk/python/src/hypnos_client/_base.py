@@ -11,7 +11,7 @@ import httpx
 
 from .errors import APIError, StreamError, error_class
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 DEFAULT_BASE_URL = "http://127.0.0.1:9999"
 #: Chat, images and documents may pay a model load: keep at or above the server's
