@@ -142,6 +142,7 @@ fn load_sd(cfg: &ModelConfig, gpu_layers: u32, n_threads: i32) -> Result<LoadedS
         ("aux_weights_path (VAE)", cfg.aux_weights_path.as_ref()),
     ] {
         match p {
+            None if label.starts_with("aux") && cfg.image.pixel_space => {}
             Some(p) if p.exists() => {}
             Some(p) => {
                 return Err(HypnosError::Config(format!(
@@ -161,7 +162,12 @@ fn load_sd(cfg: &ModelConfig, gpu_layers: u32, n_threads: i32) -> Result<LoadedS
 
     let diffusion = cstring(&cfg.weights_path)?;
     let llm = cstring(cfg.text_encoder_path.as_ref().expect("checked above"))?;
-    let vae = cstring(cfg.aux_weights_path.as_ref().expect("checked above"))?;
+    // A pixel-space model (Iris) has no VAE.
+    let vae = cfg
+        .aux_weights_path
+        .as_ref()
+        .map(|p| cstring(p))
+        .transpose()?;
     let tokenizer = match &cfg.tokenizer_path {
         Some(p) if p.exists() => Some(cstring(p)?),
         Some(p) => {
@@ -179,7 +185,9 @@ fn load_sd(cfg: &ModelConfig, gpu_layers: u32, n_threads: i32) -> Result<LoadedS
         sd::sd_ctx_params_init(&mut p);
         p.diffusion_model_path = diffusion.as_ptr();
         p.llm_path = llm.as_ptr();
-        p.vae_path = vae.as_ptr();
+        if let Some(v) = &vae {
+            p.vae_path = v.as_ptr();
+        }
         if let Some(t) = &tokenizer {
             p.tokenizer = t.as_ptr();
         }
@@ -220,6 +228,8 @@ struct ImageJob {
     flow_shift: Option<f32>,
     /// Reference images, decoded to RGB (`/v1/images/edits`).
     references: Vec<image::RgbImage>,
+    /// A distilled model's own noise schedule (`[models.image] sigmas`).
+    sigmas: Option<Vec<f32>>,
     seed: i64,
     count: u32,
 }
@@ -314,6 +324,13 @@ fn run_image_job_inner(loaded: &LoadedSd, job: &ImageJob) -> Result<Vec<Vec<u8>>
         }
         if let Some(shift) = job.flow_shift {
             g.sample_params.flow_shift = shift;
+        }
+        // sd.cpp reads the schedule during the call; `job` owns it until it returns.
+        let mut sigmas = job.sigmas.clone().unwrap_or_default();
+        if !sigmas.is_empty() {
+            g.sample_params.custom_sigmas = sigmas.as_mut_ptr();
+            g.sample_params.custom_sigmas_count = sigmas.len() as i32;
+            g.sample_params.sample_steps = sigmas.len().saturating_sub(1).max(1) as i32;
         }
         // sd.cpp reads the pixels during the call; `job` owns them until it returns.
         let mut refs: Vec<sd::sd_image_t> = job
@@ -492,6 +509,7 @@ impl ModelBackend for GgmlDiffusionBackend {
             sample_method: self.config.image.sample_method.clone(),
             flow_shift: self.config.image.flow_shift,
             references,
+            sigmas: self.config.image.sigmas.clone(),
             seed,
             count: req.n.clamp(1, max_n),
         };

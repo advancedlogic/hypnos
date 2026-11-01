@@ -369,6 +369,13 @@ pub struct ImageDefaults {
     /// The model edits images given as references (`POST /v1/images/edits`; FLUX.2 klein).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub edit: bool,
+    /// The model diffuses in pixel space and needs no VAE (Iris): `aux_weights_path` may be unset.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pixel_space: bool,
+    /// The noise schedule a distilled model was trained with, ending at 0 (Iris Turbo: 1, 0.938,
+    /// 0.833, 0.625, 0); one step fewer than values. Unset = the sampler's schedule for `steps`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sigmas: Option<Vec<f32>>,
 }
 
 impl ImageDefaults {
@@ -1224,9 +1231,9 @@ impl HypnosConfig {
                     if m.text_encoder_path.is_none() {
                         r.errors.push(format!("'{id}': ggml_diffusion needs text_encoder_path (LLM text encoder GGUF)"));
                     }
-                    if m.aux_weights_path.is_none() {
+                    if m.aux_weights_path.is_none() && !m.image.pixel_space {
                         r.errors.push(format!(
-                            "'{id}': ggml_diffusion needs aux_weights_path (VAE)"
+                            "'{id}': ggml_diffusion needs aux_weights_path (VAE), or [models.image] pixel_space = true"
                         ));
                     }
                 }
@@ -1840,5 +1847,28 @@ weights_path = "encoder.onnx"
         }
         let c = HypnosConfig::from_toml_str(&block("")).unwrap();
         assert!(c.models[0].image.is_empty());
+        // Without a VAE only a pixel-space model is valid (Iris).
+        let base = "text_encoder_path = \"t.gguf\"\n";
+        let no_vae = HypnosConfig::from_toml_str(&block(base))
+            .unwrap()
+            .validate(std::path::Path::new("."));
+        assert!(
+            no_vae
+                .errors
+                .iter()
+                .any(|e| e.contains("needs aux_weights_path")),
+            "{:?}",
+            no_vae.errors
+        );
+        let pixel = HypnosConfig::from_toml_str(&block(&format!(
+            "{base}image = {{ pixel_space = true, sigmas = [1.0, 0.5, 0.0] }}"
+        )))
+        .unwrap();
+        assert_eq!(pixel.models[0].image.sigmas, Some(vec![1.0, 0.5, 0.0]));
+        assert!(!pixel
+            .validate(std::path::Path::new("."))
+            .errors
+            .iter()
+            .any(|e| e.contains("aux_weights_path")));
     }
 }

@@ -107,11 +107,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       probably makes llama.cpp b11982 re-capture its CUDA graph every step again. Check with the
       graph counters / `GGML_CUDA_DISABLE_GRAPHS`, try 2 slots and 4 x 8k, and ship the shape that
       batches well (on Metal 4 slots gave 1.43x).
-- [ ] 🟩 **ENG-10** `P3` Image engine: optional VAE and other encoders; Parakeet transcription
-      Iris-3B works in pixel space (no VAE; Apache-2.0), Krea 2 uses the Wan 2.1 VAE, LLaDA-Image
-      a 9.7 GB diffusion-LLM encoder: make `aux_weights_path` optional and check each pipeline.
-      NVIDIA Parakeet TDT 0.6B v3 (25 languages, fast) runs through libmtmd but is not a chat
-      model: a transcription-only path.
 
 ## In Progress
 
@@ -119,6 +114,16 @@ _No cards yet._
 
 ## Done
 
+- [x] 🟩 **ENG-10** `P3` Image engine: optional VAE and other encoders; Parakeet transcription
+      Iris-3B works in pixel space (no VAE; Apache-2.0), Krea 2 uses the Wan 2.1 VAE, LLaDA-Image
+      a 9.7 GB diffusion-LLM encoder: make `aux_weights_path` optional and check each pipeline.
+      NVIDIA Parakeet TDT 0.6B v3 (25 languages, fast) runs through libmtmd but is not a chat
+      model: a transcription-only path.
+      Done: `[models.image] pixel_space` (no VAE) and `sigmas` (a distilled model's own
+      schedule, passed as sd.cpp custom sigmas); Iris-3B Turbo in the catalog (Apache-2.0, 4 steps,
+      10 s for 1024x1024 with the load on the M5 Max, measured). Not done: Krea 2 (its community
+      license was not read), LLaDA-Image (needs an embeddings-connector file and our own
+      conversion), Parakeet (published only for whisper.cpp / parakeet.cpp, not as a libmtmd GGUF).
 - [x] 🟪 **API-13** `P3` `POST /v1/images/edits` (OpenAI images edit)
       Image + prompt (+ mask) in, image out, for the sd.cpp models that edit: Qwen-Image 2.1
       (Qwen3-VL 8B encoder; Qwen Research license, likely non-commercial), Fibo 2.0 Edit Turbo,

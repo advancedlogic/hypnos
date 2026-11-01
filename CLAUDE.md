@@ -327,7 +327,8 @@ remote fetches go through `media.rs` `PublicOnly` (no loopback / private / link-
   exceeds half of physical RAM. Measurements: `docs/bench/swap-cuda-2026-10-30.md`.
 - `diffusion.rs`: `ggml_diffusion` (stable-diffusion.cpp: MOSS-Image, Z-Image-Turbo, FLUX.2
   klein 4B, ERNIE-Image-Turbo; any DiT + LLM encoder + VAE family sd.cpp knows). `[models.image]`
-  (`ImageDefaults`: steps, cfg_scale, sample_method, flow_shift) holds the model card's request
+  (`ImageDefaults`: steps, cfg_scale, sample_method, flow_shift, a distilled model's `sigmas`,
+  `pixel_space` for a model without a VAE such as Iris) holds the model card's request
   defaults; a request's `steps` / `cfg_scale` win. `POST /v1/images/edits` (API-13, multipart)
   passes its images as sd.cpp reference images (`ImageGenerationRequest::reference_images`) to
   models with `[models.image] edit = true` (FLUX.2 klein); masks are refused. sd.cpp is built as a
