@@ -129,6 +129,21 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## In Progress
 
+- [ ] ⬛ **BUILD-13** `P1` Recompile llama.cpp and sd.cpp only when something that shapes them changed
+      Every CI run rebuilt both engines from scratch (fresh runner: new clone, new CMake build
+      folder; sccache only shortens it, and not CUDA on Windows until BUILD-12), also for a
+      change to Rust only. `.github/actions/engine-cache` restores the previous CMake build of
+      each engine into `target/<profile>/build/{llama-cpp-sys-2,diffusion-rs-sys}-*/out`, keyed on
+      the vendor pins and patches, the CMAKE_* / CUDA* / GGML_* / LLAMA_* environment, rustc,
+      the profile and the features, and saves a new one (object files, CMakeFiles and sd.cpp's
+      source copy pruned) after a build that did not reuse one. The llama-cpp-rs and diffusion-rs
+      patches make the build scripts skip CMake when `HYPNOS_ENGINE_KEY` equals the stamp the
+      build wrote (`hypnos-engine.key` in OUT_DIR); local builds without the variable are
+      unchanged. Used by build-server.yml (release) and ci.yml's build jobs; release's manual run
+      has a "Rebuild engines" input. Verified locally (Metal): pruned builds restored, both
+      scripts reused them, the server links and runs. To verify in CI: the second run's Build
+      step without the engines.
+
 - [ ] ⬛ **BUILD-12** `P1` Cut the Windows CUDA release build (3h10m) to the Linux one's time
       After BUILD-11 Windows CUDA is the release's critical path: 3h10m in run 41273996212 against
       1h31m on Linux, because nvcc does not go through sccache on Windows (CMake's CUDA test compile

@@ -52,3 +52,35 @@ index 7eaf208..2d11fa4 100644
              },
          }
      }
+diff --git a/llama-cpp-sys-2/build.rs b/llama-cpp-sys-2/build.rs
+index aa4ce8b..9eca703 100644
+--- a/llama-cpp-sys-2/build.rs
++++ b/llama-cpp-sys-2/build.rs
+@@ -1244,7 +1244,26 @@ fn main() {
+         .very_verbose(std::env::var("CMAKE_VERBOSE").is_ok()) // Not verbose by default
+         .always_configure(false);
+ 
+-    let build_dir = config.build();
++    // Hypnos (BUILD-13): CI restores the previous build of llama.cpp into OUT_DIR and sets
++    // HYPNOS_ENGINE_KEY, a hash of the engine pins, patches and build settings. When the stamp of
++    // that build carries the same key, CMake is not run again: only the Rust side recompiles.
++    // Without the variable (local builds) nothing changes.
++    println!("cargo:rerun-if-env-changed=HYPNOS_ENGINE_KEY");
++    let engine_key = env::var("HYPNOS_ENGINE_KEY").ok().filter(|k| !k.trim().is_empty());
++    let stamp = out_dir.join("hypnos-engine.key");
++    let reuse = engine_key.as_deref().is_some_and(|key| {
++        std::fs::read_to_string(&stamp).is_ok_and(|s| s.trim() == key.trim())
++    });
++    let build_dir = if reuse {
++        println!("cargo:warning=llama.cpp: reusing the cached engine build (HYPNOS_ENGINE_KEY)");
++        out_dir.clone()
++    } else {
++        let built = config.build();
++        if let Some(key) = &engine_key {
++            let _ = std::fs::write(&stamp, key.trim());
++        }
++        built
++    };
+ 
+     // The CMake build installs a ggml package config. Tell the dependent crates where it
+     // is, in the DEP_LLAMA_GGML_CMAKE_DIR variable. A dependent crate that also builds

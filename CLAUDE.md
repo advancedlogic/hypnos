@@ -85,6 +85,12 @@ Build notes:
   `Dockerfile`), local builds for the machine's GPU (`setup-build-env`). `CUDAARCHS` alone does
   nothing: ggml sets its 9-target default before CMake reads it. The CMake builds of the
   release run through sccache (GitHub Actions cache; `vars.HYPNOS_SCCACHE = "off"` disables it).
+  The engines' CMake builds themselves are kept between runs (BUILD-13,
+  `.github/actions/engine-cache`): keyed on the vendor pins and patches, the CMake / CUDA / ggml
+  environment, rustc, the profile and the features, restored into `target/<profile>/build/*-sys-*/out`,
+  and the vendored build scripts skip CMake when `HYPNOS_ENGINE_KEY` matches the build's stamp,
+  so a Rust-only change does not recompile llama.cpp or sd.cpp. A manual run of release with
+  "Rebuild engines" (or any change to what the key hashes) builds them again.
 - `.github/workflows/release.yml` builds the CUDA (Linux, Windows) and Metal archives (through
   `build-server.yml`, called three times: `build-linux`, `build-windows`, `build-macos`; the desktop
   job waits for `build-macos` because the macOS app bundles that server, the Docker image for

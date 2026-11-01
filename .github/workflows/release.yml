@@ -6,6 +6,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      rebuild_engines:
+        description: Rebuild llama.cpp and stable-diffusion.cpp (they are reused from the last build while their pins, patches and settings are unchanged)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -53,6 +58,7 @@ jobs:
     uses: ./.github/workflows/build-server.yml
     secrets: inherit
     with:
+      rebuild_engines: ${{ inputs.rebuild_engines == true }}
       platforms: >-
         [{"platform": "linux-x64-cuda", "os": "ubuntu-24.04", "cargo": "-j 2 --features docling-cuda"}]
 
@@ -61,6 +67,7 @@ jobs:
     uses: ./.github/workflows/build-server.yml
     secrets: inherit
     with:
+      rebuild_engines: ${{ inputs.rebuild_engines == true }}
       platforms: >-
         [{"platform": "windows-x64-cuda", "os": "windows-2022", "cargo": "-j 2 --features docling-cuda"}]
 
@@ -69,6 +76,7 @@ jobs:
     uses: ./.github/workflows/build-server.yml
     secrets: inherit
     with:
+      rebuild_engines: ${{ inputs.rebuild_engines == true }}
       platforms: >-
         [{"platform": "macos-arm64-metal", "os": "macos-15", "cargo": "--no-default-features --features metal"}]
 

@@ -11,6 +11,10 @@ on:
       platforms:
         type: string
         required: true
+      rebuild_engines:
+        description: build llama.cpp and stable-diffusion.cpp again instead of reusing the cached builds
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -113,6 +117,16 @@ jobs:
         run: ./backend/scripts/vendor.sh
 
       # pwsh, not bash: Git Bash puts its own /usr/bin/link.exe ahead of MSVC's on Windows.
+      # BUILD-13: reuse the previous CMake builds of the engines when nothing that shapes them
+      # changed (pins, patches, CMake / CUDA settings, rustc, features), so a Rust-only change
+      # does not recompile llama.cpp and sd.cpp. A manual run of release can force a rebuild.
+      - name: Engine builds (restore)
+        uses: ./.github/actions/engine-cache
+        with:
+          mode: restore
+          salt: ${{ matrix.platform }} ${{ matrix.cargo }}
+          rebuild: ${{ inputs.rebuild_engines }}
+
       - name: Build
         working-directory: backend
         shell: pwsh
@@ -200,3 +214,9 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
           if-no-files-found: error
+
+      # After the archive is uploaded (pruning removes the object files the package does not need).
+      - name: Engine builds (save)
+        uses: ./.github/actions/engine-cache
+        with:
+          mode: save

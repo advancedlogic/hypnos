@@ -1,0 +1,83 @@
+name: Engine build cache
+description: >
+  Keeps the CMake builds of llama.cpp and stable-diffusion.cpp between runs (BUILD-13). `restore`
+  (before cargo) brings back the previous build and sets HYPNOS_ENGINE_KEY; the vendored build
+  scripts then skip CMake when the build's stamp carries that key, so a Rust-only change does not
+  recompile the engines. `save` (after a successful build) stores it, without the object files and
+  the source copy. The key hashes everything that shapes the engines: the vendor pins and patches,
+  this action, the CMake / CUDA / ggml settings in the environment, the rustc version, the profile
+  and `salt` (the platform and features). Any change rebuilds them; `rebuild: true` does it on demand.
+inputs:
+  mode:
+    description: restore or save
+    required: true
+  profile:
+    description: the cargo profile directory (release or debug)
+    default: release
+  salt:
+    description: what else shapes the build (platform, cargo features)
+    default: ""
+  rebuild:
+    description: "true: skip the restore and build the engines again (the new build is saved)"
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Engine build key
+      if: inputs.mode == 'restore'
+      shell: bash
+      run: |
+        files=(backend/scripts/vendor.sh .github/actions/engine-cache/action.yml)
+        files+=($(ls backend/vendor/patches/*.patch))
+        # The environment the engines' CMake builds read (not the compiler cache launchers,
+        # which do not change what is built).
+        settings=$(env | grep -E '^(CMAKE_|CUDA|GGML_|LLAMA_|CC=|CXX=|CFLAGS=|CXXFLAGS=|MACOSX_DEPLOYMENT_TARGET=)' \
+          | grep -v '_COMPILER_LAUNCHER=' | sort)
+        sum=$( { cat "${files[@]}"; echo "${{ inputs.salt }}"; echo "$settings"; rustc -V; } | sha256sum | cut -c1-24)
+        base="engines-v1-${RUNNER_OS}-${{ inputs.profile }}-$sum"
+        echo "ENGINE_CACHE_BASE=$base" >> "$GITHUB_ENV"
+        # One entry per run, restored by prefix: a forced rebuild saves a newer one without
+        # colliding with the old key.
+        echo "ENGINE_CACHE_KEY=$base-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+        echo "HYPNOS_ENGINE_KEY=$base" >> "$GITHUB_ENV"
+        echo "engine build key: $base"
+    - name: Restore the engine builds
+      id: restore
+      if: inputs.mode == 'restore' && inputs.rebuild != 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          backend/target/${{ inputs.profile }}/build/llama-cpp-sys-2-*/out
+          backend/target/${{ inputs.profile }}/build/diffusion-rs-sys-*/out
+        key: ${{ env.ENGINE_CACHE_KEY }}
+        restore-keys: ${{ env.ENGINE_CACHE_BASE }}-
+    - name: Engine builds restored
+      if: inputs.mode == 'restore'
+      shell: bash
+      run: |
+        if [ -n "${{ steps.restore.outputs.cache-matched-key }}" ]; then
+          echo "ENGINE_CACHE_RESTORED=1" >> "$GITHUB_ENV"
+          echo "reusing the engine builds of ${{ steps.restore.outputs.cache-matched-key }}"
+        else
+          echo "no engine build for this key${{ inputs.rebuild == 'true' && ' (rebuild requested)' || '' }}: CMake builds them"
+        fi
+    - name: Prune the engine builds
+      if: inputs.mode == 'save' && env.ENGINE_CACHE_RESTORED != '1'
+      shell: bash
+      run: |
+        for d in backend/target/${{ inputs.profile }}/build/llama-cpp-sys-2-*/out backend/target/${{ inputs.profile }}/build/diffusion-rs-sys-*/out; do
+          [ -d "$d" ] || continue
+          find "$d" -type f \( -name '*.o' -o -name '*.obj' \) -delete
+          find "$d" -type d -name CMakeFiles -prune -exec rm -rf {} +
+          # diffusion-rs copies the sd.cpp sources here when they are missing: not worth keeping.
+          rm -rf "$d/stable-diffusion.cpp"
+          du -sh "$d"
+        done
+    - name: Save the engine builds
+      if: inputs.mode == 'save' && env.ENGINE_CACHE_RESTORED != '1'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          backend/target/${{ inputs.profile }}/build/llama-cpp-sys-2-*/out
+          backend/target/${{ inputs.profile }}/build/diffusion-rs-sys-*/out
+        key: ${{ env.ENGINE_CACHE_KEY }}

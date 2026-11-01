@@ -78,6 +78,14 @@ jobs:
           workspaces: backend -> target
           key: ${{ matrix.name }}
           cache-on-failure: true
+      # The engines' CMake builds, kept between runs while their pins, patches and settings are
+      # unchanged (BUILD-13; rust-cache leaves the vendored path crates out).
+      - name: Engine builds (restore)
+        uses: ./.github/actions/engine-cache
+        with:
+          mode: restore
+          profile: debug
+          salt: ${{ matrix.name }} ${{ matrix.features }}
       # pwsh, not bash: Git Bash puts its own /usr/bin/link.exe ahead of MSVC's on Windows.
       - name: Build
         working-directory: backend
@@ -87,6 +95,11 @@ jobs:
         working-directory: backend
         shell: pwsh
         run: cargo test --workspace --no-default-features ${{ matrix.features }}
+      - name: Engine builds (save)
+        uses: ./.github/actions/engine-cache
+        with:
+          mode: save
+          profile: debug
       # The release archives and the Docker image build with docling-cuda (ONNX Runtime's CUDA
       # provider, prebuilt by ort): link it here so a broken provider build fails CI, not a release.
       - name: Build the docling-cuda feature
