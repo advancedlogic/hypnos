@@ -913,6 +913,7 @@ async fn concurrent_clients_and_cancellations_leave_nothing_behind() {
         }));
     }
     let mut finished = 0;
+    let mut served = 0;
     for t in tasks {
         if let Some(status) = t.await.expect("no panic") {
             // 429: the model's queue is full; 507: the other two models are both busy, so
@@ -924,6 +925,7 @@ async fn concurrent_clients_and_cancellations_leave_nothing_behind() {
                 "unexpected {status}"
             );
             finished += 1;
+            served += usize::from(status == StatusCode::OK);
         }
     }
     assert!(
@@ -963,7 +965,13 @@ async fn concurrent_clients_and_cancellations_leave_nothing_behind() {
         .iter()
         .map(|e| e.generations.load(Ordering::SeqCst))
         .sum();
-    assert!(generated >= 60, "generations ran: {generated}");
+    // Each 200 started a generation (counted at its start). Not a fixed number: how many requests
+    // get through before their timeout depends on the timer resolution (~15.6 ms on Windows).
+    assert!(served > 0, "no request was served");
+    assert!(
+        generated >= served,
+        "generations ran: {generated}, served: {served}"
+    );
     // Every model still serves.
     for id in ["a", "b", "c"] {
         let body = format!(
