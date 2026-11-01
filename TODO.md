@@ -65,21 +65,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       `WINDOWS_CERTIFICATE` repository secrets (docs/signing.md) and make a release with them so
       the installers are Developer ID signed and notarized.
 
-- [ ] 🟫 **MEM-6** `P2` Make scheduling workload-aware, not only memory-aware
-      Residency and eviction today follow priority, recency and fit. Add what a decision costs
-      and what comes next: per model an estimated promotion cost (from measured
-      `tier_switch_phases`, by tier), the cost of restoring its cache (KV parking, MEM-4),
-      expected request rate (decayed counters per model) and latency sensitivity (from the
-      profile, MEM-7). Evict the model whose return is cheapest and least likely, not just the
-      lowest priority. Sequences (speech-to-text -> chat -> speech, the voice turn; a document
-      conversion followed by chat) are declared, not guessed: a client or the profile names the
-      next stage and the scheduler pre-stages its model (Tier 2, or Tier 1 when it fits) while the
-      current one runs (the pipeline lease of `docs/execution-efficiency-plan.md`, item E).
-      Learning sequences from the request log is left for later: it is hard to test and makes
-      the scheduler's choices hard to predict.
-      Acceptance: scheduler tests with mock costs; a voice-turn benchmark (bench.sh) shows the
-      second stage no longer paying a cold promotion.
-
 - [ ] 🟧 **PERF-10** `P2` Deadline-aware admission and predictable latency
       A request that succeeds in 12 s when 1 s was expected is a failure in practice. Estimate the
       wait at admission (queue depth x recent service time, plus a promotion if the model is cold)
@@ -138,6 +123,26 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🟫 **MEM-6** `P2` Make scheduling workload-aware, not only memory-aware
+      Residency and eviction today follow priority, recency and fit. Add what a decision costs
+      and what comes next: per model an estimated promotion cost (from measured
+      `tier_switch_phases`, by tier), the cost of restoring its cache (KV parking, MEM-4),
+      expected request rate (decayed counters per model) and latency sensitivity (from the
+      profile, MEM-7). Evict the model whose return is cheapest and least likely, not just the
+      lowest priority. Sequences (speech-to-text -> chat -> speech, the voice turn; a document
+      conversion followed by chat) are declared, not guessed: a client or the profile names the
+      next stage and the scheduler pre-stages its model (Tier 2, or Tier 1 when it fits) while the
+      current one runs (the pipeline lease of `docs/execution-efficiency-plan.md`, item E).
+      Learning sequences from the request log is left for later: it is hard to test and makes
+      the scheduler's choices hard to predict.
+      Acceptance: scheduler tests with mock costs; a voice-turn benchmark (bench.sh) shows the
+      second stage no longer paying a cold promotion.
+      Done 2026-11-01: eviction within a priority by reload time x decayed request rate (measured
+      reload times per model, shown in `/v1/memory/status`), `x-hypnos-next-model` pre-staging the
+      declared next stage (voice turn on Apple Silicon: 157 ms cold load -> 0). KV-restore cost
+      not weighed separately (parking restores in the load itself); latency sensitivity is the
+      priority and the profile; no bench.sh scenario yet. (commit 636d670)
 
 - [x] 🟫 **MEM-7** `P2` Add workload profiles with latency objectives
       Presets that fill in config values, not a new layer of behaviour. Named profiles that turn
