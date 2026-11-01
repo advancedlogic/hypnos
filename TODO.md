@@ -124,6 +124,19 @@ _No cards yet._
 
 ## Done
 
+- [x] 🩵 **DESK-20** `P1` The lineup shows the pool; choose the model for each job there
+      The Models dialog's Lineup tab lists only `models.manifest`'s models, so a model added to the
+      pool from the Catalog tab never appears there; and with several models for one job (two
+      image models, two that transcribe) the choice is a hidden Settings field that the chat's
+      model overrides for vision and speech to text. (1) Lineup: rows for the pool's models outside
+      the manifest (from the catalog view: id, job, variant, size, `added` badge) and any other
+      model the running server has. (2) "Model for each job" at the top of the Lineup for the jobs
+      more than one enabled model can do, the same `routes` as Settings (`saveRoutes` in
+      `App.svelte`, `hypnos_set_routes`), applied on the next request without a restart; the job
+      list shared in `src/lib/jobs.js`. (3) `route` (`hypnos.rs`): an explicit choice wins over
+      the chat's model, as Settings' "Automatic picks the chat's model" says; a choice that is
+      disabled or gone falls back. Docs: desktop/README.md, CLAUDE.md.
+
 - [x] 🟩 **ENG-10** `P3` Image engine: optional VAE and other encoders; Parakeet transcription
       Iris-3B works in pixel space (no VAE; Apache-2.0), Krea 2 uses the Wan 2.1 VAE, LLaDA-Image
       a 9.7 GB diffusion-LLM encoder: make `aux_weights_path` optional and check each pipeline.

@@ -3,6 +3,7 @@
   import * as api from './hypnos.js';
   import { appPrefs, applyAppPrefs, isMac } from './appPrefs.js';
   import { normalizeUrl } from './connection.js';
+  import { JOBS, servingModels as serving } from './jobs.js';
 
   /** `routes`: modality -> model id; `models`: the enabled models with their `modalities`. */
   let { connection, routes, models, onsave, onclose } = $props();
@@ -23,15 +24,7 @@
   // Kokoro voices (any id the server knows works; OpenAI names are mapped).
   const VOICES = ['af_heart', 'af_bella', 'af_nova', 'af_sarah', 'am_adam', 'am_michael', 'bf_emma', 'bm_george'];
 
-  // The jobs the app hands to a model besides the chat itself (DESK-7..11 use them).
-  const JOBS = [
-    ['vision', 'Images in messages'],
-    ['speech_to_text', 'Speech to text'],
-    ['text_to_speech', 'Text to speech'],
-    ['image_generation', 'Image generation'],
-    ['document_conversion', 'Documents and URLs'],
-  ];
-  const servingModels = (modality) => models.filter((m) => m.modalities.includes(modality));
+  const servingModels = (modality) => serving(models, modality);
   let showKey = $state(false);
   let testing = $state(false);
   let saving = $state(false);

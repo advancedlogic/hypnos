@@ -280,9 +280,10 @@ fn serves(m: &ModelStatus, modality: &str) -> bool {
             || (m.modalities.is_empty() && m.modality == modality))
 }
 
-/// Picks the model for a job: the preferred one (the chat's model) when it serves the
-/// modality, else the one chosen in the settings, else an enabled model that serves it,
-/// preferring one already in Tier 1 so no swap is needed. Never a hard-coded id.
+/// Picks the model for a job: the one chosen for it (Settings or the Models dialog's lineup)
+/// when it is enabled and serves the modality, else the preferred one (the chat's model) when it
+/// does, else an enabled model that serves it, preferring one already in Tier 1 so no swap is
+/// needed. Never a hard-coded id.
 pub fn route<'a>(
     models: &'a [ModelStatus],
     modality: &str,
@@ -290,9 +291,9 @@ pub fn route<'a>(
     chosen: Option<&str>,
 ) -> Option<&'a str> {
     let find = |id: &str| models.iter().find(|m| m.id == id && serves(m, modality));
-    preferred
+    chosen
         .and_then(find)
-        .or_else(|| chosen.and_then(find))
+        .or_else(|| preferred.and_then(find))
         .or_else(|| {
             let mut candidates: Vec<&ModelStatus> =
                 models.iter().filter(|m| serves(m, modality)).collect();
@@ -867,6 +868,17 @@ mod tests {
             route(&m, "speech_to_text", Some("big"), None),
             Some("small")
         );
+    }
+
+    #[test]
+    fn a_chosen_model_wins_over_the_chat_model() {
+        let m = lineup();
+        assert_eq!(
+            route(&m, "vision", Some("big"), Some("small")),
+            Some("small")
+        );
+        // A choice that cannot do the job (or is gone) is skipped.
+        assert_eq!(route(&m, "vision", Some("big"), Some("tts")), Some("big"));
     }
 
     #[test]

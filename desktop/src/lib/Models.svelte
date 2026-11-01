@@ -2,6 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import * as models from './models.js';
+  import { JOBS, servingModels } from './jobs.js';
 
   /**
    * The local server's model files (DESK-17): pick from the lineup, download with progress,
@@ -10,9 +11,14 @@
    * model's config block); `onchanged` restarts the server after files arrived, a model was
    * added to the config or the folder moved; `onpool` after the running server's pool changed
    * (no restart: it serves the change right away); `firstRun` shows the welcome line; `tab` opens
-   * on `lineup` or `catalog`; `onsetup` opens the guided setup (DESK-18) instead.
+   * on `lineup` or `catalog`; `onsetup` opens the guided setup (DESK-18) instead. `inUse`: the
+   * running server's enabled models (`hypnos_models`), `routes` the model chosen per job and
+   * `onroutes` keeps a new choice (the same as in Settings, applied without a restart).
    */
-  let { config, binary = null, firstRun = false, tab = 'lineup', onchanged, onpool, onsetup = null, onclose } = $props();
+  let {
+    config, binary = null, firstRun = false, tab = 'lineup', onchanged, onpool, onsetup = null, onclose,
+    inUse = [], routes = {}, onroutes = null,
+  } = $props();
   let view = $state(untrack(() => tab)); // 'lineup' | 'catalog'
 
   let cat = $state(null);
@@ -156,6 +162,42 @@
 
   let available = $derived(entries ? entries.filter((m) => !m.inPool) : []);
   let pooled = $derived(entries ? entries.filter((m) => m.inPool) : []);
+
+  /**
+   * The lineup is the manifest's models; models added to the pool from the catalog, and any other
+   * model the running server has, are listed after them so the lineup shows what is configured.
+   */
+  let added = $derived.by(() => {
+    if (!cat) return [];
+    const listed = new Set(cat.models.map((m) => m.id));
+    const rows = [];
+    for (const e of pooled) {
+      if (listed.has(e.id)) continue;
+      listed.add(e.id);
+      const v = e.variants.find((x) => x.quant === e.currentQuant);
+      rows.push({ id: e.id, modality: e.modality, enabled: e.enabled, quant: e.currentQuant, size: v?.size ?? null, installed: v?.installed ?? true });
+    }
+    for (const m of inUse) {
+      if (listed.has(m.id)) continue;
+      listed.add(m.id);
+      rows.push({ id: m.id, modality: m.modalities[0], enabled: true, quant: null, size: null, installed: true });
+    }
+    return rows;
+  });
+
+  /** The jobs that can go to more than one model, with the models that do them. */
+  let choices = $derived(
+    JOBS.map(([modality, label]) => ({ modality, label, options: servingModels(inUse, modality) })).filter(
+      (j) => j.options.length > 1,
+    ),
+  );
+
+  function choose(modality, id) {
+    const next = { ...routes };
+    if (id) next[modality] = id;
+    else delete next[modality];
+    onroutes?.(next);
+  }
 
   /** The variant picked in the row: the user's choice, else the pool's, else the default. */
   function quantOf(entry) {
@@ -447,6 +489,28 @@
             Could not reach every host (offline?): some sizes are unknown and those models cannot be downloaded now.
           </p>
         {/if}
+        {#if choices.length && onroutes}
+          <div class="px-5 pt-3 pb-3 space-y-2 border-b border-slate-800">
+            <h3 class="text-[11px] uppercase tracking-wide text-slate-500">Model for each job</h3>
+            <p class="text-xs text-slate-500">
+              More than one model can do these. The choice applies to the next request, no restart;
+              Automatic uses the chat's model when it can, else one already loaded.
+            </p>
+            <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 items-center">
+              {#each choices as j (j.modality)}
+                <label for="job-{j.modality}" class="text-xs text-slate-400">{j.label}</label>
+                <select id="job-{j.modality}" value={routes[j.modality] ?? ''}
+                  onchange={(e) => choose(j.modality, e.currentTarget.value)}
+                  class="max-w-xs rounded-md bg-slate-950 border border-slate-700 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                  <option value="">Automatic</option>
+                  {#each j.options as m (m.id)}
+                    <option value={m.id}>{m.id}</option>
+                  {/each}
+                </select>
+              {/each}
+            </div>
+          </div>
+        {/if}
         <ul class="divide-y divide-slate-800">
           {#each cat.models as m (m.id)}
             <li class="px-5 py-2.5 flex items-center gap-3 text-sm">
@@ -475,6 +539,20 @@
                   {models.gb(m.size)}
                 {/if}
               </span>
+            </li>
+          {/each}
+          {#each added as m (m.id)}
+            <li class="px-5 py-2.5 flex items-center gap-3 text-sm">
+              <span class="w-4 h-4 {m.installed ? 'text-emerald-400' : 'text-amber-300'}" title={m.installed ? 'Downloaded' : 'Files missing'}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12l5 5L20 7" /></svg>
+              </span>
+              <span class="font-mono text-xs text-slate-200">{m.id}</span>
+              <span class="text-xs text-slate-500">{MODALITY[m.modality] ?? m.modality ?? ''}</span>
+              <span class="text-[10px] px-1.5 rounded bg-indigo-950 text-indigo-300" title="Added to the pool (the Catalog tab changes or removes it)">added{m.quant ? ` · ${m.quant}` : ''}</span>
+              {#if m.enabled === false}
+                <span class="text-[10px] px-1.5 rounded bg-slate-800 text-slate-400" title="Disabled">off</span>
+              {/if}
+              <span class="ml-auto text-xs tabular-nums text-slate-500">{m.size != null ? models.gb(m.size) : ''}</span>
             </li>
           {/each}
         </ul>

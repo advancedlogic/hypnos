@@ -190,13 +190,18 @@
     }
   }
 
+  /** The model chosen per job (Settings, the Models dialog): kept and applied at once. */
+  async function saveRoutes(nextRoutes) {
+    routes = nextRoutes;
+    await save(ROUTES_KEY, nextRoutes);
+    await api.setRoutes(nextRoutes);
+  }
+
   async function onSaveSettings(next, nextRoutes) {
     await saveConnection(next);
     connection = next;
     connected++;
-    routes = nextRoutes;
-    await save(ROUTES_KEY, nextRoutes);
-    await api.setRoutes(nextRoutes);
+    await saveRoutes(nextRoutes);
     settingsOpen = false;
   }
 
@@ -465,7 +470,7 @@
 
 {#if modelsOpen && localSettings?.config}
   <Models config={localSettings.config} binary={localSettings.binary} firstRun={modelsFirstRun} tab={modelsTab} onchanged={restartLocal}
-    onpool={reloadModels}
+    onpool={reloadModels} {routes} inUse={allModels} onroutes={saveRoutes}
     onsetup={localSettings.binary ? () => openSetup() : null}
     onclose={() => (modelsOpen = false)} />
 {/if}

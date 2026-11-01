@@ -251,8 +251,10 @@ the webview has no HTTP permission at all. Failed commands reject with
 `{ kind, message, detail, retryAfterSecs }`, where `message` is the sentence the UI shows.
 
 `route` picks the model for a job from `/v1/memory/status` `modalities`, never from hard-coded
-ids: the chat's model when it serves the modality, then the model chosen in the settings, then
-an enabled model that serves it, preferring one already in Tier 1.
+ids: the model chosen for the job (Settings, or "Model for each job" in the Models dialog's
+Lineup tab; applied on the next request, no restart), then the chat's model when it serves the
+modality, then an enabled model that serves it, preferring one already in Tier 1. The Lineup tab
+lists the manifest's models and, after them, the models added to the pool from the Catalog tab.
 
 ## Layout
 
