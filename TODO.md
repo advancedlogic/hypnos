@@ -65,17 +65,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       `WINDOWS_CERTIFICATE` repository secrets (docs/signing.md) and make a release with them so
       the installers are Developer ID signed and notarized.
 
-- [ ] 🟧 **PERF-10** `P2` Deadline-aware admission and predictable latency
-      A request that succeeds in 12 s when 1 s was expected is a failure in practice. Estimate the
-      wait at admission (queue depth x recent service time, plus a promotion if the model is cold)
-      and expose it (`x-hypnos-estimated-wait-ms`, `/v1/memory/status`); accept an optional
-      deadline (`x-hypnos-deadline-ms` or a body field) and refuse at once with 503 + `Retry-After`
-      when it cannot be met instead of queueing. Overload policies per profile (shed or queue);
-      degrading an answer (smaller `max_tokens`, no thinking) only when the request opts in, never
-      silently. Track p50 / p95 / p99 for whole workflows
-      (request id chains, the voice turn end to end), not only per engine, in `/metrics` and in
-      bench.sh reports. Prefer predictable latency over peak tokens per second.
-
 - [ ] 🟨 **TEST-4** `P2` Harden for operational reliability
       Build on what exists (auth, quotas, TLS, metrics, request log, the TEST-2 fault tests):
       a stress suite (many concurrent clients across modalities, long runs, memory never
@@ -123,6 +112,23 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🟧 **PERF-10** `P2` Deadline-aware admission and predictable latency
+      A request that succeeds in 12 s when 1 s was expected is a failure in practice. Estimate the
+      wait at admission (queue depth x recent service time, plus a promotion if the model is cold)
+      and expose it (`x-hypnos-estimated-wait-ms`, `/v1/memory/status`); accept an optional
+      deadline (`x-hypnos-deadline-ms` or a body field) and refuse at once with 503 + `Retry-After`
+      when it cannot be met instead of queueing. Overload policies per profile (shed or queue);
+      degrading an answer (smaller `max_tokens`, no thinking) only when the request opts in, never
+      silently. Track p50 / p95 / p99 for whole workflows
+      (request id chains, the voice turn end to end), not only per engine, in `/metrics` and in
+      bench.sh reports. Prefer predictable latency over peak tokens per second.
+      Done 2026-11-01: wait estimate per model (service time x requests ahead + load),
+      `x-hypnos-deadline-ms` -> 503 `deadline_unmeetable` + Retry-After, `limits.overload = "shed"`
+      with the profile's objective, `x-hypnos-estimated-wait-ms`, end-to-end histograms per route
+      and per `x-hypnos-workflow` with p50/p95/p99 in `/v1/memory/status`. Not done: opt-in
+      degrading (does not shorten the queue), percentiles in bench.sh reports, SDK helpers for
+      the headers (clients set them directly). (commit ae6f1ef)
 
 - [x] 🟫 **MEM-6** `P2` Make scheduling workload-aware, not only memory-aware
       Residency and eviction today follow priority, recency and fit. Add what a decision costs
