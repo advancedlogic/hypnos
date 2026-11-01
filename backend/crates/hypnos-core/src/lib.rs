@@ -61,6 +61,12 @@ pub trait ModelBackend: Send + Sync {
         false
     }
 
+    /// Whether the model has a tool-calling format in Hypnos. Checked before a chat with `tools`
+    /// starts, so a stream is refused with a 400 rather than failing after its headers.
+    fn supports_tool_calls(&self) -> bool {
+        true
+    }
+
     /// Executes Text, Vision or Audio-in chat completion (`/v1/chat/completions`).
     async fn chat_completion(
         &self,

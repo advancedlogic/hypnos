@@ -861,6 +861,21 @@ async fn chat_completions_inner(
     if req.messages.is_empty() {
         return Err(HypnosError::InvalidRequest("messages must not be empty".into()).into());
     }
+    // Tools for a model without a tool-calling format: refused before anything loads or a stream
+    // starts, as a 400 a client can recognise and fall back from (the engine checks again).
+    if let Ok((tools, _)) = req.active_tools() {
+        if !tools.is_empty() {
+            if let Some(backend) = state.scheduler.backend(&req.model) {
+                if !backend.supports_tool_calls() {
+                    return Err(HypnosError::InvalidRequest(format!(
+                        "{} has no tool-calling format in Hypnos; tools work with Gemma 4 models",
+                        req.model
+                    ))
+                    .into());
+                }
+            }
+        }
+    }
     // Estimate required KV cache context window from prompt + max_tokens + vision image patches
     let estimated_prompt_tokens: u32 = req
         .messages

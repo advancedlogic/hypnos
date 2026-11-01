@@ -546,9 +546,21 @@ pub struct GgmlLlamaBackend {
     worker: Arc<StdMutex<Option<LlamaWorker>>>,
     n_threads: i32,
     opts: EngineOptions,
+    /// `general.architecture` from the GGUF header, read once (before any load).
+    arch: std::sync::OnceLock<String>,
 }
 
 impl GgmlLlamaBackend {
+    fn arch(&self) -> &str {
+        self.arch.get_or_init(|| {
+            hypnos_core::gguf::GgufArchMetadata::read(&self.config.weights_path)
+                .ok()
+                .flatten()
+                .map(|m| m.architecture)
+                .unwrap_or_default()
+        })
+    }
+
     pub fn new(config: ModelConfig, opts: EngineOptions) -> Self {
         let state = RwLock::new(BackendContextState::new(&config));
         Self {
@@ -557,6 +569,7 @@ impl GgmlLlamaBackend {
             worker: Arc::new(StdMutex::new(None)),
             n_threads: default_threads(),
             opts,
+            arch: std::sync::OnceLock::new(),
         }
     }
 
@@ -790,6 +803,10 @@ impl ModelBackend for GgmlLlamaBackend {
 
     fn is_resident(&self) -> bool {
         self.worker.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+
+    fn supports_tool_calls(&self) -> bool {
+        supports_tools(self.arch())
     }
 
     async fn apply_placement(

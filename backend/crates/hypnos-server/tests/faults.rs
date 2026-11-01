@@ -54,6 +54,10 @@ impl ModelBackend for MockEngine {
     fn is_resident(&self) -> bool {
         self.resident.load(Ordering::SeqCst)
     }
+    /// A model whose id starts with `no-tools` has no tool-calling format (like LFM3).
+    fn supports_tool_calls(&self) -> bool {
+        !self.config.id.starts_with("no-tools")
+    }
     async fn apply_placement(&self, plan: &LayerPlacementPlan, _ptr: Option<usize>) -> Result<()> {
         self.placements.lock().unwrap().push(plan.primary_tier);
         let delay = self.delay_ms.load(Ordering::SeqCst);
@@ -980,5 +984,22 @@ async fn concurrent_clients_and_cancellations_leave_nothing_behind() {
             .load(std::sync::atomic::Ordering::Relaxed)
             > 0,
         "three models in room for two: serving each in turn evicted"
+    );
+}
+
+/// A streamed chat with `tools` for a model without a tool-calling format is a 400 before the
+/// stream starts (not an error event after a 200), so clients can fall back.
+#[tokio::test]
+async fn tools_for_a_model_without_a_tool_format_are_refused_before_streaming() {
+    let app = build_router(state(engine("no-tools")), &[]);
+    let body = r#"{"model":"no-tools","stream":true,"messages":[{"role":"user","content":"draw"}],
+        "tools":[{"type":"function","function":{"name":"generate_image","parameters":{"type":"object"}}}]}"#;
+    let resp = post(&app, "/v1/chat/completions", body).await;
+    assert_eq!(resp.status(), 400);
+    assert!(text(resp).await.contains("no tool-calling format"));
+    let plain = r#"{"model":"no-tools","stream":true,"messages":[{"role":"user","content":"hi"}]}"#;
+    assert_eq!(
+        post(&app, "/v1/chat/completions", plain).await.status(),
+        200
     );
 }
