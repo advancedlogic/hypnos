@@ -65,16 +65,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       `WINDOWS_CERTIFICATE` repository secrets (docs/signing.md) and make a release with them so
       the installers are Developer ID signed and notarized.
 
-- [ ] 🟨 **TEST-3** `P1` Measure booked vs real memory per engine and fix the estimates
-      Memory budgets are planner estimates, not OS-enforced limits, and some are off: LFM3's KV
-      booking is about twice its use (hybrid layers booked as full attention), and the docling
-      files on disk drifted from the release. Measure booked vs real (device and process
-      footprint) per engine and per model under load: a `bench.sh` scenario and a `--measure`
-      mode that loads each configured model alone and records the peak. Report the drift in
-      `/v1/memory/status` and `/metrics` (`tier1_vram_unaccounted_bytes`, process footprint),
-      alert on it, and correct the estimators (per-layer KV for hybrid / SWA layouts from the
-      GGUF, workspace per engine) where they are wrong; record the numbers in `docs/bench/`.
-
 - [ ] 🟫 **MEM-7** `P2` Add workload profiles with latency objectives
       Presets that fill in config values, not a new layer of behaviour. Named profiles that turn
       the knobs into outcomes: `interactive_chat`, `voice_assistant`,
@@ -160,6 +150,21 @@ _No cards yet._
 
 ## Done
 
+- [x] 🟨 **TEST-3** `P1` Measure booked vs real memory per engine and fix the estimates
+      Memory budgets are planner estimates, not OS-enforced limits, and some are off: LFM3's KV
+      booking is about twice its use (hybrid layers booked as full attention), and the docling
+      files on disk drifted from the release. Measure booked vs real (device and process
+      footprint) per engine and per model under load: a `bench.sh` scenario and a `--measure`
+      mode that loads each configured model alone and records the peak. Report the drift in
+      `/v1/memory/status` and `/metrics` (`tier1_vram_unaccounted_bytes`, process footprint),
+      alert on it, and correct the estimators (per-layer KV for hybrid / SWA layouts from the
+      GGUF, workspace per engine) where they are wrong; record the numbers in `docs/bench/`.
+      Done 2026-11-01: `hypnos measure-memory` (one model at a time, one request of its kind,
+      booked vs real peak), the exact KV layout from the GGUF, workspace values from the measured
+      peaks, Kokoro on the CPU, `hypnos_memory_bytes` on /metrics; before / after in
+      `docs/bench/memory-2026-11-01.md` (all GPU models now 0.90-0.99 of their booking on Apple
+      Silicon). Not done: a CUDA run, long-context runs. (commit c61ad92)
+
 - [x] 🩵 **DESK-18** `P1` Guided setup: detect, recommend, install, demonstrate
       First run of the desktop app (and the playground) should need no knowledge of pinned
       memory, quantization or KV caches: detect the hardware, recommend a lineup (API-12),
@@ -177,7 +182,7 @@ _No cards yet._
       playground's catalog tab; the catalog route names the configured variant
       (`configured_quant`); the advisor sizes CPU models against free RAM (a 16 GB Mac asking
       for chat, vision, voice and documents was refused). Not run end to end with a real
-      download yet. Real-Mac tests and signed releases moved to DESK-19.
+      download yet. Real-Mac tests and signed releases moved to DESK-19. (commits 47a2594, f023b2b)
 
 - [x] 🟪 **API-12** `P1` Hardware and model advisor
       "I have 24 GB of VRAM and 64 GB of RAM and need chat, voice and documents": recommend a
