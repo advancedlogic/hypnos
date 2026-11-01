@@ -289,6 +289,10 @@ async fn images() {
         .await
         .unwrap();
     assert_eq!(reply.data.len(), 2);
+    assert_eq!(
+        reply.data.iter().map(|d| d.seed).collect::<Vec<_>>(),
+        [Some(7), Some(8)]
+    );
     let png = B64.decode(&reply.data[0].b64_json).unwrap();
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
     assert!(reply.hypnos_telemetry.is_some());

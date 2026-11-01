@@ -215,6 +215,7 @@ test("images", async () => {
   const reply = await client.images(IMAGE, "a lighthouse", { n: 2, size: "512x512", steps: 4, seed: 7 });
   assert.equal(reply.data.length, 2);
   assert.ok(startsWith(b64decode(reply.data[0].b64_json), [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  assert.deepEqual(reply.data.map((d) => d.seed), [7, 8]);
   assert.ok(reply.hypnos_telemetry);
 });
 

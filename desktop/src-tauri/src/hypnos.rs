@@ -14,7 +14,7 @@ use hypnos_client::{
 
 use crate::attachments::Attachment;
 use crate::images::{
-    generate, image_tool_spec, Generated, ToolCall as ImageCall, ToolGate, IMAGE_TOOL,
+    generate, image_tool_spec, Generated, Reference, ToolCall as ImageCall, ToolGate, IMAGE_TOOL,
     TOOL_INSTRUCTION,
 };
 use serde::{Deserialize, Serialize};
@@ -313,6 +313,90 @@ pub struct InMessage {
     /// Set on an answer that was a generated image (DESK-11): the prompt it was made from.
     #[serde(default)]
     pub image_prompt: Option<String>,
+    /// The same answer's settings (DESK-22); `data_url` only on the chat's latest image, which
+    /// an edit can use as its reference.
+    #[serde(default)]
+    pub image: Option<ImageNote>,
+}
+
+/// A generated image as the webview sends it back with the history.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageNote {
+    pub prompt: String,
+    #[serde(default)]
+    pub size: Option<String>,
+    #[serde(default)]
+    pub seed: Option<u64>,
+    #[serde(default)]
+    pub steps: Option<u32>,
+    #[serde(default)]
+    pub negative_prompt: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub data_url: Option<String>,
+}
+
+impl ImageNote {
+    /// What the chat model reads about an earlier image (it cannot see it).
+    fn describe(&self) -> String {
+        let mut parts = vec![format!("prompt \"{}\"", self.prompt)];
+        if let Some(size) = &self.size {
+            parts.push(format!("size {size}"));
+        }
+        if let Some(seed) = self.seed {
+            parts.push(format!("seed {seed}"));
+        }
+        if let Some(steps) = self.steps {
+            parts.push(format!("steps {steps}"));
+        }
+        if let Some(neg) = &self.negative_prompt {
+            parts.push(format!("negative prompt \"{neg}\""));
+        }
+        if let Some(model) = &self.model {
+            parts.push(format!("model {model}"));
+        }
+        format!("[An image was generated with: {}]", parts.join(", "))
+    }
+}
+
+/// The images an edit can start from: the one attached to the user's latest message and the
+/// chat's latest generated image.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct References {
+    attached: Option<String>,
+    previous: Option<String>,
+}
+
+impl References {
+    fn of(messages: &[InMessage]) -> Self {
+        let attached = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .and_then(|m| {
+                m.attachments.iter().find_map(|a| match a {
+                    Attachment::Image { data_url, .. } => Some(data_url.clone()),
+                    _ => None,
+                })
+            });
+        let previous = messages
+            .iter()
+            .rev()
+            .find_map(|m| m.image.as_ref().and_then(|i| i.data_url.clone()));
+        Self { attached, previous }
+    }
+
+    /// The reference a call asks for, falling back to the other one when it is missing (a
+    /// model says "previous" for the image the user just attached, or the reverse).
+    fn pick(&self, reference: Reference) -> Option<&str> {
+        match reference {
+            Reference::None => None,
+            Reference::Attached => self.attached.as_deref().or(self.previous.as_deref()),
+            Reference::Previous => self.previous.as_deref().or(self.attached.as_deref()),
+        }
+    }
 }
 
 impl InMessage {
@@ -328,7 +412,9 @@ impl InMessage {
     /// user's words, images (and video frames) as `image_url` parts when the model can see them.
     fn to_chat_message(&self, vision: bool) -> ChatMessage {
         let mut text = self.content.clone();
-        if let Some(prompt) = &self.image_prompt {
+        if let Some(note) = &self.image {
+            text = format!("{}\n\n{text}", note.describe());
+        } else if let Some(prompt) = &self.image_prompt {
             text = format!("[An image was generated from the prompt: \"{prompt}\"]\n\n{text}");
         }
         let mut images = Vec::new();
@@ -424,8 +510,8 @@ pub enum ChatEvent {
     Reasoning { text: String },
     /// A piece of the answer.
     Delta { text: String },
-    /// The chat model asked for an image; it is being generated.
-    ToolCall { prompt: String, size: String },
+    /// The chat model asked for an image (its settings); it is being generated.
+    ToolCall(ImageCall),
     /// The generated image.
     Image(Box<Generated>),
     /// The answer is complete.
@@ -497,12 +583,22 @@ pub async fn hypnos_chat<R: Runtime>(
         model = vision;
     }
     let vision = can_see(&model);
+    let references = References::of(&messages);
     let messages: Vec<ChatMessage> = messages.iter().map(|m| m.to_chat_message(vision)).collect();
     let image_tool = tools.unwrap_or(false) && models.iter().any(|m| serves(m, "image_generation"));
     let (tx, rx) = tokio::sync::oneshot::channel();
     let task = tauri::async_runtime::spawn(async move {
         let result = if image_tool {
-            answer_with_image_tool(&app, &client, &model, messages, thinking, &on_event).await
+            answer_with_image_tool(
+                &app,
+                &client,
+                &model,
+                messages,
+                &references,
+                thinking,
+                &on_event,
+            )
+            .await
         } else {
             let request = thinking.apply(ChatRequest::new(model, messages));
             stream_answer(&client, &request, &on_event).await
@@ -611,15 +707,26 @@ async fn answer_with_image_tool<R: Runtime>(
     client: &Client,
     model: &str,
     messages: Vec<ChatMessage>,
+    references: &References,
     thinking: Thinking,
     on_event: &Channel<ChatEvent>,
 ) -> CmdResult<()> {
-    match answer_with_native_tool(app, client, model, messages.clone(), thinking, on_event).await {
+    let native = answer_with_native_tool(
+        app,
+        client,
+        model,
+        messages.clone(),
+        references,
+        thinking,
+        on_event,
+    );
+    match native.await {
         Err(e)
             if e.kind == "bad_request"
                 && e.detail.as_deref().is_some_and(|d| d.contains("tool")) =>
         {
-            answer_with_prompt_tool(app, client, model, messages, thinking, on_event).await
+            answer_with_prompt_tool(app, client, model, messages, references, thinking, on_event)
+                .await
         }
         other => other,
     }
@@ -635,6 +742,7 @@ async fn answer_with_native_tool<R: Runtime>(
     client: &Client,
     model: &str,
     messages: Vec<ChatMessage>,
+    references: &References,
     thinking: Thinking,
     on_event: &Channel<ChatEvent>,
 ) -> CmdResult<()> {
@@ -659,22 +767,22 @@ async fn answer_with_native_tool<R: Runtime>(
         detail: Some(e.to_string()),
         retry_after_secs: None,
     })?;
-    let _ = on_event.send(ChatEvent::ToolCall {
-        prompt: args.prompt.clone(),
-        size: args.size.clone(),
-    });
-    let image = generate(&app.state::<Hypnos>(), &args.prompt, Some(&args.size)).await?;
+    let args = args.normalized();
+    let _ = on_event.send(ChatEvent::ToolCall(args.clone()));
+    let reference = references.pick(args.reference);
+    let image = generate(&app.state::<Hypnos>(), &args, reference).await?;
+    let result = tool_result(&image);
     let _ = on_event.send(ChatEvent::Image(Box::new(image)));
 
     let mut follow_up = messages;
     follow_up.push(ChatMessage::assistant_with_calls("", calls.clone()));
     for c in &calls {
-        let result = if c.id == call.id {
-            "The image was generated and is now shown to the user. Tell them in one short sentence that it is ready and what it shows; do not claim to see it and do not ask a question."
+        let text = if c.id == call.id {
+            result.as_str()
         } else {
             "Unknown tool."
         };
-        follow_up.push(ChatMessage::tool(c.id.clone(), result));
+        follow_up.push(ChatMessage::tool(c.id.clone(), text));
     }
     let request = Thinking::OFF.apply(
         ChatRequest::new(model, follow_up)
@@ -694,6 +802,7 @@ async fn answer_with_prompt_tool<R: Runtime>(
     client: &Client,
     model: &str,
     messages: Vec<ChatMessage>,
+    references: &References,
     thinking: Thinking,
     on_event: &Channel<ChatEvent>,
 ) -> CmdResult<()> {
@@ -726,23 +835,35 @@ async fn answer_with_prompt_tool<R: Runtime>(
             return Ok(());
         }
     };
-    let _ = on_event.send(ChatEvent::ToolCall {
-        prompt: call.prompt.clone(),
-        size: call.size.clone(),
-    });
-    let image = generate(&app.state::<Hypnos>(), &call.prompt, Some(&call.size)).await?;
+    let call = call.normalized();
+    let _ = on_event.send(ChatEvent::ToolCall(call.clone()));
+    let reference = references.pick(call.reference);
+    let image = generate(&app.state::<Hypnos>(), &call, reference).await?;
+    let settings = image.settings_text();
+    let result = tool_result(&image);
     let _ = on_event.send(ChatEvent::Image(Box::new(image)));
 
     let mut follow_up = messages;
     follow_up.push(ChatMessage::assistant(format!(
-        "[I generated an image from the prompt: \"{}\"]",
-        call.prompt
+        "[I generated an image with: {settings}]"
     )));
-    follow_up.push(ChatMessage::user(
-        "[The image is now shown to the user. In one short sentence, tell them it is ready and what it shows; do not claim to see it and do not ask a question.]",
-    ));
+    follow_up.push(ChatMessage::user(format!("[{result}]")));
     let request = Thinking::OFF.apply(ChatRequest::new(model, follow_up));
     stream_answer(client, &request, on_event).await
+}
+
+/// What the chat model is told after the image tool ran: the settings used (so a follow-up can
+/// reuse the seed or change one setting) and what to say.
+fn tool_result(image: &Generated) -> String {
+    let note = image
+        .note
+        .as_ref()
+        .map(|n| format!(" Note for the user: {n}."))
+        .unwrap_or_default();
+    format!(
+        "The image was generated with: {}. It is now shown to the user.{note} Tell them in one short sentence that it is ready and what it shows; do not claim to see it and do not ask a question.",
+        image.settings_text()
+    )
 }
 
 /// KV parking (MEM-4): whether conversations are kept across a model swap, and what is held.
@@ -871,6 +992,64 @@ mod tests {
     }
 
     #[test]
+    fn edits_find_their_reference_and_history_keeps_the_settings() {
+        let user = |content: &str, image: Option<&str>| InMessage {
+            role: "user".into(),
+            content: content.into(),
+            attachments: image
+                .map(|d| {
+                    vec![Attachment::Image {
+                        name: "a.jpg".into(),
+                        size: 1,
+                        data_url: d.into(),
+                        width: 1,
+                        height: 1,
+                    }]
+                })
+                .unwrap_or_default(),
+            image_prompt: None,
+            image: None,
+        };
+        let made = InMessage {
+            role: "assistant".into(),
+            content: String::new(),
+            attachments: vec![],
+            image_prompt: Some("a fox".into()),
+            image: Some(ImageNote {
+                prompt: "a fox".into(),
+                size: Some("1024x1024".into()),
+                seed: Some(7),
+                model: Some("flux3".into()),
+                data_url: Some("data:previous".into()),
+                ..ImageNote::default()
+            }),
+        };
+        let history = vec![
+            user("draw a fox", None),
+            made.clone(),
+            user("at night", None),
+        ];
+        let refs = References::of(&history);
+        assert_eq!(refs.pick(Reference::Previous), Some("data:previous"));
+        // Nothing attached: the previous image stands in.
+        assert_eq!(refs.pick(Reference::Attached), Some("data:previous"));
+        assert_eq!(refs.pick(Reference::None), None);
+        let history = vec![made.clone(), user("this one", Some("data:mine"))];
+        assert_eq!(
+            References::of(&history).pick(Reference::Attached),
+            Some("data:mine")
+        );
+
+        let Content::Text(text) = made.to_chat_message(false).content else {
+            panic!("text")
+        };
+        assert!(
+            text.starts_with("[An image was generated with: prompt \"a fox\", size 1024x1024, seed 7, model flux3]"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn a_chosen_model_wins_over_the_chat_model() {
         let m = lineup();
         assert_eq!(
@@ -948,6 +1127,7 @@ mod tests {
             content: "What is 17 * 23? Answer with the number.".into(),
             attachments: vec![],
             image_prompt: None,
+            image: None,
         }];
         hypnos_chat(
             app.handle().clone(),
@@ -1000,6 +1180,7 @@ mod tests {
                 },
             ],
             image_prompt: None,
+            image: None,
         };
         let seen = serde_json::to_value(msg.to_chat_message(true)).unwrap();
         let text = seen["content"][0]["text"].as_str().unwrap();
@@ -1068,6 +1249,7 @@ mod tests {
                 content: s.into(),
                 attachments: vec![],
                 image_prompt: None,
+                image: None,
             }]
         };
         let outcome = hypnos_chat(
@@ -1165,6 +1347,7 @@ mod tests {
             content: "Reply with one word: ok".into(),
             attachments: vec![],
             image_prompt: None,
+            image: None,
         }];
         hypnos_chat(
             app.handle().clone(),

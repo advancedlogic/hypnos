@@ -431,7 +431,12 @@ port, so the tray can stop a server `run.sh` started. `images.rs` is the image t
 (`image_tool_spec`, API-9), its call becomes an image, an `image` event and a `tool` result the
 model comments on (second round with `tool_choice: none`); when the server refuses tools for the
 model (400, no native format) `hypnos_chat` falls back to the prompt convention
-(`TOOL_INSTRUCTION` plus a `ToolGate` that holds back an answer's start). The real-server tests are `#[ignore]`d (`HYPNOS_TEST_URL`;
+(`TOOL_INSTRUCTION` plus a `ToolGate` that holds back an answer's start). The call (`ToolCall`,
+DESK-22) carries size, negative prompt, `n`, steps, seed and a `reference` (`attached` /
+`previous`, found by `References::of` in the history; an edit through `/v1/images/edits`, a plain
+generation with a `note` when the model cannot edit); `Generated` keeps the settings and the
+server's `data[].seed`, which go back as the tool result and in the history (`ImageNote`; only
+the latest image carries its data URL). The real-server tests are `#[ignore]`d (`HYPNOS_TEST_URL`;
 `HYPNOS_TEST_BINARY` / `HYPNOS_TEST_CONFIG`). `get_api_key` / `set_api_key` keep the API key in
 the OS keychain (`keyring`), keyed by origin; chats and the server URL live in `tauri-plugin-store`. `ChatStore`
 (`src/lib/chats.svelte.js`) owns chats and streaming; `StatsPanel.svelte` polls

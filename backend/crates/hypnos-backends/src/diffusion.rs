@@ -531,11 +531,14 @@ impl ModelBackend for GgmlDiffusionBackend {
         .await
         .map_err(|e| HypnosError::BackendError(format!("image task panicked: {e}")))??;
 
+        // sd.cpp seeds image `i` of a batch with `seed + i` (`seed_for_batch`).
         let data = pngs
             .into_iter()
-            .map(|png| GeneratedImage {
+            .enumerate()
+            .map(|(i, png)| GeneratedImage {
                 b64_json: Some(base64::engine::general_purpose::STANDARD.encode(png)),
                 revised_prompt: None,
+                seed: Some((seed as u64).wrapping_add(i as u64) & i64::MAX as u64),
             })
             .collect();
         Ok(ImageGenerationResponse {

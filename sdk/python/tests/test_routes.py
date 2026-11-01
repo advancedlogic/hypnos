@@ -191,6 +191,7 @@ def test_images(client: Client) -> None:
     reply = client.images(IMAGE, "a lighthouse", n=2, size="512x512", steps=4, seed=7)
     assert len(reply["data"]) == 2
     assert base64.b64decode(reply["data"][0]["b64_json"])[:8] == b"\x89PNG\r\n\x1a\n"
+    assert [d["seed"] for d in reply["data"]] == [7, 8]
     assert "hypnos_telemetry" in reply
 
 

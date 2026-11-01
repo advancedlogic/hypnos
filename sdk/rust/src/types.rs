@@ -662,6 +662,10 @@ pub struct GeneratedImage {
     pub b64_json: String,
     #[serde(default)]
     pub revised_prompt: Option<String>,
+    /// Hypnos extension: the seed this image was made with (the request's seed plus its index
+    /// in the batch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
 
 /// `POST /v1/images/generations`: base64 PNGs.

@@ -791,9 +791,14 @@ the non-streaming form.
 
 ```json
 { "created": 1793481600,
-  "data": [ { "b64_json": "iVBORw0KGgo…" } ],
+  "data": [ { "b64_json": "iVBORw0KGgo…", "seed": 2718281828 } ],
   "hypnos_telemetry": { "…": "section 5" } }
 ```
+
+`data[].seed` (**Hypnos extension**) is the seed each image was made with: the request's `seed`
+(or the random one) plus the image's index in the batch. Sending it back with the same prompt,
+size, steps and model gives the same image, and changing only the prompt keeps much of its
+composition. `POST /v1/images/edits` returns it too.
 
 Images are PNG. One 1024x1024 generation takes tens of seconds on a 24 GB GPU and more than two
 minutes when the generator runs partially offloaded; keep the client timeout at the server's

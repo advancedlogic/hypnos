@@ -599,9 +599,11 @@ impl ModelBackend for MockEngine {
         Ok(ImageGenerationResponse {
             created: chrono::Utc::now().timestamp(),
             data: (0..req.n.max(1))
-                .map(|_| GeneratedImage {
+                .map(|i| GeneratedImage {
                     b64_json: Some(b64.clone()),
                     revised_prompt: None,
+                    // As the engine: the request's seed (42 without one) plus the index.
+                    seed: Some(req.seed.unwrap_or(42) + u64::from(i)),
                 })
                 .collect(),
             hypnos_telemetry: None,

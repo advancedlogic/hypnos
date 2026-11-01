@@ -154,7 +154,19 @@
     } else if (imageModel) {
       where = ` · ${imageModel.id}`;
     }
-    return `Generating the image… ${secs} s${where}`;
+    const what = tool.reference && tool.reference !== 'none' ? 'Editing the image' : tool.n > 1 ? `Generating ${tool.n} images` : 'Generating the image';
+    return `${what}… ${secs} s${where}`;
+  }
+
+  /** The settings shown under an image (DESK-22); older chats have only size and model. */
+  function imageSettings(image) {
+    const parts = [image.size];
+    if (image.seed != null) parts.push(`seed ${image.seed}`);
+    if (image.steps) parts.push(`${image.steps} steps`);
+    if (image.negativePrompt) parts.push(`without: ${image.negativePrompt}`);
+    if (image.reference === 'attached') parts.push('edited from your image');
+    else if (image.reference === 'previous') parts.push('edited from the previous image');
+    return parts.filter(Boolean);
   }
 
   function imageButton() {
@@ -592,12 +604,32 @@
               {#if message.image}
                 <figure class="mb-3 space-y-1.5">
                   <img src={message.image.dataUrl} alt={message.image.prompt} class="max-w-md w-full rounded-xl border border-slate-800" />
-                  <figcaption class="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
+                  {#if message.image.more?.length}
+                    <div class="max-w-md grid grid-cols-3 gap-1.5">
+                      {#each message.image.more as pic, i (i)}
+                        <div class="relative group">
+                          <img src={pic.dataUrl} alt="{message.image.prompt} ({i + 2})" class="w-full rounded-lg border border-slate-800" />
+                          <div class="absolute inset-x-0 bottom-0 hidden group-hover:flex gap-2 justify-center bg-slate-950/80 rounded-b-lg py-0.5 text-[10px] text-slate-300">
+                            <button class="hover:text-white" onclick={() => saveImage({ ...message.image, dataUrl: pic.dataUrl })}>Save</button>
+                            <button class="hover:text-white" onclick={() => copyImage({ ...message.image, dataUrl: pic.dataUrl })}>Copy</button>
+                            {#if pic.seed != null}<span class="text-slate-500">seed {pic.seed}</span>{/if}
+                          </div>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                  <figcaption class="space-y-1">
+                   <div class="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
                     <span class="max-w-md truncate" title={message.image.prompt}>{message.image.prompt}</span>
                     <span>{message.image.model} · {Math.round(message.image.seconds)} s</span>
                     <button class="hover:text-slate-200" onclick={() => saveImage(message.image)}>Save</button>
                     <button class="hover:text-slate-200" onclick={() => copyImage(message.image)}>Copy</button>
-                    <button class="hover:text-slate-200 disabled:opacity-40" onclick={() => store.regenerateImage(chat, message)} disabled={running || serverState !== 'ready'}>Regenerate</button>
+                    <button class="hover:text-slate-200 disabled:opacity-40" onclick={() => store.regenerateImage(chat, message)} disabled={running || serverState !== 'ready'} title="The same settings with a new seed">Regenerate</button>
+                   </div>
+                   <p class="max-w-md flex flex-wrap gap-x-3 text-[11px] text-slate-600" title="The settings this image was made with; the chat model knows them too">
+                     {#each imageSettings(message.image) as part}<span>{part}</span>{/each}
+                   </p>
+                   {#if message.image.note}<p class="max-w-md text-[11px] text-amber-300/80">{message.image.note}</p>{/if}
                   </figcaption>
                 </figure>
                 {#if imageNotice}<p class="-mt-2 mb-3 text-[11px] text-slate-400">{imageNotice}</p>{/if}

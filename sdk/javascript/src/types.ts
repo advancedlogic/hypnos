@@ -204,7 +204,8 @@ export interface Transcription {
 
 export interface ImageResponse {
   created: number;
-  data: { b64_json: string; revised_prompt?: string }[];
+  /** `seed` (Hypnos extension): the seed each image was made with (request seed + batch index). */
+  data: { b64_json: string; revised_prompt?: string; seed?: number }[];
   hypnos_telemetry?: Telemetry;
 }
 

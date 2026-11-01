@@ -584,6 +584,10 @@ pub struct GeneratedImage {
     pub b64_json: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revised_prompt: Option<String>,
+    /// Hypnos extension: the seed this image was made with (the request's `seed` plus its index
+    /// in the batch); the same seed, prompt, size and steps give the same image again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
 
 // ============================================================================

@@ -583,6 +583,7 @@ mod tests {
             content: "Answer with one word: what colour fills this image? Then say the secret word from the document.".into(),
             attachments: vec![image, doc],
             image_prompt: None,
+            image: None,
         };
         hypnos_chat(
             app.handle().clone(),

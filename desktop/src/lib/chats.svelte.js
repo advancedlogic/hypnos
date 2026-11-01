@@ -168,15 +168,17 @@ export class ChatStore {
     this.#bumpToTop(chat);
 
     // Only what was said goes back to the server: never an answer's `reasoning`.
-    const history = chat.messages
-      .slice(0, -1)
-      .filter((m) => !m.error && (m.content || m.attachments?.length || m.image))
-      .map(({ role, content, attachments, image }) => ({
-        role,
-        content: content ?? '',
-        attachments: attachments ?? [],
-        image_prompt: image?.prompt ?? null,
-      }));
+    // Each earlier image goes back with its settings (the chat model reads them, DESK-22); only
+    // the latest one carries its pixels, as the reference an edit ("make it darker") can use.
+    const sent = chat.messages.slice(0, -1).filter((m) => !m.error && (m.content || m.attachments?.length || m.image));
+    const latestImage = sent.findLast((m) => m.image);
+    const history = sent.map((m) => ({
+      role: m.role,
+      content: m.content ?? '',
+      attachments: m.attachments ?? [],
+      image_prompt: m.image?.prompt ?? null,
+      image: m.image ? imageNote(m.image, m === latestImage) : null,
+    }));
     if (chat.system.trim()) history.unshift({ role: 'system', content: chat.system });
 
     // The thoughts end where the answer (or a tool call) starts.
@@ -197,11 +199,11 @@ export class ChatStore {
           }
           answer.reasoning += text;
         },
-        onToolCall: ({ prompt, size }) => {
+        onToolCall: ({ event, ...call }) => {
           endThinking();
-          answer.tool = { prompt, size, startedAt: Date.now() };
+          answer.tool = { ...call, startedAt: Date.now() };
         },
-        onImage: (image) => {
+        onImage: ({ event, ...image }) => {
           answer.image = image;
           delete answer.tool;
         },
@@ -242,21 +244,22 @@ export class ChatStore {
     await this.#makeImage(chat, chat.messages.at(-1), prompt);
   }
 
-  /** Another image from the same prompt, in place. */
+  /** Another image from the same settings with a new seed, in place. */
   async regenerateImage(chat, answer) {
     if (!answer.image || this.isRunning(chat.id)) return;
-    const { prompt, size } = answer.image;
+    const { prompt, size, negativePrompt, steps } = answer.image;
+    const settings = { size, negativePrompt, steps };
     answer.pending = true;
-    answer.tool = { prompt, size, startedAt: Date.now() };
+    answer.tool = { prompt, ...settings, startedAt: Date.now() };
     delete answer.error;
-    await this.#makeImage(chat, answer, prompt, size);
+    await this.#makeImage(chat, answer, prompt, settings);
   }
 
-  async #makeImage(chat, answer, prompt, size) {
+  async #makeImage(chat, answer, prompt, settings = {}) {
     this.running[chat.id] = 'image';
     this.#bumpToTop(chat);
     try {
-      answer.image = await api.generateImage(prompt, size);
+      answer.image = await api.generateImage(prompt, settings);
       answer.model = answer.image.model;
       notifyIfAway('Image ready', prompt);
       if (answer.image.telemetry) this.lastTelemetry = { model: answer.image.model, telemetry: answer.image.telemetry };
@@ -280,4 +283,10 @@ export class ChatStore {
     clearTimeout(this.#saveTimer);
     this.#saveTimer = setTimeout(() => save(CHATS_KEY, $state.snapshot(this.chats)), 300);
   }
+}
+
+/** An image's settings as the history sends them; `withPixels` adds its data URL. */
+function imageNote(image, withPixels) {
+  const { prompt, size, seed, steps, negativePrompt, model, dataUrl } = image;
+  return { prompt, size, seed, steps, negativePrompt, model, dataUrl: withPixels ? dataUrl : null };
 }

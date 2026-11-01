@@ -38,8 +38,10 @@ export const THINKING_LEVELS = [
  * Streams an answer: `onModel(id, reason)` when another model answers (images for a model that
  * cannot see them), `onReasoning(text)` per piece of the model's thoughts (with `thinking` other
  * than `none`, before the answer), `onDelta(text)` per piece, `onDone({ telemetry, usage, finishReason })` at
- * the end. With `tools`, the model may ask for an image: `onToolCall({ prompt, size })`, then
- * `onImage({ dataUrl, prompt, size, model, seconds })`, then its comment as deltas. Resolves to
+ * the end. With `tools`, the model may ask for an image: `onToolCall({ prompt, size, negativePrompt,
+ * n, steps, seed, reference })`, then `onImage({ dataUrl, prompt, size, model, seconds, seed,
+ * negativePrompt, steps, reference, more: [{ dataUrl, seed }], note })`, then its comment as
+ * deltas. Resolves to
  * `{ cancelled }`; `cancelChat(requestId)` stops it.
  */
 export function chat(requestId, model, messages, { onModel, onReasoning, onDelta, onDone, onToolCall, onImage, tools = false, thinking = 'none' }) {
@@ -120,7 +122,14 @@ export function setVoicePrefs({ voice, speed }) {
 }
 
 /** Generates an image without the chat model (the Image button, `/image`). */
-export const generateImage = (prompt, size) => invoke('hypnos_generate_image', { prompt, size: size ?? null });
+/**
+ * One image straight from the image model (the Image button, `/image`, Regenerate). `settings`:
+ * `{ size, negativePrompt, n, steps, seed }`, each optional; resolves to what `onImage` gets.
+ */
+export const generateImage = (prompt, settings = {}) =>
+  invoke('hypnos_generate_image', { call: { prompt, size: settings.size ?? '1024x1024', ...withoutEmpty(settings) } });
+
+const withoutEmpty = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ''));
 
 /** Writes a data URL (a generated image) to a path chosen in the save dialog. */
 export const saveDataUrl = (path, dataUrl) => invoke('save_data_url', { path, dataUrl });

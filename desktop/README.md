@@ -55,7 +55,14 @@ app's commands.
   `generate_image` tool with a prompt for the image model (MOSS-Image), which the app runs (a
   real OpenAI tool call on servers with tool calling, API-9; a prompt convention for models
   without a native tool format); the image appears in the answer
-  with the prompt, Save, Copy and Regenerate, followed by a one-line comment. The Image button
+  with the prompt, Save, Copy and Regenerate, followed by a one-line comment. The chat model
+  takes the settings from the conversation (DESK-22): any size ("a phone wallpaper", "a
+  banner"), what to leave out, several options (`n`), quicker or more detailed (`steps`), and an
+  earlier image's seed; "make it darker" or "the same at night" edits the image made last or the
+  one attached to the message, when the image model edits (FLUX.2 klein, FLUX.3; otherwise a
+  new image and a note). Each image shows its settings (size, seed, steps, what was left out,
+  what it was edited from), and they go back to the chat model with the history, so a follow-up
+  can change one and keep the rest. Regenerate keeps the settings with a new seed. The Image button
   in the composer (or `/image <prompt>`) skips the chat model. A generation takes from tens of
   seconds to a few minutes, longer when the image model must load first, which may unload the
   chat model; the answer shows the elapsed time and where the model is loading from. The

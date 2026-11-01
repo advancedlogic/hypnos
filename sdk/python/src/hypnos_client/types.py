@@ -278,6 +278,8 @@ class Transcription(TypedDict):
 class GeneratedImage(TypedDict):
     b64_json: str
     revised_prompt: NotRequired[str]
+    # Hypnos extension: the seed this image was made with (request seed + batch index).
+    seed: NotRequired[int]
 
 
 class ImageResponse(TypedDict):
