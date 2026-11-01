@@ -143,6 +143,14 @@ _No cards yet._
 
 ## Done
 
+- [x] 🩵 **DESK-27** `P2` A collapsible blue tool panel with each call's input and output
+      Next to the orange thinking panel: open while a tool runs, folded after ("Used 2 tools:
+      fetch_url, extract_entities · 2.8 s"), each call with its tool, label, model, seconds,
+      input (the arguments) and output (the text the chat model got back, `panel_text` cuts it
+      at 8000 characters). `Step` carries `input` / `output`; the image tool's calls (native and
+      prompt convention) are steps too. Skills: the app has none; DESK-24's sub-agents will show
+      their steps in the same panel.
+
 - [x] 🩵 **DESK-26** `P2` No model or thinking picker in the chat header; thinking per model in Models
       The header's model and thinking menus duplicated the Models dialog. Every chat now answers
       with the default chat model ("Make default for… → Chat"; the first available when there is

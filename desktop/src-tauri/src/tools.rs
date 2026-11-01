@@ -140,7 +140,10 @@ impl Tool {
     fn label(self, args: &serde_json::Value) -> String {
         let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("").trim();
         match self {
-            Tool::Image => "Image".into(),
+            Tool::Image => match args.get("reference").and_then(|v| v.as_str()) {
+                Some("attached" | "previous") => "Editing an image".into(),
+                _ => "Creating an image".into(),
+            },
             Tool::FetchUrl => format!("Reading {}", s("url")),
             Tool::Speak => "Reading aloud".into(),
             Tool::Entities => {
@@ -196,6 +199,24 @@ pub struct Step {
     pub seconds: Option<f64>,
     /// One line about the result (a page's title, how many entities), or the error.
     pub summary: Option<String>,
+    /// The call's arguments, as the chat model sent them.
+    pub input: serde_json::Value,
+    /// What went back to the chat model (cut at [`STEP_OUTPUT_CHARS`] for the panel); set when
+    /// the call is done or failed.
+    pub output: Option<String>,
+}
+
+/// Characters of a tool's output the chat's tool panel shows.
+pub const STEP_OUTPUT_CHARS: usize = 8_000;
+
+/// `text` cut for the tool panel.
+pub fn panel_text(text: &str) -> String {
+    let total = text.chars().count();
+    if total <= STEP_OUTPUT_CHARS {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(STEP_OUTPUT_CHARS).collect();
+    format!("{head}\n… ({} more characters)", total - STEP_OUTPUT_CHARS)
 }
 
 /// What a tool run gives back: the text for the chat model, plus what the step shows.
@@ -226,9 +247,7 @@ async fn run<R: Runtime>(ctx: &Ctx<'_, R>, call: &Call) -> String {
     let args: serde_json::Value =
         serde_json::from_str(&call.function.arguments).unwrap_or(json!({}));
     let label = tool.label(&args);
-    // The image tool has its own progress and result in the chat (`toolCall`, `image`).
-    let shown = tool != Tool::Image;
-    let step = |status, model, seconds, summary| Step {
+    let step = |status, model, seconds, summary, output: Option<&str>| Step {
         id: call.id.clone(),
         tool: tool.name().into(),
         label: label.clone(),
@@ -236,12 +255,12 @@ async fn run<R: Runtime>(ctx: &Ctx<'_, R>, call: &Call) -> String {
         model,
         seconds,
         summary,
+        input: args.clone(),
+        output: output.map(panel_text),
     };
-    if shown {
-        let _ = ctx
-            .on_event
-            .send(ChatEvent::Step(step("running", None, None, None)));
-    }
+    let _ = ctx
+        .on_event
+        .send(ChatEvent::Step(step("running", None, None, None, None)));
     let started = Instant::now();
     let outcome = match tool {
         Tool::Image => image(ctx, call).await,
@@ -253,30 +272,34 @@ async fn run<R: Runtime>(ctx: &Ctx<'_, R>, call: &Call) -> String {
     let seconds = Some(started.elapsed().as_secs_f64());
     match outcome {
         Ok(o) => {
-            if shown {
-                let _ = ctx
-                    .on_event
-                    .send(ChatEvent::Step(step("done", o.model, seconds, o.summary)));
-            }
+            let _ = ctx.on_event.send(ChatEvent::Step(step(
+                "done",
+                o.model,
+                seconds,
+                o.summary,
+                Some(&o.result),
+            )));
             o.result
         }
         Err(e) => {
-            if shown {
-                let _ = ctx.on_event.send(ChatEvent::Step(step(
-                    "error",
-                    None,
-                    seconds,
-                    Some(e.message.clone()),
-                )));
-            } else {
+            let result = format!(
+                "The tool failed: {}. Tell the user briefly; do not call it again for this.",
+                e.message
+            );
+            let _ = ctx.on_event.send(ChatEvent::Step(step(
+                "error",
+                None,
+                seconds,
+                Some(e.message.clone()),
+                Some(&result),
+            )));
+            if tool == Tool::Image {
+                // The image's own progress line goes away with a note.
                 let _ = ctx.on_event.send(ChatEvent::ToolError {
                     message: e.message.clone(),
                 });
             }
-            format!(
-                "The tool failed: {}. Tell the user briefly; do not call it again for this.",
-                e.message
-            )
+            result
         }
     }
 }
@@ -308,11 +331,16 @@ async fn image<R: Runtime>(ctx: &Ctx<'_, R>, call: &Call) -> Result<Outcome, Err
     let image = images::generate_with(&hypnos(ctx), ctx.client, &args, reference).await?;
     let result = crate::hypnos::tool_result(&image);
     let model = Some(image.model.clone());
+    let summary = Some(match (&image.seed, image.more.len()) {
+        (Some(seed), 0) => format!("{}, seed {seed}", image.size),
+        (_, more) if more > 0 => format!("{} images, {}", more + 1, image.size),
+        _ => image.size.clone(),
+    });
     let _ = ctx.on_event.send(ChatEvent::Image(Box::new(image)));
     Ok(Outcome {
         result,
         model,
-        summary: None,
+        summary,
     })
 }
 
@@ -508,6 +536,18 @@ mod tests {
         assert!(available(&models, "chat", false, true, &with_image).contains(&Tool::DescribeImage));
         assert!(
             !available(&models, "seer", false, true, &with_image).contains(&Tool::DescribeImage)
+        );
+    }
+
+    #[test]
+    fn the_panel_shows_long_outputs_cut() {
+        assert_eq!(panel_text("short"), "short");
+        let long = "x".repeat(STEP_OUTPUT_CHARS + 5);
+        let cut = panel_text(&long);
+        assert!(cut.ends_with("… (5 more characters)"), "{}", &cut[cut.len() - 40..]);
+        assert_eq!(
+            Tool::Image.label(&json!({"prompt": "a", "reference": "previous"})),
+            "Editing an image"
         );
     }
 

@@ -885,10 +885,44 @@ async fn answer_with_prompt_tool<R: Runtime>(
     };
     let call = call.normalized();
     let _ = on_event.send(ChatEvent::ToolCall(call.clone()));
+    // The tool panel (DESK-27) shows this call like a native one.
+    let step = |status, model, seconds, summary, output: Option<String>| crate::tools::Step {
+        id: "prompt-image".into(),
+        tool: crate::images::IMAGE_TOOL.into(),
+        label: "Creating an image".into(),
+        status,
+        model,
+        seconds,
+        summary,
+        input: serde_json::to_value(&call).unwrap_or_default(),
+        output,
+    };
+    let _ = on_event.send(ChatEvent::Step(step("running", None, None, None, None)));
+    let started = std::time::Instant::now();
     let reference = references.pick(call.reference);
-    let image = generate(&app.state::<Hypnos>(), &call, reference).await?;
+    let image = match generate(&app.state::<Hypnos>(), &call, reference).await {
+        Ok(image) => image,
+        Err(e) => {
+            let seconds = Some(started.elapsed().as_secs_f64());
+            let _ = on_event.send(ChatEvent::Step(step(
+                "error",
+                None,
+                seconds,
+                Some(e.message.clone()),
+                None,
+            )));
+            return Err(e);
+        }
+    };
     let settings = image.settings_text();
     let result = tool_result(&image);
+    let _ = on_event.send(ChatEvent::Step(step(
+        "done",
+        Some(image.model.clone()),
+        Some(started.elapsed().as_secs_f64()),
+        Some(image.size.clone()),
+        Some(result.clone()),
+    )));
     let _ = on_event.send(ChatEvent::Image(Box::new(image)));
 
     let mut follow_up = messages;

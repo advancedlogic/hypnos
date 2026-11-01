@@ -73,7 +73,10 @@ app's commands.
   your voice settings), list named entities (`extract_entities`, GLiNER), and, when it cannot see,
   ask a vision model about an image in the chat (`describe_image`). Each tool is offered only
   when a running model does its job; several run in parallel in one round, up to four rounds a
-  turn, and each shows as a step in the answer (what, which model, seconds, result). Settings
+  turn. They show in a blue panel above the answer, next to the orange thinking one: open
+  while a tool runs ("Using fetch_url…"), folded to "Used 2 tools: … · 2.8 s" after; open, it
+  lists each call with its model and seconds, its input (the arguments) and its output (what
+  went back to the chat model, cut at 8000 characters). The image tool's calls are there too. Settings
   can turn them off apart from the image tool. Models without a native tool format keep only
   the image tool (the prompt convention).
 - **Under each answer:** decode speed, time to first token, tokens, and the tier the model was

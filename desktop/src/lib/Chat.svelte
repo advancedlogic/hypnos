@@ -210,6 +210,24 @@
 
   /** Answer id -> thoughts panel opened by the user (it is open by itself only while thinking). */
   let thoughtsOpen = $state({});
+  // The tool panel (DESK-27): open while a tool runs, then folded unless opened.
+  let toolsOpen = $state({});
+
+  function toolsHeader(steps) {
+    const running = steps.filter((st) => st.status === 'running');
+    if (running.length) return `Using ${running.map((st) => st.tool).join(', ')}…`;
+    const failed = steps.filter((st) => st.status === 'error').length;
+    const secs = steps.reduce((n, st) => n + (st.seconds ?? 0), 0);
+    const names = [...new Set(steps.map((st) => st.tool))].join(', ');
+    return `Used ${steps.length === 1 ? 'a tool' : `${steps.length} tools`}: ${names} · ${secs.toFixed(1)} s${failed ? ` · ${failed} failed` : ''}`;
+  }
+
+  /** A call's arguments for the panel: one line per argument, long values as they are. */
+  function stepInput(input) {
+    if (!input || typeof input !== 'object') return String(input ?? '');
+    const lines = Object.entries(input).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`);
+    return lines.join('\n') || '(no arguments)';
+  }
 
   function thoughtsHeader(message) {
     const s = message.thoughtSeconds;
@@ -616,24 +634,51 @@
                 </div>
               {/if}
               {#if message.steps?.length}
-                <ul class="mb-2 space-y-0.5 text-[11px]">
-                  {#each message.steps as step (step.id)}
-                    <li class="flex items-center gap-2 {step.status === 'error' ? 'text-rose-300' : 'text-slate-500'}">
-                      {#if step.status === 'running'}
-                        <span class="w-3 h-3 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin"></span>
-                      {:else if step.status === 'done'}
-                        <span class="text-emerald-400">✓</span>
-                      {:else}
-                        <span>!</span>
-                      {/if}
-                      <span class="truncate max-w-md" title={step.label}>{step.label}</span>
-                      {#if step.summary}<span class="truncate max-w-xs text-slate-600" title={step.summary}>{step.summary}</span>{/if}
-                      {#if step.model || step.seconds != null}
-                        <span class="text-slate-600">{[step.model, step.seconds != null ? `${step.seconds.toFixed(1)} s` : null].filter(Boolean).join(' · ')}</span>
-                      {/if}
-                    </li>
-                  {/each}
-                </ul>
+                {@const working = message.steps.some((st) => st.status === 'running')}
+                {@const open = toolsOpen[answerId(i)] ?? working}
+                <div class="mb-3 rounded-xl border border-sky-500/30 bg-sky-500/10 text-sky-200">
+                  <button
+                    class="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-sky-300 hover:text-sky-200"
+                    onclick={() => (toolsOpen[answerId(i)] = !open)}
+                    aria-expanded={open}
+                  >
+                    {#if working}
+                      <span class="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
+                    {:else}
+                      <svg class="w-3 h-3 transition-transform {open ? 'rotate-90' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 6l6 6-6 6" />
+                      </svg>
+                    {/if}
+                    <span>{toolsHeader(message.steps)}</span>
+                  </button>
+                  {#if open}
+                    <div class="max-h-96 overflow-y-auto px-3 pb-2 space-y-2.5">
+                      {#each message.steps as step (step.id)}
+                        <div class="text-[11px] space-y-1">
+                          <div class="flex items-center gap-2 {step.status === 'error' ? 'text-rose-300' : 'text-sky-200'}">
+                            {#if step.status === 'running'}
+                              <span class="w-3 h-3 rounded-full border-2 border-sky-400 border-t-transparent animate-spin"></span>
+                            {:else if step.status === 'done'}
+                              <span class="text-emerald-400">✓</span>
+                            {:else}
+                              <span>!</span>
+                            {/if}
+                            <span class="font-mono text-sky-300">{step.tool}</span>
+                            <span class="truncate" title={step.label}>{step.label}</span>
+                            {#if step.summary}<span class="truncate text-sky-200/60" title={step.summary}>· {step.summary}</span>{/if}
+                            <span class="ml-auto shrink-0 text-sky-200/50">{[step.model, step.seconds != null ? `${step.seconds.toFixed(1)} s` : null].filter(Boolean).join(' · ')}</span>
+                          </div>
+                          <div class="text-[10px] uppercase tracking-wide text-sky-300/60">Input</div>
+                          <pre class="max-h-40 overflow-auto rounded-md bg-slate-950/60 px-2 py-1 text-[11px] leading-relaxed text-sky-100/80 whitespace-pre-wrap break-words">{stepInput(step.input)}</pre>
+                          {#if step.output}
+                            <div class="text-[10px] uppercase tracking-wide text-sky-300/60">Output</div>
+                            <pre class="max-h-56 overflow-auto rounded-md bg-slate-950/60 px-2 py-1 text-[11px] leading-relaxed text-sky-100/80 whitespace-pre-wrap break-words">{step.output}</pre>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
               {/if}
               {#if message.image}
                 {@render imageFigure(message, message.image, true)}
