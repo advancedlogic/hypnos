@@ -65,17 +65,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       `WINDOWS_CERTIFICATE` repository secrets (docs/signing.md) and make a release with them so
       the installers are Developer ID signed and notarized.
 
-- [ ] 🟫 **MEM-7** `P2` Add workload profiles with latency objectives
-      Presets that fill in config values, not a new layer of behaviour. Named profiles that turn
-      the knobs into outcomes: `interactive_chat`, `voice_assistant`,
-      `document_pipeline`, `batch_processing` (`[server] profile = ...`, overridable per model).
-      Each sets model priorities and pre-staging, queue behaviour (depth, fairness), slot counts,
-      which swaps are acceptable (a voice assistant never evicts its STT/TTS models; batch accepts
-      swaps for throughput) and a latency objective (first token / first audio / pages per
-      minute) that MEM-6 and PERF-10 read. Explicit keys in `[[models]]` still win; `hypnos
-      --check-config` prints the effective settings. Document each profile in
-      `docs/operating.md` with the symptom it answers.
-
 - [ ] 🟫 **MEM-6** `P2` Make scheduling workload-aware, not only memory-aware
       Residency and eviction today follow priority, recency and fit. Add what a decision costs
       and what comes next: per model an estimated promotion cost (from measured
@@ -149,6 +138,23 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🟫 **MEM-7** `P2` Add workload profiles with latency objectives
+      Presets that fill in config values, not a new layer of behaviour. Named profiles that turn
+      the knobs into outcomes: `interactive_chat`, `voice_assistant`,
+      `document_pipeline`, `batch_processing` (`[server] profile = ...`, overridable per model).
+      Each sets model priorities and pre-staging, queue behaviour (depth, fairness), slot counts,
+      which swaps are acceptable (a voice assistant never evicts its STT/TTS models; batch accepts
+      swaps for throughput) and a latency objective (first token / first audio / pages per
+      minute) that MEM-6 and PERF-10 read. Explicit keys in `[[models]]` still win; `hypnos
+      --check-config` prints the effective settings. Document each profile in
+      `docs/operating.md` with the symptom it answers.
+      Done 2026-11-01: `[server] profile` presets applied to the raw TOML (only missing keys:
+      priority, initial_tier, keep_warm_in_ram, slots, default_context_len, max_queue_per_model),
+      per role and merged for multi-role models; runtime and overlay models included; notes in
+      the log and `--check-config`; profile and objective in `/v1/memory/status`; presets table
+      in `docs/operating.md`. Per-model profile overrides are the explicit keys themselves.
+      (commit 03da363)
 
 - [x] 🟨 **TEST-3** `P1` Measure booked vs real memory per engine and fix the estimates
       Memory budgets are planner estimates, not OS-enforced limits, and some are off: LFM3's KV
