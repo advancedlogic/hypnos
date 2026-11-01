@@ -51,11 +51,22 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 3  | 13  | 5   | 8   | 11   | 7   | 10    | 7   | 5    | 20   |
+| 3  | 13  | 5   | 8   | 11   | 7   | 10    | 7   | 6    | 20   |
 
 ---
 
 ## Backlog
+
+- [ ] 🟨 **TEST-5** `P2` Starvation under sustained load; real-engine drills and reproducible releases
+      From TEST-4. (1) The stress test showed that when two resident models stay busy, a third
+      model's requests all get 507 `insufficient_vram_or_ram` (neither can be evicted while
+      leased): it starves. Let such a request wait (bounded by its deadline, PERF-10) for a
+      model to become idle and be evicted, ahead of new work for the resident models, instead
+      of refusing at once. (2) On a CUDA machine: an engine abort and supervisor restart drill
+      (systemd / Docker), out-of-memory recovery under real pressure, and `hypnos measure-memory`
+      to calibrate the CUDA working-memory values (TEST-3 measured Metal only). (3) Reproducible
+      release archives: pinned toolchains in every CI job, a build that gives the same archive
+      twice, checksums in the release.
 
 - [ ] 🩵 **DESK-19** `P1` Test on real 16 GB and 32 GB Macs and ship a signed, notarized release
       Split from DESK-18 (it needs hardware and secrets): run the guided setup end to end on a
@@ -64,16 +75,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       and record the results in `docs/apple-silicon.md`; add the `APPLE_*` and
       `WINDOWS_CERTIFICATE` repository secrets (docs/signing.md) and make a release with them so
       the installers are Developer ID signed and notarized.
-
-- [ ] 🟨 **TEST-4** `P2` Harden for operational reliability
-      Build on what exists (auth, quotas, TLS, metrics, request log, the TEST-2 fault tests):
-      a stress suite (many concurrent clients across modalities, long runs, memory never
-      growing), concurrent cancellation at every stage (queued, loading, prefill, decode,
-      streaming), out-of-memory recovery under real pressure, engine crash and supervisor
-      restart drills, upgrade compatibility (old configs and overlays, `config_version`
-      migrations, catalog versions), a security review (auth bypass, path handling in
-      `POST /v1/models`, remote URL fetches, request log redaction) and repeatable releases
-      (pinned toolchains, reproducible archives).
 
 - [ ] 🟩 **ENG-4** `P2` Add audio.cpp for text-to-speech and optional speech-to-text
       Vendor https://github.com/0xShug0/audio.cpp (pin + patches in `scripts/vendor.sh`) and link
@@ -112,6 +113,23 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🟨 **TEST-4** `P2` Harden for operational reliability
+      Build on what exists (auth, quotas, TLS, metrics, request log, the TEST-2 fault tests):
+      a stress suite (many concurrent clients across modalities, long runs, memory never
+      growing), concurrent cancellation at every stage (queued, loading, prefill, decode,
+      streaming), out-of-memory recovery under real pressure, engine crash and supervisor
+      restart drills, upgrade compatibility (old configs and overlays, `config_version`
+      migrations, catalog versions), a security review (auth bypass, path handling in
+      `POST /v1/models`, remote URL fetches, request log redaction) and repeatable releases
+      (pinned toolchains, reproducible archives).
+      Done 2026-11-01 (engine-free and review parts): a stress / cancellation test over the real
+      router and scheduler (300 clients, three models in room for two, cancellations at every
+      stage), upgrade-compatibility tests over the released example configs, and a security
+      review with three fixes (SSRF guard on remote URLs, pool paths bound without models_dir, a
+      warning for an exposed server without keys). Crash drills, out-of-memory under real
+      pressure and reproducible release archives need a CUDA machine and the CI runners: moved to
+      TEST-5 with the starvation the stress test found. (commit 157ba99)
 
 - [x] 🟧 **PERF-10** `P2` Deadline-aware admission and predictable latency
       A request that succeeds in 12 s when 1 s was expected is a failure in practice. Estimate the
