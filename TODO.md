@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 3  | 13  | 5   | 8   | 11   | 7   | 10    | 7   | 6    | 20   |
+| 3  | 13  | 5   | 8   | 11   | 8   | 10    | 7   | 6    | 20   |
 
 ---
 
@@ -113,6 +113,14 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🟥 **BUG-7** `P1` Tools for an LFM3 model fail mid-stream instead of a 400 (API, desktop)
+      A streamed chat with `tools` for `lfm3:1.7b` answered 200 and then an error event ("has no
+      tool-calling format in Hypnos"), because the engine checked the architecture after the SSE
+      headers; the desktop's prompt-convention fallback waits for a 400 and never ran. Fixed:
+      `ModelBackend::supports_tool_calls` (GGUF architecture, read once) is checked in the chat
+      handler before loading or streaming. Test:
+      `tools_for_a_model_without_a_tool_format_are_refused_before_streaming`. (commit cddd1a9)
 
 - [x] 🟨 **TEST-4** `P2` Harden for operational reliability
       Build on what exists (auth, quotas, TLS, metrics, request log, the TEST-2 fault tests):
