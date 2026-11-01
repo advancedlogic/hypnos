@@ -1,0 +1,326 @@
+# =============================================================================
+# Hypnos — 3-Tier (GPU VRAM <-> Pinned Host RAM <-> NVMe SSD) Multi-Modal Server
+#
+# Every model below runs INSIDE the hypnos process (llama.cpp, stable-diffusion.cpp and
+# ONNX Runtime are linked natively). No Ollama / LM Studio / Python sidecar is involved.
+#
+#   1. gemma4:26b-q4   (Text Generation + Vision)           llama.cpp + libmtmd
+#   2. gemma4:e4b-q4   (Audio / Speech-to-Text + Chat)      llama.cpp + libmtmd (audio encoder)
+#   3. kokoro-82m-q4   (Text-to-Speech)                     ONNX Runtime + espeak-ng
+#   4. gemmaembedding2 (Vector Embeddings)                  llama.cpp
+#   5. moss-image      (Image Generation)                   stable-diffusion.cpp
+#   6. docling         (Document Conversion)                docling.rs on ONNX Runtime (CPU)
+#   7. gliner2.5-multi (Entity Extraction)                  gliner25-rs on ONNX Runtime (CPU)
+#
+# Paths are relative to the working directory (run from `backend/`).
+# =============================================================================
+
+# Schema version of this file (absent = 1). A newer Hypnos migrates older files and says so;
+# `hypnos --check-config hypnos.toml` validates a file without starting the server.
+config_version = 1
+
+[server]
+# Loopback by default. Before "0.0.0.0", set api_keys (or HYPNOS_API_KEYS) and [server.tls] below.
+host = "127.0.0.1"
+port = 9999                             # `hypnos --port N` or HYPNOS_PORT override this
+kv_idle_timeout_secs = 300
+# CORS: exact origins or "http://localhost:*" / "http://127.0.0.1:*" wildcards. Empty = any loopback origin.
+allowed_origins = []
+# "pretty" for terminals, "json" (one object per line) for log shippers. Env HYPNOS_LOG_FORMAT overrides.
+log_format = "pretty"
+# In-memory request log (GET /v1/logs, playground "Request Logs" tab). Levels: off, error (failed
+# calls only), warn (4xx/5xx), info (metadata of every call), debug (+ prompt and completion text),
+# trace (+ request/response payloads with media replaced by placeholders). POST /v1/logs/level
+# changes it at runtime; request_log_capacity bounds the ring.
+request_log_level = "info"
+request_log_capacity = 200
+# API keys for every /v1/* route, sent as `Authorization: Bearer <key>`. Empty = no auth.
+# HYPNOS_API_KEYS (comma-separated) replaces the list, so keys can stay out of this file.
+# Generate one with: openssl rand -hex 32
+# api_keys = ["..."]
+# metrics_require_auth = false        # true: /metrics needs a key too (/health, /ready stay open)
+# Labelled keys with their own limits, next to api_keys (0 or unset = no limit). The label names the
+# key in the request log (GET /v1/logs?key=...), on /metrics and in rejection log lines.
+# [[server.keys]]
+# label = "team-a"
+# key = "..."
+# requests_per_minute = 60             # beyond it: HTTP 429 rate_limit_error with Retry-After
+# max_concurrent = 4                   # in flight at once; a stream counts until it ends
+# tokens_per_day = 2000000             # prompt + completion tokens per UTC day
+# Limits for every key (plain api_keys included) that does not set its own.
+# [server.api_key_defaults]
+# requests_per_minute = 0
+# max_concurrent = 0
+# tokens_per_day = 0
+# What the request log may keep at debug / trace: regular expressions whose matches in prompts,
+# completions and payloads become [redacted], or ["all"] to keep no text at any level.
+# request_log_redact = ["sk-[A-Za-z0-9]+", "(?i)password\\S*"]
+# Built playground served at /. Unset: frontend/ beside the executable, if present (release archives).
+# frontend_dir = "../frontend/dist"
+# Folder the model paths below are relative to (itself relative to the working directory, i.e.
+# backend/). HYPNOS_MODELS_DIR overrides it, e.g. for files on another drive. The file names
+# match the `local` column of models.manifest, which `./run.sh models` downloads into it.
+models_dir = "models"
+# Pictures kept for `return_pictures` document conversions (GET /v1/documents/{id}/pictures): one
+# JSON file per picture (base64 image + mime, size, page, bounding box, caption). Unset dir =
+# hypnos-pictures under the OS temp directory; leftovers of an earlier run are removed at startup.
+# document_pictures_dir = "pictures"
+document_pictures_ttl_secs = 3600       # kept this long after the last page; DELETE /v1/documents/{id} frees earlier
+document_pictures_max_bytes = 1073741824 # 1 GiB store cap, oldest documents dropped first (0 = no cap)
+# HTTPS in-process (PEM files). Must stay the last part of [server]: keys below it would belong to it.
+# [server.tls]
+# cert_path = "certs/hypnos.crt"
+# key_path = "certs/hypnos.key"
+
+[limits]
+request_timeout_secs = 900          # wall-clock budget per request (streaming: until headers are sent)
+max_queue_per_model = 8             # queued + running requests per model; beyond this -> HTTP 429
+max_body_bytes = 268435456          # 256 MiB HTTP body (multipart uploads included)
+max_audio_bytes = 67108864          # 64 MiB per audio clip
+max_image_bytes = 33554432          # 32 MiB per image (data: URL or remote download)
+max_prompt_chars = 1000000          # total characters across messages / embedding inputs / TTS text
+max_tokens_cap = 8192               # upper bound applied to max_tokens
+max_images_per_request = 4          # cap on `n` for /v1/images/generations
+allow_remote_image_urls = true      # set false to accept only data: URLs (no outbound fetches)
+
+[hardware]
+# Options: "auto", "nvidia_cuda", "amd_rocm", "apple_metal_uma", "vulkan"
+accelerator = "auto"
+device_id = 0
+# 0 = auto-detect VRAM via nvidia-smi / rocm-smi / macOS sysctl, or set explicit bytes
+vram_budget_bytes = 0
+vram_safety_margin_bytes = 1073741824   # 1 GiB left for the driver / display
+pinned_ram_budget_bytes = 34359738368   # 32 GiB Tier-2 Pinned Host RAM pool
+lock_host_memory = true                 # VirtualLock (Windows) / mlock (Linux/macOS)
+# Pretend this machine has less RAM, to try out a smaller configuration: every budget is derived
+# as on that machine (on a Mac including the GPU working set). 0 = the real amount.
+# simulate_physical_memory_bytes = 34359738368   # e.g. a 32 GB machine
+# Soft cap on what the hypnos process itself may hold (0 = none). Before each model load idle
+# models are evicted, or the request fails with HTTP 507, rather than crossing it.
+# max_process_memory_bytes = 21474836480         # e.g. 20 GiB
+# Keep a chat model's conversations (its slots' KV state) in host memory when it is evicted, and
+# restore them when it comes back, so the next turn is not prefilled from scratch (MEM-4). Off by
+# default; POST /v1/memory/kv-park switches it at runtime. Up to kv_park_bytes in total, oldest
+# first out. About 20 KiB per token plus ~200 MiB per conversation for the 26B (f16 KV).
+# kv_park = true
+# kv_park_bytes = 4294967296                     # 4 GiB (default)
+
+# -----------------------------------------------------------------------------
+# 1. Gemma 4 26B-A4B (MoE, Q4_0) — Text Generation + Vision (/v1/chat/completions)
+#    ggml-org/gemma-4-26B-A4B-it-GGUF
+# -----------------------------------------------------------------------------
+[[models]]
+id = "gemma4:26b-q4"
+modality = "text_generation"
+additional_modalities = ["vision"]
+engine = "ggml_llama"
+weights_path = "gemma-4-26B-A4B-it-Q4_0.gguf"
+aux_weights_path = "mmproj-gemma-4-26B-A4B-it-BF16.gguf"
+total_weight_bytes = 15814641056        # 13.6 GiB weights + 1.1 GiB vision projector
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier2_pinned_ram"       # Pre-stage in pinned RAM on boot for fast promotion
+keep_warm_in_ram = true
+priority = "high"
+# Mixture-of-Experts offload (MEM-5): "on" keeps the 12 GiB of expert tensors in host memory and
+# runs them on the CPU (~2.8 GiB of weights left on the GPU); "auto" does it for as few layers as
+# needed when the model does not fit whole. Saves VRAM on a 16-24 GB card at a speed cost (decode and especially prefill); measure first.
+# moe_offload = "off"
+# enabled = false                       # keep the block but take the model out of service (not
+#                                       # pre-staged, hidden from /v1/models, requests answer 404;
+#                                       # missing weights are tolerated). POST /v1/models/{id}/enable
+#                                       # or /disable flips it at runtime without touching this file.
+# Execution slots sharing one persistent llama.cpp context (KV booking = slots x context). Requests
+# in different slots are decoded together, one llama_batch per step; 1 serves them one at a time.
+# 3 slots at 16k with an f16 KV cache: 150 tokens/s per stream on an RTX 5090 laptop. 4 slots at
+# 16k (or a q8_0 cache with 2 or more slots at 16k) made llama.cpp re-capture its CUDA graph on
+# every step and decode at 8-27 tokens/s (PERF-7, docs/bench/decode-slots-cuda-2026-10-30.md).
+slots = 3
+# Reuse a slot's KV cache when a prompt extends what it processed last (multi-turn chats prefill
+# only the new turn; unchanged images are not re-encoded).
+prefix_cache = true
+# How the weights reach the GPU: unset = read the file through pinned staging buffers with
+# asynchronous uploads on CUDA (mmap on Metal and for CPU placements). `true` maps the file instead.
+# use_mmap = false
+
+[models.arch]
+num_layers = 30
+num_kv_heads = 8                        # global layers: 8 KV heads x 512 head_dim; SWA layers: 2 x 256
+head_dim = 512
+default_context_len = 16384
+max_context_len = 131072
+sliding_window_len = 1024
+global_attn_every_n_layers = 6          # 5 local SWA layers per 1 full global layer
+kv_dtype = "f16"                        # q8_0 halves the KV cache but trips the CUDA-graph re-capture above
+non_layer_overhead_bytes = 2415919104   # token embeddings + 1.1 GiB vision tower (not splittable)
+activation_workspace_bytes = 2147483648 # 2 GiB: llama.cpp's compute buffer is 2.2 GB at n_batch 2048 (measured)
+
+# -----------------------------------------------------------------------------
+# 2. Gemma 4 E4B (Q4_0) — Audio / Speech-to-Text (/v1/audio/transcriptions) + Chat
+#    ggml-org/gemma-4-E4B-it-GGUF with the BF16 audio+vision projector
+# -----------------------------------------------------------------------------
+[[models]]
+id = "gemma4:e4b-q4"
+modality = "speech_to_text"
+additional_modalities = ["text_generation", "vision"]
+engine = "ggml_llama"
+weights_path = "gemma-4-E4B-it-Q4_0.gguf"
+aux_weights_path = "mmproj-gemma-4-E4B-it-BF16.gguf"
+total_weight_bytes = 5582359648         # 4.3 GiB weights + 0.9 GiB audio/vision projector
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+slots = 4                               # dense model, ~150 MiB of KV per slot at 8k context
+prefix_cache = true
+
+[models.arch]
+num_layers = 42
+num_kv_heads = 2
+head_dim = 512
+default_context_len = 8192
+max_context_len = 131072
+sliding_window_len = 512
+global_attn_every_n_layers = 6
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 1610612736   # embeddings + conformer audio encoder + vision tower
+activation_workspace_bytes = 536870912
+
+# -----------------------------------------------------------------------------
+# 3. Kokoro 82M (fp32 ONNX) — Text-to-Speech (/v1/audio/speech)
+#    onnx-community/Kokoro-82M-v1.0-ONNX; runs on CPU via ONNX Runtime (82M params, real-time+).
+#    The id is kept as "kokoro-82m-q4" for API compatibility with the playground, but the fp32 graph
+#    (onnx/model.onnx) is used: the quantized model_q8f16.onnx / model_q4.onnx variants crash the
+#    statically linked ONNX Runtime 1.31 CPU provider at session creation on Windows, and the fp16
+#    graph overflows to an all-NaN (silent) waveform for some texts on every platform (BUG-6), at
+#    the same speed as fp32 on the CPU.
+# -----------------------------------------------------------------------------
+[[models]]
+id = "kokoro-82m-q4"
+modality = "text_to_speech"
+engine = "onnx_runtime"
+weights_path = "kokoro/model.onnx"
+voices_path = "kokoro/voices"
+total_weight_bytes = 0                  # auto-detected from the file (~82 MiB)
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier1_gpu_vram"
+keep_warm_in_ram = true
+priority = "realtime_pinned"
+
+[models.arch]
+num_layers = 12
+num_kv_heads = 0
+head_dim = 64
+default_context_len = 512
+max_context_len = 2048
+kv_dtype = "f16"
+non_layer_overhead_bytes = 15728640
+activation_workspace_bytes = 67108864
+
+# -----------------------------------------------------------------------------
+# 4. EmbeddingGemma 2 (Q8_0) — Vector Embeddings (/v1/embeddings)
+#    ggml-org/embeddinggemma-2-GGUF, 768-dim output, mean pooling
+# -----------------------------------------------------------------------------
+[[models]]
+id = "gemmaembedding2"
+modality = "embeddings"
+engine = "ggml_llama"
+weights_path = "embeddinggemma-2-Q8_0.gguf"
+total_weight_bytes = 0                  # auto-detected (~296 MiB)
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier1_gpu_vram"         # Always hot in Tier 1 VRAM
+keep_warm_in_ram = true
+priority = "realtime_pinned"            # Never evicted when heavy models load
+
+[models.arch]
+num_layers = 24
+num_kv_heads = 2
+head_dim = 512
+default_context_len = 2048
+max_context_len = 8192
+sliding_window_len = 1024
+global_attn_every_n_layers = 6
+kv_dtype = "f16"
+non_layer_overhead_bytes = 104857600
+activation_workspace_bytes = 134217728
+
+# -----------------------------------------------------------------------------
+# 5. MOSS-Image SFT (Q4_K) — Image Generation (/v1/images/generations)
+#    DiT: leejet/MOSS-Image-SFT-GGUF, text encoder: unsloth/Qwen3.5-9B-GGUF Q4_K_M,
+#    VAE: Comfy-Org/MOSS-Image flux2-vae, tokenizer: OpenMOSS-Team/MOSS-Image-Base
+# -----------------------------------------------------------------------------
+[[models]]
+id = "moss-image"
+modality = "image_generation"
+engine = "ggml_diffusion"
+weights_path = "MOSS-Image-SFT-Q4_K.gguf"
+text_encoder_path = "Qwen3.5-9B-Q4_K_M.gguf"
+aux_weights_path = "flux2-vae.safetensors"
+tokenizer_path = "moss_tokenizer.json"
+total_weight_bytes = 9344134556         # 3.3 GiB DiT + 5.7 GiB Qwen3.5-9B + 0.3 GiB VAE
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier3_nvme_ssd"
+# No Tier 2 for the image model: sd.cpp reloads it from the OS page cache in about a second, and
+# pinning its 9 GiB (DiT + text encoder + VAE) next to the chat models' 23 GiB locked a 64 GB
+# machine into swapping (PERF-6). Set true only with RAM to spare.
+keep_warm_in_ram = false
+priority = "low"
+
+[models.arch]
+num_layers = 48
+num_kv_heads = 0
+head_dim = 128
+default_context_len = 512
+max_context_len = 1024
+kv_dtype = "f16"
+non_layer_overhead_bytes = 6442450944   # text encoder + VAE are not block-splittable
+activation_workspace_bytes = 3221225472
+
+# -----------------------------------------------------------------------------
+# 6. docling — Document conversion (/v1/documents/convert): PDFs, images, DOCX/PPTX/XLSX, HTML
+#    docling.rs (docling-project/docling.rs, MIT): layout (int8), TableFormer and PP-OCRv6 models
+#    on ONNX Runtime, on the CPU; PDFs are parsed and rendered in pure Rust. weights_path is the
+#    layout model, and the other model files sit in the same folder (`./run.sh models docling`).
+#    Pages are converted one at a time, so this booking (models + working memory, all host RAM)
+#    holds for documents of any length. OCR runs only on pages without a text layer.
+#    device = "gpu" runs the models on CoreML (Metal build) or CUDA (built in; needs driver 580+,
+#    the CUDA 13 runtime and cuDNN 9 for CUDA 13 at run time) with the fp32 graphs
+#    (`./run.sh models docling-gpu`) and books VRAM; give it ~5 GiB of activation_workspace_bytes.
+#    RTX 5090 laptop vs its CPU: text pages 49 vs 133 ms, an OCR'd scan 1.75 vs 2.1 s, a page
+#    with two tables 1.07 vs 0.9 s (docs/bench/docling-cuda-2026-10-30.md). On an M5 Max the CPU
+#    is faster: 15 pages in 2.5 s and 1.3 GB, against 6.4 s and 5.2 GB on CoreML.
+# -----------------------------------------------------------------------------
+[[models]]
+id = "docling"
+modality = "document_conversion"
+engine = "docling"
+device = "cpu"                          # Tier 1 books host RAM, not VRAM
+weights_path = "docling/layout_heron_int8.onnx"
+total_weight_bytes = 335544320          # every docling model file (~310 MiB)
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = false                # unloading frees the models; reloading takes ~0.3 s
+priority = "normal"
+
+[models.arch]
+num_layers = 1
+activation_workspace_bytes = 1610612736 # 1.5 GiB: 1.3-1.6 GB measured while converting
+
+# -----------------------------------------------------------------------------
+# 7. gliner2.5-multi — Entity extraction (/v1/entities), zero-shot: labels chosen per request
+#    jugaadsrl/gliner2.5-multi-v1-onnx (Apache-2.0, multilingual), the fp32 graphs, on the CPU
+#    through gliner25-rs. weights_path is the encoder; the heads, classifier and tokenizer sit in
+#    the same folder. More than 8 labels run as several passes; long texts are read in windows.
+# -----------------------------------------------------------------------------
+[[models]]
+id = "gliner2.5-multi"
+modality = "entity_extraction"
+engine = "gliner"
+device = "cpu"                          # Tier 1 books host RAM, not VRAM
+weights_path = "gliner2.5-multi/encoder_fp32.onnx"
+total_weight_bytes = 1228931072         # every file in the folder (~1.15 GiB)
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = false                # reloading takes under a second
+priority = "normal"
+
+[models.arch]
+num_layers = 1
+activation_workspace_bytes = 2147483648 # 3.0 GB measured after load and a 1,700-word request

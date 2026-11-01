@@ -137,7 +137,15 @@ impl ModelPool {
         }
         // The template's models_dir is already resolved (absolute) at startup.
         full.apply_models_dir(&self.base_dir, None);
-        if let Some(dir) = &self.template.server.models_dir {
+        // Paths stay inside models_dir, or the working directory without one (TEST-4).
+        let dir = self
+            .template
+            .server
+            .models_dir
+            .clone()
+            .unwrap_or_else(|| self.base_dir.clone());
+        {
+            let dir = &dir;
             let m = &full.models[0];
             for p in [
                 Some(&m.weights_path),

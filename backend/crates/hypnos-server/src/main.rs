@@ -320,6 +320,18 @@ async fn run() -> Result<()> {
         }
         None => None,
     };
+    // Reachable from other machines with no key: anyone there can run models and, through
+    // POST /v1/models, change the pool.
+    let loopback = matches!(
+        config.server.host.as_str(),
+        "127.0.0.1" | "localhost" | "::1"
+    );
+    if !loopback && config.server.api_keys.is_empty() && config.server.keys.is_empty() {
+        warn!(
+            host = %config.server.host,
+            "Listening beyond this machine without API keys: anyone who can reach it can use and reconfigure the server; set server.api_keys (or HYPNOS_API_KEYS) and [server.tls]"
+        );
+    }
     let state = AppState::from_config(config)?;
     state.pool.set_overlay(overlay_path, config_ids);
     state.pictures.spawn_sweeper();

@@ -270,6 +270,12 @@ in a task-local that `AppState::new_request` reads, and returns `x-hypnos-estima
 and per `x-hypnos-workflow` (`metrics.rs`: `hypnos_request_e2e_ms`, `hypnos_workflow_e2e_ms`,
 p50/p95/p99 in `/v1/memory/status` `latency`).
 
+Hardening (TEST-4): `faults.rs` `concurrent_clients_and_cancellations_leave_nothing_behind` (300
+clients, three models in room for two, cancellations at every stage: no lease, slot or booking
+left); `hypnos-core/tests/compat.rs` loads every released example config (`tests/fixtures/`);
+remote fetches go through `media.rs` `PublicOnly` (no loopback / private / link-local addresses,
+`limits.allow_private_urls` to allow); `docs/security-review-2026-11-01.md`.
+
 ### Engines (`hypnos-backends`)
 
 - `llama.rs`: `ggml_llama`. Text, vision, audio-in (via mtmd), embeddings, tool calling (`tools.rs`:

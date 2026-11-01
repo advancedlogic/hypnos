@@ -209,6 +209,12 @@ Bind `127.0.0.1` unless keys and TLS (or a terminating proxy) are in place. With
 `server.metrics_require_auth = true`. Per-key limits are the only multi-tenancy Hypnos has: for
 quotas per user or organisation, billing, or finer rules put an API gateway in front.
 
+Remote image and document URLs (`allow_remote_image_urls`) never reach loopback, private,
+link-local or other non-public addresses, redirects included, unless `limits.allow_private_urls =
+true`: a client cannot make the server read the LAN or a cloud metadata endpoint. A server bound
+beyond loopback without API keys logs a warning at startup (anyone who reaches it can also change
+the model pool). See `docs/security-review-2026-11-01.md`.
+
 ## 7. Upgrading and rolling back
 
 - Release archives and the Docker image are versioned; `hypnos --version` prints the build.
@@ -220,6 +226,9 @@ quotas per user or organisation, billing, or finer rules put an API gateway in f
 - Run `hypnos --check-config hypnos.toml` with the new binary before switching traffic.
 - Model files are addressed by path in the config: a new release that changes the lineup needs
   `scripts/fetch-models` for the new files; old files can stay.
+- `backend/crates/hypnos-core/tests/compat.rs` loads every released example config (fixtures in
+  `tests/fixtures/`, add the new release's when tagging) and checks that files written for a newer
+  Hypnos are refused, not misread.
 - `models.catalog.toml` carries `catalog_version` (the server ignores a newer one and its catalog
   route answers 404). The runtime overlay `<config name>.models.toml` is applied over the config
   at startup and checked with it by `--check-config`; when rolling back, or to return to the

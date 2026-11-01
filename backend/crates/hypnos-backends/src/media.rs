@@ -55,6 +55,61 @@ fn load_url(url: &str, limits: &LimitsConfig) -> Result<Vec<u8>> {
     )))
 }
 
+/// Whether `ip` is a public internet address: not loopback, private, link-local, carrier-grade
+/// NAT, documentation, benchmarking, multicast, broadcast, reserved or unspecified.
+pub(crate) fn is_public(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+                || a == 0
+                || (a == 100 && (64..128).contains(&b)) // carrier-grade NAT
+                || (a == 198 && (b == 18 || b == 19)) // benchmarking
+                || a >= 240) // reserved
+        }
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_public(IpAddr::V4(v4));
+            }
+            let first = v6.segments()[0];
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (first & 0xfe00) == 0xfc00 // unique local
+                || (first & 0xffc0) == 0xfe80 // link-local
+                || first == 0x2001 && v6.segments()[1] == 0x0db8) // documentation
+        }
+    }
+}
+
+/// Resolves only to public addresses: a remote image or document URL must not reach the LAN,
+/// `localhost` or a cloud metadata endpoint unless `limits.allow_private_urls` says so.
+struct PublicOnly;
+
+impl ureq::Resolver for PublicOnly {
+    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+        use std::net::ToSocketAddrs;
+        let public: Vec<_> = netloc
+            .to_socket_addrs()?
+            .filter(|a| is_public(a.ip()))
+            .collect();
+        if public.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("{netloc} is not a public address (limits.allow_private_urls = false)"),
+            ));
+        }
+        Ok(public)
+    }
+}
+
 /// Downloads `url` (at most `limit` + 1 bytes, so the caller's size check can reject it) when
 /// `limits.allow_remote_image_urls` permits outbound fetches.
 fn fetch_remote(url: &str, limit: u64, what: &str, limits: &LimitsConfig) -> Result<Vec<u8>> {
@@ -63,8 +118,14 @@ fn fetch_remote(url: &str, limit: u64, what: &str, limits: &LimitsConfig) -> Res
             "remote {what} URLs are disabled (limits.allow_remote_image_urls = false); send the {what} itself"
         )));
     }
-    let resp = ureq::get(url)
-        .timeout(std::time::Duration::from_secs(30))
+    let mut agent = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(30));
+    if !limits.allow_private_urls {
+        // Checked at every connection, redirects included, on the addresses actually used.
+        agent = agent.resolver(PublicOnly);
+    }
+    let resp = agent
+        .build()
+        .get(url)
         .call()
         .map_err(|e| HypnosError::InvalidRequest(format!("failed to fetch {url}: {e}")))?;
     let mut buf = Vec::new();
@@ -194,6 +255,47 @@ pub fn parse_image_size(size: &str) -> Result<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_public_addresses_count_as_public() {
+        use std::net::IpAddr;
+        for private in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "::1",
+            "fc00::1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+        ] {
+            assert!(
+                !super::is_public(private.parse::<IpAddr>().unwrap()),
+                "{private}"
+            );
+        }
+        for public in ["93.184.216.34", "1.1.1.1", "2606:4700:4700::1111"] {
+            assert!(
+                super::is_public(public.parse::<IpAddr>().unwrap()),
+                "{public}"
+            );
+        }
+    }
+
+    #[test]
+    fn remote_fetches_do_not_reach_private_addresses() {
+        let limits = LimitsConfig::default();
+        let err = load_media(
+            &MediaRef::ImageUrl("http://127.0.0.1:9/secret.png".into()),
+            &limits,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("not a public address"), "{err}");
+    }
 
     #[test]
     fn image_size_snaps_and_clamps() {

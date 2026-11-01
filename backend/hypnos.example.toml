@@ -89,6 +89,9 @@ max_prompt_chars = 1000000          # total characters across messages / embeddi
 max_tokens_cap = 8192               # upper bound applied to max_tokens
 max_images_per_request = 4          # cap on `n` for /v1/images/generations
 allow_remote_image_urls = true      # set false to accept only data: URLs (no outbound fetches)
+# Remote fetches never reach loopback, private or link-local addresses (the LAN, localhost, cloud
+# metadata) unless this is true.
+# allow_private_urls = false
 # Busy models: "queue" (default) waits up to max_queue_per_model; "shed" refuses at once with 503
 # deadline_unmeetable when the estimated wait exceeds the workload profile's objective. A request's
 # own x-hypnos-deadline-ms applies either way.

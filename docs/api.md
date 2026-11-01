@@ -92,6 +92,7 @@ client or same-origin). The telemetry headers of section 5 are exposed to browse
 | `request_timeout_secs` | 900 s | 408 from the timeout layer (streams: applies to the headers only) |
 | `max_queue_per_model` | 8 | 429 `model_busy` |
 | `allow_remote_image_urls` | true | when false, `http(s)` image and document URLs answer 400; only `data:` URLs and uploads are accepted |
+| `allow_private_urls` | false | when false, those fetches refuse hosts that resolve only to loopback, private, link-local and other non-public addresses (also after a redirect): 400 naming the host |
 
 ---
 

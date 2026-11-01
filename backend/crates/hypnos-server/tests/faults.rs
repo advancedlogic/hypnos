@@ -41,6 +41,9 @@ struct MockEngine {
     device_oom: AtomicUsize,
     generations: AtomicUsize,
     placements: Mutex<Vec<MemoryTier>>,
+    /// Stress mode (TEST-4): loads take this long, and streams send twenty pieces this far
+    /// apart, checking for cancellation before each (as the engines do).
+    delay_ms: std::sync::atomic::AtomicU64,
 }
 
 #[async_trait]
@@ -53,6 +56,10 @@ impl ModelBackend for MockEngine {
     }
     async fn apply_placement(&self, plan: &LayerPlacementPlan, _ptr: Option<usize>) -> Result<()> {
         self.placements.lock().unwrap().push(plan.primary_tier);
+        let delay = self.delay_ms.load(Ordering::SeqCst);
+        if delay > 0 && plan.primary_tier == MemoryTier::Tier1GpuVram {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+        }
         if plan.primary_tier == MemoryTier::Tier1GpuVram {
             if self.fail_loads.load(Ordering::SeqCst) {
                 return Err(HypnosError::BackendError(
@@ -71,6 +78,13 @@ impl ModelBackend for MockEngine {
         _ctx: &RequestContext,
     ) -> Result<ChatCompletionResponse> {
         self.generations.fetch_add(1, Ordering::SeqCst);
+        let delay = self.delay_ms.load(Ordering::SeqCst);
+        for _ in 0..(if delay > 0 { 4 } else { 0 }) {
+            if !_ctx.should_continue() {
+                return Err(HypnosError::Cancelled);
+            }
+            tokio::time::sleep(Duration::from_millis(delay / 4)).await;
+        }
         if self.fail_generation.load(Ordering::SeqCst) {
             return Err(HypnosError::BackendError(
                 "simulated CUDA out of memory during decode".into(),
@@ -117,6 +131,22 @@ impl ModelBackend for MockEngine {
         tx: mpsc::Sender<ChatStreamEvent>,
     ) -> Result<()> {
         self.generations.fetch_add(1, Ordering::SeqCst);
+        let delay = self.delay_ms.load(Ordering::SeqCst);
+        if delay > 0 {
+            for _ in 0..20 {
+                if !_ctx.should_continue() {
+                    return Err(HypnosError::Cancelled);
+                }
+                if tx
+                    .send(ChatStreamEvent::Delta("tok ".into()))
+                    .await
+                    .is_err()
+                {
+                    return Err(HypnosError::Cancelled);
+                }
+                tokio::time::sleep(Duration::from_millis(delay / 4)).await;
+            }
+        }
         let _ = tx.send(ChatStreamEvent::Delta("mock ".into())).await;
         if self.fail_generation.load(Ordering::SeqCst) {
             let _ = tx
@@ -269,6 +299,7 @@ fn state_with(engines: Vec<Arc<MockEngine>>) -> AppState {
                     device_oom: AtomicUsize::new(0),
                     generations: AtomicUsize::new(0),
                     placements: Mutex::new(Vec::new()),
+                    delay_ms: std::sync::atomic::AtomicU64::new(0),
                 }) as Arc<dyn ModelBackend>
             }),
             false,
@@ -327,6 +358,7 @@ async fn a_refused_load_answers_500_and_is_counted_per_model() {
         device_oom: AtomicUsize::new(0),
         generations: AtomicUsize::new(0),
         placements: Mutex::new(Vec::new()),
+        delay_ms: std::sync::atomic::AtomicU64::new(0),
     });
     let app = build_router(state(engine.clone()), &[]);
 
@@ -368,6 +400,7 @@ async fn a_failure_mid_generation_releases_the_lease_and_keeps_the_model() {
         device_oom: AtomicUsize::new(0),
         generations: AtomicUsize::new(0),
         placements: Mutex::new(Vec::new()),
+        delay_ms: std::sync::atomic::AtomicU64::new(0),
     });
     let app = build_router(state(engine.clone()), &[]);
 
@@ -415,6 +448,7 @@ fn engine(id: &str) -> Arc<MockEngine> {
         device_oom: AtomicUsize::new(0),
         generations: AtomicUsize::new(0),
         placements: Mutex::new(Vec::new()),
+        delay_ms: std::sync::atomic::AtomicU64::new(0),
     })
 }
 
@@ -478,6 +512,7 @@ async fn kv_parking_is_off_by_default_and_switched_by_the_api() {
         device_oom: AtomicUsize::new(0),
         generations: AtomicUsize::new(0),
         placements: Mutex::new(Vec::new()),
+        delay_ms: std::sync::atomic::AtomicU64::new(0),
     });
     let app = build_router(state(engine), &[]);
     let status: serde_json::Value =
@@ -520,6 +555,7 @@ async fn moe_offload_is_switched_per_model_by_the_api() {
         device_oom: AtomicUsize::new(0),
         generations: AtomicUsize::new(0),
         placements: Mutex::new(Vec::new()),
+        delay_ms: std::sync::atomic::AtomicU64::new(0),
     });
     let app = build_router(state(engine), &[]);
     let resp = post(&app, "/v1/models/m/moe-offload", r#"{"mode": "on"}"#).await;
@@ -802,4 +838,147 @@ async fn deadlines_are_checked_at_admission_and_workflows_are_timed() {
     let metrics = text(get(&app, "/metrics").await).await;
     assert!(metrics.contains("hypnos_workflow_e2e_ms_count{workflow=\"voice_turn\"} 1"));
     assert!(metrics.contains("hypnos_request_e2e_ms_bucket{route=\"/v1/chat/completions\""));
+}
+
+/// TEST-4: hundreds of concurrent clients over three models that do not all fit, streaming and
+/// not, cancelled at random moments (queued, loading, generating, mid-stream). Afterwards no
+/// lease, admission slot or booking is left behind and every model still serves.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_clients_and_cancellations_leave_nothing_behind() {
+    use std::sync::atomic::AtomicU64;
+    let engines: Vec<Arc<MockEngine>> = ["a", "b", "c"]
+        .iter()
+        .map(|id| {
+            let mut config = model(id);
+            config.total_weight_bytes = 5 * GB; // 12 GB holds two of the three
+            config.slots = 2;
+            config.min_gpu_layer_ratio = 1.0; // all or nothing: a third model must evict
+            Arc::new(MockEngine {
+                config,
+                resident: AtomicBool::new(false),
+                fail_loads: AtomicBool::new(false),
+                fail_generation: AtomicBool::new(false),
+                device_oom: AtomicUsize::new(0),
+                generations: AtomicUsize::new(0),
+                placements: Mutex::new(Vec::new()),
+                delay_ms: AtomicU64::new(8),
+            })
+        })
+        .collect();
+    let st = state_with(engines.clone());
+    let scheduler = st.scheduler.clone();
+    let app = build_router(st, &[]);
+
+    let mut tasks = Vec::new();
+    for i in 0..300u64 {
+        let app = app.clone();
+        tasks.push(tokio::spawn(async move {
+            // A cheap deterministic spread of models, modes and cancellation points.
+            let id = ["a", "b", "c"][(i * 7 % 3) as usize];
+            let stream = i % 2 == 0;
+            let cancel_after_ms = match i % 5 {
+                0 => None,          // runs to the end
+                1 => Some(1),       // queued or loading
+                2 => Some(10),      // loading or early generation
+                3 => Some(25),      // mid-generation
+                _ => Some(45),      // late, often mid-stream
+            };
+            let body = format!(
+                r#"{{"model":"{id}","stream":{stream},"messages":[{{"role":"user","content":"hi"}}],"max_tokens":8}}"#
+            );
+            let req = Request::builder()
+                .method(Method::POST)
+                .uri("/v1/chat/completions")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            // Arrivals spread over ~120 ms, so models go idle and evict each other under load.
+            tokio::time::sleep(Duration::from_millis(i * 7 % 120)).await;
+            let call = async move {
+                let resp = app.oneshot(req).await.unwrap();
+                let status = resp.status();
+                let _ = axum::body::to_bytes(resp.into_body(), 1 << 20).await;
+                status
+            };
+            match cancel_after_ms {
+                None => Some(call.await),
+                Some(ms) => tokio::time::timeout(Duration::from_millis(ms), call)
+                    .await
+                    .ok(),
+            }
+        }));
+    }
+    let mut finished = 0;
+    for t in tasks {
+        if let Some(status) = t.await.expect("no panic") {
+            // 429: the model's queue is full; 507: the other two models are both busy, so
+            // neither can be evicted for the third (documented, retry later).
+            assert!(
+                status == StatusCode::OK
+                    || status == StatusCode::TOO_MANY_REQUESTS
+                    || status == StatusCode::INSUFFICIENT_STORAGE,
+                "unexpected {status}"
+            );
+            finished += 1;
+        }
+    }
+    assert!(
+        finished >= 60,
+        "the uncancelled fifth completes: {finished}"
+    );
+
+    // Cancelled requests unwind asynchronously; give them a moment.
+    for _ in 0..100 {
+        if ["a", "b", "c"]
+            .iter()
+            .all(|id| scheduler.memory().active_leases(id) == 0 && scheduler.in_flight(id) == 0)
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let status = scheduler.status();
+    for m in &status.models {
+        assert_eq!(m.active_leases, 0, "{} kept a lease", m.id);
+        assert_eq!(
+            scheduler.in_flight(&m.id),
+            0,
+            "{} kept an admission slot",
+            m.id
+        );
+    }
+    // What is booked is exactly what is resident.
+    let resident: u64 = status
+        .models
+        .iter()
+        .map(|m| m.placement.total_vram_bytes())
+        .sum();
+    assert_eq!(status.tier1_vram_used_bytes, resident);
+    assert!(resident <= 12 * GB);
+    let generated: usize = engines
+        .iter()
+        .map(|e| e.generations.load(Ordering::SeqCst))
+        .sum();
+    assert!(generated >= 60, "generations ran: {generated}");
+    // Every model still serves.
+    for id in ["a", "b", "c"] {
+        let body = format!(
+            r#"{{"model":"{id}","messages":[{{"role":"user","content":"hi"}}],"max_tokens":4}}"#
+        );
+        assert_eq!(
+            post(&app, "/v1/chat/completions", &body).await.status(),
+            200,
+            "{id}"
+        );
+    }
+    // Under sustained load on two models the third can starve (every request 507s while
+    // neither is idle; see TODO TEST-5); served one after another, each evicts another.
+    assert!(
+        scheduler
+            .stats()
+            .evictions
+            .load(std::sync::atomic::Ordering::Relaxed)
+            > 0,
+        "three models in room for two: serving each in turn evicted"
+    );
 }

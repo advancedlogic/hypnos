@@ -730,6 +730,11 @@ pub struct LimitsConfig {
     /// only data: URLs and uploads.
     #[serde(default = "default_true")]
     pub allow_remote_image_urls: bool,
+    /// Whether those fetches may reach loopback, private, link-local and other non-public
+    /// addresses (the LAN, `localhost`, cloud metadata endpoints). Off: a URL that resolves only
+    /// to such addresses, directly or through a redirect, is refused (TEST-4).
+    #[serde(default)]
+    pub allow_private_urls: bool,
     /// What a request does when its model is busy (PERF-10): `queue` waits for its turn (up to
     /// `max_queue_per_model`); `shed` refuses at once with 503 `deadline_unmeetable` when the
     /// estimated wait exceeds the workload profile's objective. An explicit
@@ -787,6 +792,7 @@ impl Default for LimitsConfig {
             max_tokens_cap: default_max_tokens_cap(),
             max_images_per_request: default_max_images_per_request(),
             allow_remote_image_urls: true,
+            allow_private_urls: false,
             overload: OverloadPolicy::Queue,
         }
     }
