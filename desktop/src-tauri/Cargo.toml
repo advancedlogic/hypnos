@@ -1,6 +1,6 @@
 [package]
 name = "hypnos-desktop"
-version = "0.4.0"
+version = "0.6.0"
 description = "Hypnos desktop client"
 edition = "2021"
 license = "MIT OR Apache-2.0"
