@@ -16,12 +16,13 @@ app's commands.
 
 ## Using it
 
-- **Chat.** The model picker lists the enabled models that do text generation, with their
-  current tier. Enter sends, Shift+Enter adds a line. Stop cuts an answer short (the server
-  stops at the next token); the refresh icon under any request or answer asks that request again and drops the turns after it (with a confirmation when later turns go). Each chat keeps its own model and
+- **Chat.** Every chat answers with the default chat model, chosen in Models with "Make
+  default for… → Chat"; the header shows it with its current tier. Enter sends, Shift+Enter adds a line. Stop cuts an answer short (the server
+  stops at the next token); the refresh icon under any request or answer asks that request again and drops the turns after it (with a confirmation when later turns go). Each chat keeps its own
   system prompt. Chats are saved on this machine.
-- **Thinking** (the chat header, next to the model; Off, Low, Medium, High, remembered): how
-  much a thinking model (Gemma 4, LFM3; others ignore it) may reason before it answers
+- **Thinking** (per model, in Models on each running model whose catalog entry thinks: Off,
+  Low, Medium, High, remembered; the header notes it when on): how much the model may reason
+  before it answers
   (`reasoning_effort`, 512 / 2048 / 6144 thinking tokens, with `max_tokens` raised to leave
   2048 for the answer). The thoughts stream into an orange panel above the answer ("Thinking…")
   that folds to "Thought for N s" once the answer starts; click it to read them again. They are
@@ -282,7 +283,7 @@ desktop/
 │       ├── hypnos.js         # the server commands (connect, probe, models, chat, route, ...)
 │       ├── connection.js     # server URL (store) + API key (keychain), then hypnos_connect
 │       ├── chats.svelte.js   # ChatStore: chats, streaming, stop, persistence
-│       ├── Chat.svelte       # model picker, messages, composer
+│       ├── Chat.svelte       # header (chat model, tier), messages, composer
 │       ├── Sidebar.svelte    # conversation list
 │       ├── StatsPanel.svelte # memory tiers, models, last-response telemetry, evictions
 │       ├── Settings.svelte   # connection dialog

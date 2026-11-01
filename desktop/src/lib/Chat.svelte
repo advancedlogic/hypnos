@@ -39,7 +39,9 @@
 
   let chat = $derived(store.current);
   let running = $derived(chat ? store.isRunning(chat.id) : false);
-  let modelKnown = $derived(!chat?.model || models.some((m) => m.id === chat.model));
+  // The chat model is the default one (Models: Make default for… Chat); the header only shows it.
+  let shownModel = $derived(store.lastModel ?? chat?.model ?? null);
+  let shownThinking = $derived(shownModel ? store.thinkingFor(shownModel) : 'none');
   let preparing = $derived(pending.some((p) => p.status === 'preparing'));
   let ready = $derived(pending.filter((p) => p.status === 'ready').map((p) => p.attachment));
   let canSend = $derived(
@@ -390,11 +392,9 @@
     };
   });
 
-  // A chat without a model (or with one that left the server) takes the first available.
+  // Without a default chat model (or when it left the server), the first available becomes it.
   $effect(() => {
-    if (chat && models.length && (!chat.model || !modelKnown) && chat.messages.length === 0) {
-      store.setModel(chat, models.find((m) => m.id === store.lastModel)?.id ?? models[0].id);
-    }
+    if (models.length && !models.some((m) => m.id === store.lastModel)) store.setDefaultModel(models[0].id);
   });
 
   // Follow the stream while the user is at the bottom.
@@ -495,39 +495,17 @@
   {/if}
   <div class="h-11 shrink-0 px-4 flex items-center gap-2 border-b border-slate-800/60">
     {#if chat}
-      <select
-        class="bg-transparent text-sm font-medium text-slate-200 rounded-md px-2 py-1 hover:bg-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-        value={chat.model ?? ''}
-        onchange={(e) => store.setModel(chat, e.currentTarget.value)}
-        disabled={running}
-        title="Model"
-      >
-        {#if !modelKnown}
-          <option value={chat.model}>{chat.model} (unavailable)</option>
-        {/if}
-        {#if models.length === 0}
-          <option value="" disabled>No chat models</option>
-        {/if}
-        {#each models as m (m.id)}
-          <option value={m.id}>{m.id}</option>
-        {/each}
-      </select>
-      {#if chat.model && modelTier(chat.model)}
-        <span class="text-[11px] text-slate-500">{tierName(modelTier(chat.model))}</span>
+      <span class="text-sm font-medium text-slate-200 px-2 py-1" title="The chat model. Change it in Models: Make default for… → Chat">
+        {shownModel ?? 'No chat model'}
+      </span>
+      {#if shownModel && modelTier(shownModel)}
+        <span class="text-[11px] text-slate-500">{tierName(modelTier(shownModel))}</span>
       {/if}
-      <select
-        class="bg-transparent text-xs rounded-md px-2 py-1 hover:bg-slate-800 focus:outline-none focus:ring-1 focus:ring-orange-500/70
-          {store.thinking !== 'none' ? 'text-orange-300' : 'text-slate-400'}"
-        value={store.thinking}
-        onchange={(e) => store.setThinking(e.currentTarget.value)}
-        disabled={running}
-        title="Thinking: how much the model may reason before it answers (Gemma 4 and LFM3 models; others ignore it)"
-        aria-label="Thinking level"
-      >
-        {#each api.THINKING_LEVELS as level (level.value)}
-          <option value={level.value}>Thinking: {level.label}</option>
-        {/each}
-      </select>
+      {#if shownThinking !== 'none'}
+        <span class="text-[11px] text-orange-300" title="Set per model in Models">
+          thinking {api.THINKING_LEVELS.find((l) => l.value === shownThinking)?.label.toLowerCase()}
+        </span>
+      {/if}
       <button
         class="ml-auto p-1.5 rounded-md hover:bg-slate-800 {autoRead ? 'text-indigo-300' : 'text-slate-400'}"
         onclick={toggleAutoRead}
@@ -801,7 +779,7 @@
         onkeydown={onKeydown}
         rows="1"
         class="flex-1 bg-transparent resize-none text-sm py-1.5 focus:outline-none placeholder:text-slate-500"
-        placeholder={chat?.model ? `Message ${chat.model}` : 'Send a message'}
+        placeholder={shownModel ? `Message ${shownModel}` : 'Send a message'}
       ></textarea>
       <button
         class="w-8 h-8 shrink-0 rounded-full flex items-center justify-center disabled:opacity-30

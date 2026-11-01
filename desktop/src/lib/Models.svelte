@@ -3,6 +3,7 @@
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import * as models from './models.js';
   import { DEFAULT_JOBS } from './jobs.js';
+  import { THINKING_LEVELS } from './hypnos.js';
 
   /**
    * The local server's model files (DESK-17): pick from the lineup, download with progress,
@@ -14,11 +15,14 @@
    * on `lineup` or `catalog`; `onsetup` opens the guided setup (DESK-18) instead. `inUse`: the
    * running server's enabled models (`hypnos_models`), `routes` the model chosen per job and
    * `onroutes` keeps a new choice (the same as in Settings, applied without a restart);
-   * `chatModel` is the model new chats start with and `onchatmodel` changes it.
+   * `chatModel` is the model the chats answer with and `onchatmodel` changes it; `thinking` is
+   * model id -> thinking level and `onthinking(id, level)` sets it, offered on the running models
+   * whose catalog entry says they think.
    */
   let {
     config, binary = null, firstRun = false, tab = 'lineup', onchanged, onpool, onsetup = null, onclose,
     inUse = [], routes = {}, onroutes = null, chatModel = null, onchatmodel = null,
+    thinking = {}, onthinking = null,
   } = $props();
   let view = $state(untrack(() => tab)); // 'lineup' | 'catalog'
 
@@ -186,6 +190,11 @@
     return rows;
   });
 
+  /** A running model that thinks (`capabilities` of its catalog entry). */
+  function thinks(id) {
+    return inUse.some((m) => m.id === id) && !!entries?.find((e) => e.id === id)?.capabilities?.includes('thinking');
+  }
+
   /** The jobs a running model can do, and those it is the default for. */
   function jobsOf(id) {
     const m = inUse.find((x) => x.id === id);
@@ -347,7 +356,21 @@
   {/each}
 {/snippet}
 
+{#snippet thinkingMenu(id)}
+  {#if onthinking && thinks(id)}
+    {@const level = thinking[id] ?? 'none'}
+    <select class="rounded-md bg-slate-950 border border-slate-700 px-1.5 py-0.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-orange-500/70 {level !== 'none' ? 'text-orange-300' : 'text-slate-300'}"
+      aria-label="Thinking level of {id}" title="How much {id} may reason before it answers, in the chats"
+      value={level} onchange={(e) => onthinking(id, e.currentTarget.value)}>
+      {#each THINKING_LEVELS as l (l.value)}
+        <option value={l.value}>Thinking: {l.label}</option>
+      {/each}
+    </select>
+  {/if}
+{/snippet}
+
 {#snippet defaultMenu(id)}
+  {@render thinkingMenu(id)}
   {@const jobs = jobsOf(id)}
   {#if onroutes && jobs.can.length > jobs.is.length}
     <select class="rounded-md bg-slate-950 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"

@@ -27,8 +27,9 @@ export class ChatStore {
   chats = $state([]);
   currentId = $state(null);
   lastModel = $state(null);
-  /** Thinking level for new answers (`none`, `low`, `medium`, `high`). */
-  thinking = $state('none');
+  /** Model id -> thinking level for its answers (`none`, `low`, `medium`, `high`); set in the
+   *  Models dialog on the models that think. */
+  thinking = $state({});
   /** The telemetry of the most recent response, for the stats panel. */
   lastTelemetry = $state(null);
   /** Chat id -> request id of the answer being generated. Not persisted. */
@@ -55,7 +56,10 @@ export class ChatStore {
     const last = this.chats.map((c) => c.messages.findLast((m) => m.telemetry)).find(Boolean);
     if (last) this.lastTelemetry = { model: last.model, telemetry: last.telemetry, usage: last.usage };
     this.lastModel = await load(LAST_MODEL_KEY, null);
-    this.thinking = await load(THINKING_KEY, 'none');
+    // Before per-model levels it was one level for every chat: it now belongs to the default model.
+    const thinking = await load(THINKING_KEY, {});
+    this.thinking =
+      typeof thinking === 'string' ? (thinking !== 'none' && this.lastModel ? { [this.lastModel]: thinking } : {}) : thinking;
     this.currentId = this.chats[0]?.id ?? null;
   }
 
@@ -106,9 +110,14 @@ export class ChatStore {
     }
   }
 
-  setThinking(level) {
-    this.thinking = level;
-    save(THINKING_KEY, level);
+  /** The thinking level of `model`'s answers. */
+  thinkingFor(model) {
+    return this.thinking[model] ?? 'none';
+  }
+
+  setThinking(model, level) {
+    this.thinking = { ...this.thinking, [model]: level };
+    save(THINKING_KEY, this.thinking);
   }
 
   setSystem(chat, system) {
@@ -161,6 +170,8 @@ export class ChatStore {
   async #generate(chat) {
     const requestId = crypto.randomUUID();
     this.running[chat.id] = requestId;
+    // Every chat answers with the default chat model (Models: Make default for… Chat).
+    if (this.lastModel) chat.model = this.lastModel;
     chat.messages.push({ role: 'assistant', content: '', model: chat.model, pending: true, at: Date.now() });
     // Mutate through the proxy so the UI follows the stream.
     const answer = chat.messages.at(-1);
@@ -192,7 +203,7 @@ export class ChatStore {
       const { cancelled } = await api.chat(requestId, chat.model, history, {
         tools: api.imageToolOn(),
         assistant: api.assistantToolsOn(),
-        thinking: this.thinking,
+        thinking: this.thinkingFor(chat.model),
         onReasoning: (text) => {
           if (!answer.reasoning) {
             answer.reasoning = '';

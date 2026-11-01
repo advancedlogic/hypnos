@@ -472,6 +472,7 @@
   <Models config={localSettings.config} binary={localSettings.binary} firstRun={modelsFirstRun} tab={modelsTab} onchanged={restartLocal}
     onpool={reloadModels} {routes} inUse={allModels} onroutes={saveRoutes}
     chatModel={store.lastModel} onchatmodel={(id) => store.setDefaultModel(id)}
+    thinking={store.thinking} onthinking={(id, level) => store.setThinking(id, level)}
     onsetup={localSettings.binary ? () => openSetup() : null}
     onclose={() => (modelsOpen = false)} />
 {/if}

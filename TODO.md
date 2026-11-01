@@ -143,6 +143,14 @@ _No cards yet._
 
 ## Done
 
+- [x] 🩵 **DESK-26** `P2` No model or thinking picker in the chat header; thinking per model in Models
+      The header's model and thinking menus duplicated the Models dialog. Every chat now answers
+      with the default chat model ("Make default for… → Chat"; the first available when there is
+      none); the header shows it and its tier read-only, and notes the thinking level when on.
+      Thinking is set per model (`ChatStore.thinking`: model id -> level; the old single level
+      moves to the default model) with a "Thinking:" menu on the Models dialog's rows of the
+      running models whose catalog entry has the `thinking` capability.
+
 - [x] 🩵 **DESK-23** `P2` A tool registry: the chat model orchestrates the specialist models
       Generalize `images.rs` into a registry of tools, each offered only when a running model does
       its job (as the image tool is now): `generate_image` / `edit_image` (DESK-22),
