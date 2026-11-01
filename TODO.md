@@ -205,8 +205,17 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       build wrote (`hypnos-engine.key` in OUT_DIR); local builds without the variable are
       unchanged. Used by build-server.yml (release) and ci.yml's build jobs; release's manual run
       has a "Rebuild engines" input. Verified locally (Metal): pruned builds restored, both
-      scripts reused them, the server links and runs. To verify in CI: the second run's Build
-      step without the engines.
+      scripts reused them, the server links and runs.
+      Second step: the Actions cache was the wrong store (10 GB per repository, shared with
+      sccache's thousands of entries, evicted after 7 days unused, and a tag cannot read another
+      tag's entries: v0.7.1 started cold and its CUDA builds ran 2h35m+). The builds now live as
+      assets of the `engines` prerelease, one per platform and key (`engines-<os>-<profile>-<salt>-<hash>.tar.gz`,
+      about 55 MB for Metal), uploaded by the first run that builds them (not pull requests) and
+      downloaded by every later one into `HYPNOS_ENGINE_DIR`; the patched build scripts copy that
+      folder into OUT_DIR, so cargo's hash in the folder name (rustc, Cargo.lock) no longer
+      matters and rustc left the key. Verified locally (Metal): a fresh target folder with only
+      the prebuilt engines skipped both CMake builds and linked the server. To verify in CI: the
+      first run on main uploads, the next one's Build step takes minutes.
 
 - [ ] ⬛ **BUILD-12** `P1` Cut the Windows CUDA release build (3h10m) to the Linux one's time
       After BUILD-11 Windows CUDA is the release's critical path: 3h10m in run 41273996212 against

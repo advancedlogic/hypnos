@@ -53,24 +53,37 @@ index 7eaf208..2d11fa4 100644
          }
      }
 diff --git a/llama-cpp-sys-2/build.rs b/llama-cpp-sys-2/build.rs
-index aa4ce8b..9eca703 100644
+index aa4ce8b..2d77ff2 100644
 --- a/llama-cpp-sys-2/build.rs
 +++ b/llama-cpp-sys-2/build.rs
-@@ -1244,7 +1244,26 @@ fn main() {
+@@ -1244,7 +1244,39 @@ fn main() {
          .very_verbose(std::env::var("CMAKE_VERBOSE").is_ok()) // Not verbose by default
          .always_configure(false);
  
 -    let build_dir = config.build();
-+    // Hypnos (BUILD-13): CI restores the previous build of llama.cpp into OUT_DIR and sets
-+    // HYPNOS_ENGINE_KEY, a hash of the engine pins, patches and build settings. When the stamp of
-+    // that build carries the same key, CMake is not run again: only the Rust side recompiles.
-+    // Without the variable (local builds) nothing changes.
++    // Hypnos (BUILD-13): CI sets HYPNOS_ENGINE_KEY, a hash of the engine pins, patches and build
++    // settings, and HYPNOS_ENGINE_DIR, a folder with a prebuilt llama.cpp in `llama-cpp-sys-2/`.
++    // When that build's stamp carries the same key it is copied into OUT_DIR (whatever cargo's
++    // hash for this crate is) and CMake is not run again: only the Rust side recompiles.
++    // Without the variables (local builds) nothing changes.
 +    println!("cargo:rerun-if-env-changed=HYPNOS_ENGINE_KEY");
++    println!("cargo:rerun-if-env-changed=HYPNOS_ENGINE_DIR");
 +    let engine_key = env::var("HYPNOS_ENGINE_KEY").ok().filter(|k| !k.trim().is_empty());
 +    let stamp = out_dir.join("hypnos-engine.key");
-+    let reuse = engine_key.as_deref().is_some_and(|key| {
-+        std::fs::read_to_string(&stamp).is_ok_and(|s| s.trim() == key.trim())
-+    });
++    let stamped = |file: &Path| {
++        engine_key.as_deref().is_some_and(|key| {
++            std::fs::read_to_string(file).is_ok_and(|s| s.trim() == key.trim())
++        })
++    };
++    if !stamped(&stamp) {
++        if let Ok(dir) = env::var("HYPNOS_ENGINE_DIR") {
++            let prebuilt = Path::new(&dir).join("llama-cpp-sys-2");
++            if stamped(&prebuilt.join("hypnos-engine.key")) {
++                hypnos_copy_tree(&prebuilt, &out_dir).expect("copy the prebuilt llama.cpp");
++            }
++        }
++    }
++    let reuse = stamped(&stamp);
 +    let build_dir = if reuse {
 +        println!("cargo:warning=llama.cpp: reusing the cached engine build (HYPNOS_ENGINE_KEY)");
 +        out_dir.clone()
@@ -84,3 +97,22 @@ index aa4ce8b..9eca703 100644
  
      // The CMake build installs a ggml package config. Tell the dependent crates where it
      // is, in the DEP_LLAMA_GGML_CMAKE_DIR variable. A dependent crate that also builds
+@@ -1570,3 +1602,18 @@ fn main() {
+         }
+     }
+ }
++
++/// Hypnos (BUILD-13): copies a prebuilt engine folder into OUT_DIR (links are followed).
++fn hypnos_copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
++    std::fs::create_dir_all(to)?;
++    for entry in std::fs::read_dir(from)? {
++        let entry = entry?;
++        let target = to.join(entry.file_name());
++        if std::fs::metadata(entry.path())?.is_dir() {
++            hypnos_copy_tree(&entry.path(), &target)?;
++        } else {
++            std::fs::copy(entry.path(), &target)?;
++        }
++    }
++    Ok(())
++}

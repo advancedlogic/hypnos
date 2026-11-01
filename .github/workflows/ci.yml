@@ -117,6 +117,9 @@ jobs:
 
   build-test:
     name: build + test (${{ matrix.name }})
+    # Uploads the engine builds to the `engines` prerelease when none was found (BUILD-13).
+    permissions:
+      contents: write
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:

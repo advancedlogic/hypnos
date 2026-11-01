@@ -96,12 +96,16 @@ Build notes:
   `Dockerfile`), local builds for the machine's GPU (`setup-build-env`). `CUDAARCHS` alone does
   nothing: ggml sets its 9-target default before CMake reads it. The CMake builds of the
   release run through sccache (GitHub Actions cache; `vars.HYPNOS_SCCACHE = "off"` disables it).
-  The engines' CMake builds themselves are kept between runs (BUILD-13,
-  `.github/actions/engine-cache`): keyed on the vendor pins and patches, the CMake / CUDA / ggml
-  environment, rustc, the profile and the features, restored into `target/<profile>/build/*-sys-*/out`,
-  and the vendored build scripts skip CMake when `HYPNOS_ENGINE_KEY` matches the build's stamp,
-  so a Rust-only change does not recompile llama.cpp or sd.cpp. A manual run of release with
-  "Rebuild engines" (or any change to what the key hashes) builds them again.
+  The engines are built once per engine version (BUILD-13, `.github/actions/engine-cache`): the
+  first run for a key uploads the pruned CMake builds of llama.cpp and sd.cpp as an asset of the
+  `engines` prerelease (permanent, shared by every branch and tag, unlike the Actions cache);
+  later runs download it into `HYPNOS_ENGINE_DIR`, and the vendored build scripts copy it into
+  their OUT_DIR and skip CMake when its stamp equals `HYPNOS_ENGINE_KEY` (a hash of the vendor
+  pins and patches, the CMake / CUDA / ggml environment, the profile and the platform +
+  features; not rustc or Cargo.lock), so a Rust-only change never recompiles llama.cpp or
+  sd.cpp. A manual run of release with "Rebuild engines" (or any change to what the key hashes)
+  builds and uploads them again, replacing that platform's older asset. Pull requests only
+  download. Local builds without the variables are unchanged.
 - `.github/workflows/release.yml` builds the CUDA (Linux, Windows) and Metal archives (through
   `build-server.yml`, called three times: `build-linux`, `build-windows`, `build-macos`; the desktop
   job waits for `build-macos` because the macOS app bundles that server, the Docker image for

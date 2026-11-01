@@ -35,6 +35,9 @@ env:
 jobs:
   build:
     name: ${{ matrix.platform }}
+    # Uploads the engine builds to the `engines` prerelease when none was found (BUILD-13).
+    permissions:
+      contents: write
     runs-on: ${{ matrix.os }}
     timeout-minutes: 240
     strategy:
@@ -119,9 +122,9 @@ jobs:
         run: ./backend/scripts/vendor.sh
 
       # pwsh, not bash: Git Bash puts its own /usr/bin/link.exe ahead of MSVC's on Windows.
-      # BUILD-13: reuse the previous CMake builds of the engines when nothing that shapes them
-      # changed (pins, patches, CMake / CUDA settings, rustc, features), so a Rust-only change
-      # does not recompile llama.cpp and sd.cpp. A manual run of release can force a rebuild.
+      # BUILD-13: download the prebuilt engines (the `engines` prerelease) when nothing that
+      # shapes them changed (pins, patches, CMake / CUDA settings, features), so a Rust-only
+      # change does not recompile llama.cpp and sd.cpp. A manual run of release can force a rebuild.
       - name: Engine builds (restore)
         uses: ./.github/actions/engine-cache
         with:
@@ -217,7 +220,7 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
-      # After the archive is uploaded (pruning removes the object files the package does not need).
+      # After the archive is uploaded: a failure here never costs the release its archive.
       - name: Engine builds (save)
         uses: ./.github/actions/engine-cache
         with:

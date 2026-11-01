@@ -24,6 +24,10 @@ jobs:
   # the image push and the release wait for it, so a tag that fails them publishes nothing.
   ci:
     uses: ./.github/workflows/ci.yml
+    # A called workflow gets at most its caller's permissions: the build jobs upload the engine
+    # builds (BUILD-13).
+    permissions:
+      contents: write
 
   frontend:
     runs-on: ubuntu-latest
@@ -56,6 +60,8 @@ jobs:
   build-linux:
     needs: frontend
     uses: ./.github/workflows/build-server.yml
+    permissions:
+      contents: write
     secrets: inherit
     with:
       rebuild_engines: ${{ inputs.rebuild_engines == true }}
@@ -65,6 +71,8 @@ jobs:
   build-windows:
     needs: frontend
     uses: ./.github/workflows/build-server.yml
+    permissions:
+      contents: write
     secrets: inherit
     with:
       rebuild_engines: ${{ inputs.rebuild_engines == true }}
@@ -74,6 +82,8 @@ jobs:
   build-macos:
     needs: frontend
     uses: ./.github/workflows/build-server.yml
+    permissions:
+      contents: write
     secrets: inherit
     with:
       rebuild_engines: ${{ inputs.rebuild_engines == true }}
