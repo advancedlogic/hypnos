@@ -151,8 +151,8 @@ On Windows: `powershell -ExecutionPolicy Bypass -File scripts\fetch-models.ps1`,
 
 | Archive | Needs |
 | :--- | :--- |
-| `linux-x64-cuda` | glibc 2.39+ (Ubuntu 24.04+), NVIDIA driver 570+, CUDA 12 runtime libraries (`libcudart.so.12`, `libcublas.so.12`, `libcublasLt.so.12`) and `libgomp1`. Document conversion on the GPU (docling `device = "gpu"`, off by default) also needs driver 580+, the CUDA 13 runtime and cuDNN 9 for CUDA 13 (`apt install cuda-cudart-13-0 libcublas-13-0 libcudnn9-cuda-13`) |
-| `windows-x64-cuda` | NVIDIA driver 570+, the release's `windows-x64-cuda12-runtime.zip` unpacked beside `hypnos.exe` (or the CUDA Toolkit 12.x), the MSVC 2015–2022 redistributable. Document conversion on the GPU also needs driver 580+, the CUDA 13 runtime DLLs and cuDNN 9 for CUDA 13 on `PATH` (CUDA Toolkit 13 + cuDNN, or the pip wheels `nvidia-cuda-runtime-cu13`, `nvidia-cublas-cu13`, `nvidia-cudnn-cu13`) |
+| `linux-x64-cuda` | glibc 2.39+ (Ubuntu 24.04+), an NVIDIA GPU from Turing on (RTX 20, compute capability 7.5+), driver 570+, CUDA 12 runtime libraries (`libcudart.so.12`, `libcublas.so.12`, `libcublasLt.so.12`) and `libgomp1`. Document conversion on the GPU (docling `device = "gpu"`, off by default) also needs driver 580+, the CUDA 13 runtime and cuDNN 9 for CUDA 13 (`apt install cuda-cudart-13-0 libcublas-13-0 libcudnn9-cuda-13`) |
+| `windows-x64-cuda` | an NVIDIA GPU from Turing on (RTX 20, compute capability 7.5+), driver 570+, the release's `windows-x64-cuda12-runtime.zip` unpacked beside `hypnos.exe` (or the CUDA Toolkit 12.x), the MSVC 2015–2022 redistributable. Document conversion on the GPU also needs driver 580+, the CUDA 13 runtime DLLs and cuDNN 9 for CUDA 13 on `PATH` (CUDA Toolkit 13 + cuDNN, or the pip wheels `nvidia-cuda-runtime-cu13`, `nvidia-cublas-cu13`, `nvidia-cudnn-cu13`) |
 | `macos-arm64-metal` | Apple Silicon, macOS 14+; run `xattr -dr com.apple.quarantine .` once in the folder (the binaries are not notarized) |
 
 The binaries link espeak-ng statically, so the archives are distributed under the GNU GPL v3 or
@@ -177,7 +177,10 @@ The playground and API are then on http://127.0.0.1:9999. The image's config is 
 it, or mount one elsewhere and set `-e HYPNOS_CONFIG=/path/in/container.toml`. Set
 `-e HYPNOS_API_KEYS=...` before publishing the port beyond localhost. Build it yourself with
 `docker build -t hypnos .`; `--build-arg JOBS=N` sets the compile parallelism (default 2, which
-fits 16 GB of RAM: some CUDA kernels need several GB each). The image is
+fits 16 GB of RAM: some CUDA kernels need several GB each) and `--build-arg
+CUDA_ARCHITECTURES="86-real"` limits the build to your GPU (much faster). To pack a release
+archive instead of compiling, put `hypnos-<version>-linux-x64-cuda.tar.gz` in `prebuilt/` and add
+`--build-arg SERVER=archive`. The image is
 GPL-3.0-or-later as a whole, like the archives; the license texts are in `/opt/hypnos`.
 
 ### From source

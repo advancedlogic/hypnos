@@ -107,14 +107,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       probably makes llama.cpp b11982 re-capture its CUDA graph every step again. Check with the
       graph counters / `GGML_CUDA_DISABLE_GRAPHS`, try 2 slots and 4 x 8k, and ship the shape that
       batches well (on Metal 4 slots gave 1.43x).
-- [ ] ⬛ **BUILD-11** `P1` Cut the release workflow from ~3 h to under 1 h
-      v0.4.0's release run took 3h09m: Windows CUDA 2h44m, Linux CUDA 1h42m, Docker 2h31m (it
-      compiles the CUDA server again and only starts after CI); the CI checks finish in ~25 min.
-      (1) `build-server.yml`: an explicit `CMAKE_CUDA_ARCHITECTURES` (Turing..Blackwell real +
-      one PTX) instead of ggml's all-architectures default; (2) the Docker image copies the
-      `linux-x64-cuda` archive instead of building; (3) `sccache` / `ccache` for the CMake C++
-      and CUDA objects; (4) `timeout-minutes` on every CI job (~60) and apt steps (~10): v0.5.0's
-      `desktop app (ubuntu-22.04)` hung 1h45m+ in `apt-get`. Document the supported GPUs.
 
 ## In Progress
 
@@ -122,6 +114,19 @@ _No cards yet._
 
 ## Done
 
+- [x] ⬛ **BUILD-11** `P1` Cut the release workflow from ~3 h to under 1 h
+      v0.4.0's release run took 3h09m: Windows CUDA 2h44m, Linux CUDA 1h42m, Docker 2h31m (it
+      compiles the CUDA server again and only starts after CI); the CI checks finish in ~25 min.
+      (1) `build-server.yml`: an explicit `CMAKE_CUDA_ARCHITECTURES` (Turing..Blackwell real +
+      one PTX) instead of ggml's all-architectures default; (2) the Docker image copies the
+      `linux-x64-cuda` archive instead of building; (3) `sccache` / `ccache` for the CMake C++
+      and CUDA objects; (4) `timeout-minutes` on every CI job (~60) and apt steps (~10): v0.5.0's
+      `desktop app (ubuntu-22.04)` hung 1h45m+ in `apt-get`. Document the supported GPUs.
+      Done: `CUDA_ARCHITECTURES` 75-virtual;80-virtual;86-real;89-real;120a-real (the
+      diffusion-rs patch forwards `CMAKE_CUDA_ARCHITECTURES`, `setup-build-env` writes it for the
+      local GPU); `build-linux` / `build-windows` calls, Docker `SERVER=archive` after
+      `build-linux`; sccache for the CMake builds; job and apt-step timeouts. Drops Maxwell,
+      Pascal and Volta. Timings to confirm on the next release run.
 - [x] ⬛ **BUILD-10** `P2` `run.sh build all` / `run.bat build all` builds backend, playground and desktop
       Today `build` (target `all` by default) compiles the backend and installs the playground's
       packages, and the desktop app is only built when named. An explicit `build all` builds

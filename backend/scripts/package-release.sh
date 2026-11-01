@@ -98,7 +98,8 @@ fi
     case "$PLATFORM" in
         linux-x64-cuda)
             echo "  - x86-64 Linux with glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+, RHEL 10+)."
-            echo "  - NVIDIA driver 570 or newer (CUDA 12.8)."
+            echo "  - An NVIDIA GPU from Turing on (RTX 20, compute capability 7.5+), driver 570 or newer"
+            echo "    (CUDA 12.8). RTX 30/40/50 run native code; others compile it once on first load."
             echo "  - CUDA 12 runtime libraries on the loader path: libcudart.so.12, libcublas.so.12,"
             echo "    libcublasLt.so.12 (Ubuntu: apt install cuda-cudart-12-8 libcublas-12-8 from NVIDIA's"
             echo "    repository, or the CUDA toolkit), and libgomp1."
@@ -114,7 +115,8 @@ fi
             fi
             ;;
         windows-x64-cuda)
-            echo "  - Windows 10/11 x64, NVIDIA driver 570 or newer (CUDA 12.8)."
+            echo "  - Windows 10/11 x64, an NVIDIA GPU from Turing on (RTX 20, compute capability 7.5+),"
+            echo "    driver 570 or newer (CUDA 12.8). RTX 30/40/50 run native code; others compile it once."
             echo "  - CUDA 12 runtime DLLs (cudart64_12.dll, cublas64_12.dll, cublasLt64_12.dll) next to"
             echo "    hypnos.exe or on PATH: unpack the matching hypnos-$VERSION-windows-x64-cuda12-runtime.zip"
             echo "    from the same release here, or install the CUDA Toolkit 12.x."

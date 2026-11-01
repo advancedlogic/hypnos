@@ -22,6 +22,7 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -45,14 +46,23 @@ jobs:
   # docling-cuda: ONNX Runtime's CUDA provider for docling's device = "gpu" (prebuilt by ort,
   # no CUDA 13 toolkit needed to build; the provider library ships in the archive and is
   # loaded only for that device, which then needs the CUDA 13 runtime and cuDNN 9).
-  build:
+  # Linux and Windows are separate calls so the Docker image, which packs the Linux archive,
+  # does not wait for the (slower) Windows build.
+  build-linux:
     needs: frontend
     uses: ./.github/workflows/build-server.yml
     secrets: inherit
     with:
       platforms: >-
-        [{"platform": "linux-x64-cuda", "os": "ubuntu-24.04", "cargo": "-j 2 --features docling-cuda"},
-         {"platform": "windows-x64-cuda", "os": "windows-2022", "cargo": "-j 2 --features docling-cuda"}]
+        [{"platform": "linux-x64-cuda", "os": "ubuntu-24.04", "cargo": "-j 2 --features docling-cuda"}]
+
+  build-windows:
+    needs: frontend
+    uses: ./.github/workflows/build-server.yml
+    secrets: inherit
+    with:
+      platforms: >-
+        [{"platform": "windows-x64-cuda", "os": "windows-2022", "cargo": "-j 2 --features docling-cuda"}]
 
   build-macos:
     needs: frontend
@@ -77,6 +87,7 @@ jobs:
     needs: build-macos
     if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -89,6 +100,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Linux webview deps
+        timeout-minutes: 10
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -227,19 +239,20 @@ jobs:
 
   docker:
     name: docker (CUDA, GHCR)
-    # Builds and pushes in one step, so the whole job waits for the checks.
-    needs: ci
+    # Builds and pushes in one step, so the whole job waits for the checks. The image packs the
+    # linux-x64-cuda archive (Dockerfile SERVER=archive) instead of compiling the engines again.
+    needs: [ci, build-linux]
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
     steps:
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          docker system prune -af
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: hypnos-linux-x64-cuda
+          path: prebuilt
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         if: startsWith(github.ref, 'refs/tags/v')
@@ -264,14 +277,15 @@ jobs:
           push: ${{ startsWith(github.ref, 'refs/tags/v') }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: VERSION=${{ github.ref_name }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            SERVER=archive
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ci, build, build-macos, desktop]
+    needs: [ci, build-linux, build-windows, build-macos, desktop]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -300,8 +314,8 @@ jobs:
 
           | Archive | Needs |
           | :--- | :--- |
-          | \`linux-x64-cuda\` | glibc 2.39+, NVIDIA driver 570+, CUDA 12 runtime (cudart, cuBLAS), libgomp1 |
-          | \`windows-x64-cuda\` | NVIDIA driver 570+, plus \`windows-x64-cuda12-runtime.zip\` unpacked beside \`hypnos.exe\` (or the CUDA Toolkit 12.x) |
+          | \`linux-x64-cuda\` | glibc 2.39+, an NVIDIA GPU from Turing on (RTX 20+), driver 570+, CUDA 12 runtime (cudart, cuBLAS), libgomp1 |
+          | \`windows-x64-cuda\` | an NVIDIA GPU from Turing on (RTX 20+), driver 570+, plus \`windows-x64-cuda12-runtime.zip\` unpacked beside \`hypnos.exe\` (or the CUDA Toolkit 12.x) |
           | \`macos-arm64-metal\` | Apple Silicon, macOS 14+ |
 
           Desktop app (a chat client with live server stats; it connects to a running Hypnos):

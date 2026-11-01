@@ -36,3 +36,6 @@ __pycache__/
 
 # macOS Finder metadata
 .DS_Store
+
+# Release archives for `docker build --build-arg SERVER=archive`
+/prebuilt/

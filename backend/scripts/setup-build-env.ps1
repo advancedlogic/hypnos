@@ -5,6 +5,8 @@
 
   Detected / written:
     - CUDAARCHS / CUDA_COMPUTE_CAP  : from nvidia-smi (compute capability of GPU 0), else "native"
+    - CMAKE_CUDA_ARCHITECTURES      : the same GPU as device code (forwarded to both ggml builds;
+                                      without it ggml compiles its 9-target portable list)
     - CUDAHOSTCXX / CMAKE_CUDA_HOST_COMPILER : an MSVC 14.4x cl.exe (CUDA 13.0 does not support 14.5x)
     - [build] rustc / rustdoc       : the rustup "stable" toolchain, when another rustc shadows it on PATH
 
@@ -29,6 +31,10 @@ try {
 } catch { $notes += "nvidia-smi not found; CUDAARCHS=native (CMake probes the GPU at configure time)" }
 $env_lines += "CUDAARCHS = `"$arch`""
 $env_lines += "CUDA_COMPUTE_CAP = `"$arch`""
+# Blackwell and newer: the "a" variant, as ggml's own list uses (FP4 tensor cores).
+$cmakeArch = "native"
+if ($arch -ne "native") { $cmakeArch = if ([int]$arch -ge 100) { "${arch}a-real" } else { "${arch}-real" } }
+$env_lines += "CMAKE_CUDA_ARCHITECTURES = `"$cmakeArch`""
 
 # --- CUDA host compiler --------------------------------------------------------------------------
 $cudaMajor = $null

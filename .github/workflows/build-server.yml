@@ -19,15 +19,20 @@ env:
   CARGO_TERM_COLOR: always
   CMAKE_GENERATOR: Ninja
   LLAMA_LIB_PROFILE: Release
-  # CUDA builds leave CMAKE_CUDA_ARCHITECTURES to ggml's portable default for this toolkit
-  # (PTX for Maxwell..Hopper plus Ampere, Ada and Blackwell device code), like llama.cpp releases.
   CUDA_VERSION: "12.8.1"
+  # The GPUs the CUDA archives support (BUILD-11): device code for RTX 30 (8.6), RTX 40 (8.9) and
+  # RTX 50 (12.0a, FP4 tensor cores), PTX for Turing (7.5) and Ampere (8.0, which A100, H100 and
+  # newer JIT from on first load). ggml's portable default adds Maxwell, Pascal, Volta and Hopper
+  # PTX: 9 compilations of every CUDA kernel instead of 5, the bulk of a 2-3 hour build.
+  # Forwarded to both ggml builds (llama-cpp-sys passes CMAKE_* through, the diffusion-rs patch
+  # this variable); the Dockerfile uses the same list.
+  CUDA_ARCHITECTURES: "75-virtual;80-virtual;86-real;89-real;120a-real"
 
 jobs:
   build:
     name: ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 360
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -37,12 +42,36 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: lukka/get-cmake@latest
 
+      # sccache for the engines' C, C++ and CUDA objects (CMake reads the *_COMPILER_LAUNCHER
+      # variables from the environment), stored in the GitHub Actions cache. A tag run reads the
+      # caches of its own tag and of main, so a manual run of release on main fills it for the
+      # next tag. A cache error falls back to compiling. vars.HYPNOS_SCCACHE = "off" disables it.
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        if: vars.HYPNOS_SCCACHE != 'off'
+      - name: Compiler cache
+        if: vars.HYPNOS_SCCACHE != 'off'
+        shell: bash
+        run: |
+          {
+            echo "SCCACHE_GHA_ENABLED=true"
+            echo "SCCACHE_IGNORE_SERVER_IO_ERROR=1"
+            echo "CMAKE_C_COMPILER_LAUNCHER=sccache"
+            echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache"
+          } >> "$GITHUB_ENV"
+          [ "$RUNNER_OS" = macOS ] || echo "CMAKE_CUDA_COMPILER_LAUNCHER=sccache" >> "$GITHUB_ENV"
+
+      - name: CUDA architectures
+        if: runner.os != 'macOS'
+        shell: bash
+        run: echo "CMAKE_CUDA_ARCHITECTURES=$CUDA_ARCHITECTURES" >> "$GITHUB_ENV"
+
       - name: Free disk space (Linux)
         if: runner.os == 'Linux'
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
 
       - name: CUDA toolkit (Linux, NVIDIA apt repository)
         if: runner.os == 'Linux'
+        timeout-minutes: 20
         run: |
           v="${CUDA_VERSION%.*}"; v="${v/./-}"
           curl -fsSLO https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
@@ -80,6 +109,11 @@ jobs:
         working-directory: backend
         shell: pwsh
         run: cargo build --release -p hypnos-server ${{ matrix.cargo }}
+
+      - name: Compiler cache statistics
+        if: always() && vars.HYPNOS_SCCACHE != 'off'
+        shell: bash
+        run: sccache --show-stats || true
 
       # Developer ID signature + notarization of hypnos and libstable-diffusion.dylib with the
       # desktop job's Apple secrets (docs/signing.md, section 3). Without APPLE_CERTIFICATE the

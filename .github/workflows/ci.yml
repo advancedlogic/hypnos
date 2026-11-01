@@ -22,6 +22,7 @@ jobs:
   lint:
     name: fmt + clippy (engine-free crates)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       # Pinned, unlike the builds: each Rust release adds lints, and `-D warnings` would turn a
@@ -49,6 +50,7 @@ jobs:
   build-test:
     name: build + test (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -62,6 +64,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: lukka/get-cmake@latest
       - name: Linux build deps
+        timeout-minutes: 10
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libssl-dev libclang-dev
       - name: MSVC developer environment
@@ -95,6 +98,7 @@ jobs:
   sdk:
     name: SDKs (Python, JavaScript, Rust)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       HYPNOS_MOCK_SERVER: ${{ github.workspace }}/backend/target/debug/examples/mock_server
     steps:
@@ -102,6 +106,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: lukka/get-cmake@latest
       - name: Linux build deps
+        timeout-minutes: 10
         run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libssl-dev libclang-dev
       - name: Vendor engine sources
         run: ./backend/scripts/vendor.sh
@@ -136,6 +141,7 @@ jobs:
   frontend:
     name: frontend build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -151,6 +157,7 @@ jobs:
   desktop:
     name: desktop app (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -161,6 +168,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Linux webview deps
+        timeout-minutes: 10
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update

@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
 # Hypnos with CUDA engines. Build: docker build -t hypnos .   (published as ghcr.io/advancedlogic/hypnos)
+# From a release archive instead: put it in prebuilt/ and add --build-arg SERVER=archive.
 #
 #   docker run --gpus all -p 9999:9999 -v ./models:/opt/hypnos/models ghcr.io/advancedlogic/hypnos
 #
@@ -14,6 +15,10 @@ ARG UBUNTU=ubuntu24.04
 # model with device = "gpu" can run; the provider library itself is always in the image. The
 # default image converts documents on the CPU, which needs none of this.
 ARG DOCLING_CUDA=0
+# Where the server comes from: "source" compiles the engines in the image (an hour or more on a
+# CUDA build); "archive" packs a linux-x64-cuda release archive placed in prebuilt/ (what
+# release.yml does with the archive its build job just made, built with the same CUDA and Ubuntu).
+ARG SERVER=source
 
 # --- playground --------------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS frontend
@@ -24,7 +29,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # --- engines + server --------------------------------------------------------------------------
-FROM nvidia/cuda:${CUDA_VERSION}-devel-${UBUNTU} AS build
+FROM nvidia/cuda:${CUDA_VERSION}-devel-${UBUNTU} AS server-source
 ARG VERSION=docker
 # cargo -j: also the --parallel of each engine's CMake build, so up to JOBS^2 nvcc processes run at
 # once. Some CUDA kernels need several GB each; 2 fits a 16 GB machine, unset uses every core.
@@ -45,12 +50,24 @@ RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-to
 WORKDIR /src
 COPY . .
 RUN ./backend/scripts/vendor.sh
-# CMAKE_CUDA_ARCHITECTURES is left to ggml's portable default (as in the release archives).
+# The GPUs the release archives are built for (see build-server.yml); override with --build-arg.
+ARG CUDA_ARCHITECTURES="75-virtual;80-virtual;86-real;89-real;120a-real"
+ENV CMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cd backend && cargo build --release -p hypnos-server --features docling-cuda ${JOBS:+-j "$JOBS"}
 COPY --from=frontend /src/frontend/dist frontend/dist
 RUN ./backend/scripts/package-release.sh linux-x64-cuda --version "$VERSION" --out /dist \
     && mv "/dist/hypnos-$VERSION-linux-x64-cuda" /dist/hypnos
+
+# --- or a prebuilt archive -----------------------------------------------------------------------
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-${UBUNTU} AS server-archive
+COPY prebuilt/hypnos-*-linux-x64-cuda.tar.gz /tmp/
+RUN set -e; n=$(ls /tmp/hypnos-*-linux-x64-cuda.tar.gz | wc -l); \
+    [ "$n" = 1 ] || { echo "prebuilt/ must hold exactly one linux-x64-cuda archive, found $n" >&2; exit 1; }; \
+    mkdir -p /dist/hypnos && tar -xzf /tmp/hypnos-*-linux-x64-cuda.tar.gz -C /dist/hypnos --strip-components=1 \
+    && rm /tmp/hypnos-*.tar.gz && test -x /dist/hypnos/hypnos
+
+FROM server-${SERVER} AS server
 
 # --- runtime -----------------------------------------------------------------------------------
 FROM nvidia/cuda:${CUDA_VERSION}-runtime-${UBUNTU}
@@ -70,7 +87,7 @@ RUN if [ "$DOCLING_CUDA" = 1 ]; then \
             cuda-cudart-13-0 libcublas-13-0 libcudnn9-cuda-13 \
         && rm -rf /var/lib/apt/lists/*; \
     fi
-COPY --from=build /dist/hypnos /opt/hypnos
+COPY --from=server /dist/hypnos /opt/hypnos
 WORKDIR /opt/hypnos
 # Listen on every interface inside the container; publish the port with -p. Without API keys the
 # server logs a warning, since anything that can reach the published port can use it.

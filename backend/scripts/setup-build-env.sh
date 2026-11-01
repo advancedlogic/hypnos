@@ -3,6 +3,8 @@
 # git-ignored <repo>/.cargo/config.toml (machine-specific), leaving backend/.cargo/config.toml portable.
 #
 #   CUDAARCHS / CUDA_COMPUTE_CAP : from nvidia-smi (compute capability of GPU 0), else "native"
+#   CMAKE_CUDA_ARCHITECTURES     : the same GPU as device code (forwarded to both ggml builds; without
+#                                  it ggml compiles its 9-target portable list, CUDAARCHS is read too late)
 #   CUDAHOSTCXX                  : a g++ version supported by the installed CUDA (13.x: g++ <= 14, 12.x: g++ <= 13)
 #   macOS (Apple Silicon)        : no CUDA; only MACOSX_DEPLOYMENT_TARGET, the engines use Metal
 #
@@ -45,7 +47,12 @@ if command -v nvidia-smi >/dev/null 2>&1; then
 else
     notes+=("nvidia-smi not found; CUDAARCHS=native (CMake probes the GPU at configure time)")
 fi
-env_lines+=("CUDAARCHS = \"$arch\"" "CUDA_COMPUTE_CAP = \"$arch\"")
+# Blackwell and newer: the "a" variant, as ggml's own list uses (FP4 tensor cores).
+cmake_arch="native"
+if [ "$arch" != native ]; then
+    if [ "$arch" -ge 100 ]; then cmake_arch="${arch}a-real"; else cmake_arch="${arch}-real"; fi
+fi
+env_lines+=("CUDAARCHS = \"$arch\"" "CUDA_COMPUTE_CAP = \"$arch\"" "CMAKE_CUDA_ARCHITECTURES = \"$cmake_arch\"")
 
 # --- CUDA host compiler --------------------------------------------------------------------------
 NVCC="${CUDA_PATH:-/usr/local/cuda}/bin/nvcc"

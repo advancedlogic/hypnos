@@ -350,7 +350,7 @@ kv_dtype = "q8_0"                   # f16 | q8_0 | q4_0</code></pre>
 ./hypnos                    # reads hypnos.toml; API and playground on http://127.0.0.1:9999</code></pre>
               <button class="copy" type="button" aria-label="Copy">Copy</button>
             </figure>
-            <p class="fine">Windows: <code>powershell -ExecutionPolicy Bypass -File scripts\fetch-models.ps1</code>, then <code>.\hypnos.exe</code>. Linux needs glibc 2.39+, an NVIDIA driver 570+ and the CUDA 12 runtime libraries; macOS needs Apple Silicon and macOS 14+.</p>
+            <p class="fine">Windows: <code>powershell -ExecutionPolicy Bypass -File scripts\fetch-models.ps1</code>, then <code>.\hypnos.exe</code>. The CUDA builds need an NVIDIA GPU from Turing on (RTX 20 or newer) and a driver 570+; Linux also needs glibc 2.39+ and the CUDA 12 runtime libraries; macOS needs Apple Silicon and macOS 14+.</p>
           </div>
           <div class="tab-panel" role="tabpanel" id="panel-docker" aria-labelledby="tab-docker" hidden>
             <p>Linux with an NVIDIA GPU and the NVIDIA Container Toolkit.</p>

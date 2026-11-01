@@ -80,9 +80,15 @@ Build notes:
   hand (Actions > ci > Run workflow) before tagging, and run fmt + clippy + tests locally.
   Clippy runs on a pinned Rust (1.98.0 in the lint job; the builds use current stable): bump it
   on purpose, with the fixes the new lints ask for.
+- CUDA builds compile ggml for `CMAKE_CUDA_ARCHITECTURES` (BUILD-11): the archives and the
+  Docker image for Turing..Blackwell (`CUDA_ARCHITECTURES` in `build-server.yml` and the
+  `Dockerfile`), local builds for the machine's GPU (`setup-build-env`). `CUDAARCHS` alone does
+  nothing: ggml sets its 9-target default before CMake reads it. The CMake builds of the
+  release run through sccache (GitHub Actions cache; `vars.HYPNOS_SCCACHE = "off"` disables it).
 - `.github/workflows/release.yml` builds the CUDA (Linux, Windows) and Metal archives (through
-  `build-server.yml`, called twice: `build` for CUDA, `build-macos` for Metal, which the desktop
-  job waits for because the macOS app bundles that server) and the
+  `build-server.yml`, called three times: `build-linux`, `build-windows`, `build-macos`; the desktop
+  job waits for `build-macos` because the macOS app bundles that server, the Docker image for
+  `build-linux` because it packs that archive, `Dockerfile` `SERVER=archive`) and the
   desktop installers (.dmg, .msi/.exe, .deb/.AppImage) on a `v*` tag and publishes them as a
   GitHub release; a manual run only builds them as artifacts. With the `APPLE_*` secrets the
   macOS app and server (`scripts/sign-macos.sh`) get a Developer ID signature and notarization,
