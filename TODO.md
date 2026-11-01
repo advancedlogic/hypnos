@@ -57,6 +57,14 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Backlog
 
+- [ ] ⬛ **BUILD-17** `P2` Major dependency upgrades, done on purpose
+      Dependabot's first run opened these as PRs (#1-#12, closed: Dependabot now proposes minor
+      and patch versions only): Tailwind 3 -> 4 and Vite 6 -> 8 with @sveltejs/vite-plugin-svelte
+      5 -> 7 in frontend/ and desktop/ (Tailwind 4 moves the config into CSS: a migration of both
+      UIs, their screenshots retaken); symphonia 0.5 -> 0.6 (the desktop's audio decoding API),
+      rand 0.8 -> 0.10, sha2 0.10 -> 0.11 and base64 0.22 -> 0.23 in desktop/src-tauri and
+      sdk/rust (API changes). One PR per group, each with the code changes and its tests.
+
 - [ ] ⬛ **BUILD-16** `P2` Release provenance: checksums, SBOM, attestations, a signed image
       Each release publishes `SHA256SUMS` for every archive and installer, an SBOM per archive
       (CycloneDX: `cargo cyclonedx` for the Rust side, the vendored engines and model-free

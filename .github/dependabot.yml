@@ -1,4 +1,7 @@
 # Dependency update PRs (BUILD-15), weekly, grouped per ecosystem so each week is one or two PRs.
+# Minor and patch versions only for cargo, npm and pip: a major version (Tailwind 3 -> 4, Vite 6 ->
+# 8, rand 0.8 -> 0.10) is a migration with code changes, done on purpose under a card
+# (BUILD-17). Security updates (enabled in the repository settings) are not limited by this.
 # Not here: backend/ (its engine crates are path dependencies in backend/vendor/, which is
 # git-ignored and made by scripts/vendor.sh, so Dependabot cannot resolve the workspace). Its
 # advisories fail CI through cargo-deny (deny.toml); bump it by hand with `cargo update`, and the
@@ -14,17 +17,26 @@ updates:
   - package-ecosystem: cargo
     directories: ["/desktop/src-tauri", "/sdk/rust"]
     schedule: { interval: weekly }
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       cargo-minor: { update-types: [minor, patch] }
 
   - package-ecosystem: npm
     directories: ["/frontend", "/desktop", "/sdk/javascript"]
     schedule: { interval: weekly }
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor: { update-types: [minor, patch] }
 
   - package-ecosystem: pip
     directory: /sdk/python
     schedule: { interval: weekly }
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       pip-minor: { update-types: [minor, patch] }
