@@ -566,7 +566,7 @@ impl ClientBuilder {
                 http,
                 retry: self.retry.unwrap_or_default(),
                 max_per_model: self.max_concurrency_per_model,
-                limits: Mutex::new(HashMap::new()),
+                limits: Arc::new(Mutex::new(HashMap::new())),
             }),
         })
     }
@@ -578,7 +578,7 @@ struct Inner {
     http: reqwest::Client,
     retry: RetryPolicy,
     max_per_model: Option<usize>,
-    limits: Mutex<HashMap<String, Arc<Semaphore>>>,
+    limits: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
 }
 
 /// A client for one Hypnos server. Cheap to clone; clones share the connection pool and the
@@ -653,6 +653,32 @@ impl Client {
 
     pub fn builder() -> ClientBuilder {
         ClientBuilder::default()
+    }
+
+    /// A client that adds `headers` to every request it sends, for one task: the Hypnos
+    /// extensions `x-hypnos-workflow`, `x-hypnos-next-model`, `x-hypnos-deadline-ms`. It shares
+    /// this client's connection pool and per-model bound; a header it names replaces this
+    /// client's. Names or values that are not valid HTTP headers are skipped.
+    pub fn with_headers(&self, headers: &[(&str, &str)]) -> Client {
+        let mut merged = self.inner.headers.clone();
+        for (name, value) in headers {
+            if let (Ok(name), Ok(value)) = (
+                reqwest::header::HeaderName::from_bytes(name.as_bytes()),
+                reqwest::header::HeaderValue::from_str(value),
+            ) {
+                merged.insert(name, value);
+            }
+        }
+        Client {
+            inner: Arc::new(Inner {
+                base_url: self.inner.base_url.clone(),
+                headers: merged,
+                http: self.inner.http.clone(),
+                retry: self.inner.retry.clone(),
+                max_per_model: self.inner.max_per_model,
+                limits: self.inner.limits.clone(),
+            }),
+        }
     }
 
     /// The server root, without `/v1`.

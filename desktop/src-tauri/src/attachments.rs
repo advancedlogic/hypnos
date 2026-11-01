@@ -593,6 +593,7 @@ mod tests {
             vec![message],
             None,
             None,
+            None,
             channel,
         )
         .await

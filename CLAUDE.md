@@ -436,7 +436,13 @@ DESK-22) carries size, negative prompt, `n`, steps, seed and a `reference` (`att
 `previous`, found by `References::of` in the history; an edit through `/v1/images/edits`, a plain
 generation with a `note` when the model cannot edit); `Generated` keeps the settings and the
 server's `data[].seed`, which go back as the tool result and in the history (`ImageNote`; only
-the latest image carries its data URL). The real-server tests are `#[ignore]`d (`HYPNOS_TEST_URL`;
+the latest image carries its data URL). `tools.rs` is the tool registry (DESK-23): `Tool`
+(`generate_image`, `fetch_url`, `speak`, `extract_entities`, `describe_image`), `available` offers
+each only when an enabled model serves its job (`hypnos_chat`'s `tools` = image, `assistant` =
+the rest), `run_all` runs a round's calls in parallel and reports `step` events;
+`answer_with_native_tools` loops up to `MAX_TOOL_ROUNDS` (image / speak calls end the turn with
+a comment). Every request of a turn carries `x-hypnos-workflow: chat-turn/<id>`, tool requests
+`x-hypnos-next-model: <chat model>` (`Client::with_headers` in `sdk/rust`). The real-server tests are `#[ignore]`d (`HYPNOS_TEST_URL`;
 `HYPNOS_TEST_BINARY` / `HYPNOS_TEST_CONFIG`). `get_api_key` / `set_api_key` keep the API key in
 the OS keychain (`keyring`), keyed by origin; chats and the server URL live in `tauri-plugin-store`. `ChatStore`
 (`src/lib/chats.svelte.js`) owns chats and streaming; `StatsPanel.svelte` polls

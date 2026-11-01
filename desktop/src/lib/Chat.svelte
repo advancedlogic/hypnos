@@ -451,6 +451,42 @@
   }
 </script>
 
+{#snippet imageFigure(message, image, primary)}
+  <figure class="mb-3 space-y-1.5">
+    <img src={image.dataUrl} alt={image.prompt} class="max-w-md w-full rounded-xl border border-slate-800" />
+    {#if image.more?.length}
+      <div class="max-w-md grid grid-cols-3 gap-1.5">
+        {#each image.more as pic, i (i)}
+          <div class="relative group">
+            <img src={pic.dataUrl} alt="{image.prompt} ({i + 2})" class="w-full rounded-lg border border-slate-800" />
+            <div class="absolute inset-x-0 bottom-0 hidden group-hover:flex gap-2 justify-center bg-slate-950/80 rounded-b-lg py-0.5 text-[10px] text-slate-300">
+              <button class="hover:text-white" onclick={() => saveImage({ ...image, dataUrl: pic.dataUrl })}>Save</button>
+              <button class="hover:text-white" onclick={() => copyImage({ ...image, dataUrl: pic.dataUrl })}>Copy</button>
+              {#if pic.seed != null}<span class="text-slate-500">seed {pic.seed}</span>{/if}
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+    <figcaption class="space-y-1">
+     <div class="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
+      <span class="max-w-md truncate" title={image.prompt}>{image.prompt}</span>
+      <span>{image.model} · {Math.round(image.seconds)} s</span>
+      <button class="hover:text-slate-200" onclick={() => saveImage(image)}>Save</button>
+      <button class="hover:text-slate-200" onclick={() => copyImage(image)}>Copy</button>
+      {#if primary}
+        <button class="hover:text-slate-200 disabled:opacity-40" onclick={() => store.regenerateImage(chat, message)} disabled={running || serverState !== 'ready'} title="The same settings with a new seed">Regenerate</button>
+      {/if}
+     </div>
+     <p class="max-w-md flex flex-wrap gap-x-3 text-[11px] text-slate-600" title="The settings this image was made with; the chat model knows them too">
+       {#each imageSettings(image) as part}<span>{part}</span>{/each}
+     </p>
+     {#if image.note}<p class="max-w-md text-[11px] text-amber-300/80">{image.note}</p>{/if}
+    </figcaption>
+  </figure>
+{/snippet}
+
+
 <div class="relative h-full flex flex-col">
   {#if dragging}
     <div class="absolute inset-2 z-20 rounded-2xl border-2 border-dashed border-indigo-400/70 bg-slate-950/80 flex items-center justify-center pointer-events-none">
@@ -601,37 +637,31 @@
                   {/if}
                 </div>
               {/if}
+              {#if message.steps?.length}
+                <ul class="mb-2 space-y-0.5 text-[11px]">
+                  {#each message.steps as step (step.id)}
+                    <li class="flex items-center gap-2 {step.status === 'error' ? 'text-rose-300' : 'text-slate-500'}">
+                      {#if step.status === 'running'}
+                        <span class="w-3 h-3 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin"></span>
+                      {:else if step.status === 'done'}
+                        <span class="text-emerald-400">✓</span>
+                      {:else}
+                        <span>!</span>
+                      {/if}
+                      <span class="truncate max-w-md" title={step.label}>{step.label}</span>
+                      {#if step.summary}<span class="truncate max-w-xs text-slate-600" title={step.summary}>{step.summary}</span>{/if}
+                      {#if step.model || step.seconds != null}
+                        <span class="text-slate-600">{[step.model, step.seconds != null ? `${step.seconds.toFixed(1)} s` : null].filter(Boolean).join(' · ')}</span>
+                      {/if}
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
               {#if message.image}
-                <figure class="mb-3 space-y-1.5">
-                  <img src={message.image.dataUrl} alt={message.image.prompt} class="max-w-md w-full rounded-xl border border-slate-800" />
-                  {#if message.image.more?.length}
-                    <div class="max-w-md grid grid-cols-3 gap-1.5">
-                      {#each message.image.more as pic, i (i)}
-                        <div class="relative group">
-                          <img src={pic.dataUrl} alt="{message.image.prompt} ({i + 2})" class="w-full rounded-lg border border-slate-800" />
-                          <div class="absolute inset-x-0 bottom-0 hidden group-hover:flex gap-2 justify-center bg-slate-950/80 rounded-b-lg py-0.5 text-[10px] text-slate-300">
-                            <button class="hover:text-white" onclick={() => saveImage({ ...message.image, dataUrl: pic.dataUrl })}>Save</button>
-                            <button class="hover:text-white" onclick={() => copyImage({ ...message.image, dataUrl: pic.dataUrl })}>Copy</button>
-                            {#if pic.seed != null}<span class="text-slate-500">seed {pic.seed}</span>{/if}
-                          </div>
-                        </div>
-                      {/each}
-                    </div>
-                  {/if}
-                  <figcaption class="space-y-1">
-                   <div class="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
-                    <span class="max-w-md truncate" title={message.image.prompt}>{message.image.prompt}</span>
-                    <span>{message.image.model} · {Math.round(message.image.seconds)} s</span>
-                    <button class="hover:text-slate-200" onclick={() => saveImage(message.image)}>Save</button>
-                    <button class="hover:text-slate-200" onclick={() => copyImage(message.image)}>Copy</button>
-                    <button class="hover:text-slate-200 disabled:opacity-40" onclick={() => store.regenerateImage(chat, message)} disabled={running || serverState !== 'ready'} title="The same settings with a new seed">Regenerate</button>
-                   </div>
-                   <p class="max-w-md flex flex-wrap gap-x-3 text-[11px] text-slate-600" title="The settings this image was made with; the chat model knows them too">
-                     {#each imageSettings(message.image) as part}<span>{part}</span>{/each}
-                   </p>
-                   {#if message.image.note}<p class="max-w-md text-[11px] text-amber-300/80">{message.image.note}</p>{/if}
-                  </figcaption>
-                </figure>
+                {@render imageFigure(message, message.image, true)}
+                {#each message.moreImages ?? [] as image, i (i)}
+                  {@render imageFigure(message, image, false)}
+                {/each}
                 {#if imageNotice}<p class="-mt-2 mb-3 text-[11px] text-slate-400">{imageNotice}</p>{/if}
               {/if}
               {#if message.tool}
@@ -643,7 +673,7 @@
               {/if}
               {#if message.content}
                 <Markdown text={message.content} />
-              {:else if message.pending && !message.tool && !message.reasoning}
+              {:else if message.pending && !message.tool && !message.reasoning && !message.steps?.some((st) => st.status === 'running')}
                 <div class="flex items-center gap-2 text-sm text-slate-500">
                   <span class="flex gap-1">
                     <span class="w-1.5 h-1.5 rounded-full bg-slate-500 animate-bounce"></span>

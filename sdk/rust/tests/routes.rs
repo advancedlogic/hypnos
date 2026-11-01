@@ -658,3 +658,24 @@ async fn advise() {
     let err = c.advise(&AdvisorRequest::new(&[])).await.unwrap_err();
     assert!(matches!(err, Error::BadRequest(_)), "{err:?}");
 }
+
+#[tokio::test]
+async fn with_headers_marks_a_workflow() {
+    let server = MockServer::start();
+    let client = server.client();
+    let turn = client.with_headers(&[("x-hypnos-workflow", "tool-turn/1"), ("bad header", "x")]);
+    turn.chat(&ChatRequest::new(CHAT, user("hello there")))
+        .await
+        .unwrap();
+    client
+        .with_headers(&[
+            ("x-hypnos-workflow", "tool-turn/1"),
+            ("x-hypnos-workflow-end", "true"),
+        ])
+        .chat(&ChatRequest::new(CHAT, user("and again")))
+        .await
+        .unwrap();
+    let status = client.memory_status().await.unwrap();
+    let workflows = &status.extra["latency"]["workflows"];
+    assert!(workflows.get("tool-turn").is_some(), "{workflows}");
+}

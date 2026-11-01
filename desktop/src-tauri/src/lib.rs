@@ -6,6 +6,7 @@ mod local_server;
 mod mic;
 mod models;
 mod setup;
+mod tools;
 mod tray;
 mod tts;
 mod web;

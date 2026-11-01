@@ -191,6 +191,7 @@ export class ChatStore {
     try {
       const { cancelled } = await api.chat(requestId, chat.model, history, {
         tools: api.imageToolOn(),
+        assistant: api.assistantToolsOn(),
         thinking: this.thinking,
         onReasoning: (text) => {
           if (!answer.reasoning) {
@@ -204,8 +205,24 @@ export class ChatStore {
           answer.tool = { ...call, startedAt: Date.now() };
         },
         onImage: ({ event, ...image }) => {
-          answer.image = image;
+          // A turn may make more than one (DESK-23): the first is the answer's image.
+          if (answer.image) (answer.moreImages ??= []).push(image);
+          else answer.image = image;
           delete answer.tool;
+        },
+        onStep: ({ event, ...step }) => {
+          endThinking();
+          const steps = (answer.steps ??= []);
+          const i = steps.findIndex((s) => s.id === step.id);
+          if (i >= 0) steps[i] = step;
+          else steps.push(step);
+        },
+        onSpeak: (text) => {
+          api.speak(`tool-${requestId}`, text, true, api.voicePrefs()).catch((e) => (answer.note = api.errorMessage(e)));
+        },
+        onToolError: (message) => {
+          delete answer.tool;
+          answer.note = `The image could not be made: ${message}`;
         },
         onModel: (id, reason) => {
           answer.model = id;

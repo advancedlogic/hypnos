@@ -67,6 +67,14 @@ app's commands.
   seconds to a few minutes, longer when the image model must load first, which may unload the
   chat model; the answer shows the elapsed time and where the model is loading from. The
   connection dialog can turn the chat model's access to images off.
+- **Tools** (DESK-23): besides images, the chat model can hand work to the other models: read
+  a web page or online file it is given (`fetch_url`, docling), read a text aloud (`speak`, with
+  your voice settings), list named entities (`extract_entities`, GLiNER), and, when it cannot see,
+  ask a vision model about an image in the chat (`describe_image`). Each tool is offered only
+  when a running model does its job; several run in parallel in one round, up to four rounds a
+  turn, and each shows as a step in the answer (what, which model, seconds, result). Settings
+  can turn them off apart from the image tool. Models without a native tool format keep only
+  the image tool (the prompt convention).
 - **Under each answer:** decode speed, time to first token, tokens, and the tier the model was
   loaded from when it was not on the GPU already.
 - **Stats panel** (the right side, toggled with the header button or Cmd/Ctrl+.): server version
@@ -293,6 +301,7 @@ desktop/
     ├── src/mic.rs            # record with cpal on its own thread, then transcribe
     ├── src/tts.rs            # markdown to speech text, sentence queue, rodio playback
     ├── src/images.rs         # the image tool: tool spec, prompt fallback (ToolGate), generation, save
+    ├── src/tools.rs          # the tool registry (DESK-23): which tools, their specs, running calls in parallel
     ├── src/tray.rs           # tray icon with a status dot, its menu, close-to-tray, Dock icon
     ├── Info.plist            # macOS: NSMicrophoneUsageDescription
     ├── src/local_server.rs   # find, start, stop and log a hypnos process (health via hypnos-client)

@@ -18,6 +18,7 @@
   let voice = $state(prefs.voice);
   let speed = $state(prefs.speed);
   let imageTool = $state(api.imageToolOn());
+  let assistantTools = $state(api.assistantToolsOn());
   const windowPrefs = appPrefs();
   let closeToTray = $state(windowPrefs.closeToTray);
   let hideDock = $state(windowPrefs.hideDock);
@@ -114,6 +115,7 @@
       const picked = Object.fromEntries(Object.entries(chosen).filter(([, id]) => id));
       api.setVoicePrefs({ voice: voice.trim(), speed: Number(speed) });
       api.setImageTool(imageTool);
+      api.setAssistantTools(assistantTools);
       await applyAppPrefs({ closeToTray, hideDock, notify });
       await onsave({ url: normalized, apiKey: apiKey.trim() }, picked);
     } catch (err) {
@@ -193,6 +195,10 @@
     <label class="flex items-center gap-2 pt-1 text-xs text-slate-400">
       <input type="checkbox" bind:checked={imageTool} class="accent-indigo-500" />
       Let the chat model create images (when the server has an image model)
+    </label>
+    <label class="flex items-center gap-2 text-xs text-slate-400">
+      <input type="checkbox" bind:checked={assistantTools} class="accent-indigo-500" />
+      Let the chat model use the other models: read web pages, read aloud, find entities, look at images for it
     </label>
 
     <div class="space-y-1.5 pt-1">

@@ -307,9 +307,19 @@ pub async fn generate(
     call: &ToolCall,
     reference: Option<&str>,
 ) -> Result<Generated, ErrorPayload> {
+    let client = hypnos.client().await?;
+    generate_with(hypnos, &client, call, reference).await
+}
+
+/// [`generate`] through `client` (the tools send theirs with workflow headers, DESK-23).
+pub async fn generate_with(
+    hypnos: &Hypnos,
+    client: &hypnos_client::Client,
+    call: &ToolCall,
+    reference: Option<&str>,
+) -> Result<Generated, ErrorPayload> {
     let call = call.clone().normalized();
     let model = hypnos.pick("image_generation", None).await?;
-    let client = hypnos.client().await?;
     let mut request = ImageRequest::new(model.clone(), call.prompt.clone()).size(call.size.clone());
     if let Some(n) = call.n {
         request = request.n(n);
@@ -598,6 +608,7 @@ mod tests {
                     history,
                     Some(true),
                     None,
+                    None,
                     channel,
                 )
                 .await
@@ -723,6 +734,7 @@ mod tests {
             model,
             vec![message],
             Some(true),
+            None,
             None,
             channel,
         )

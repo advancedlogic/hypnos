@@ -57,15 +57,13 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Backlog
 
-- [ ] 🩵 **DESK-23** `P2` A tool registry: the chat model orchestrates the specialist models
-      Generalize `images.rs` into a registry of tools, each offered only when a running model does
-      its job (as the image tool is now): `generate_image` / `edit_image` (DESK-22),
-      `read_document` and `fetch_url` (docling, `web.rs`), `transcribe`, `speak`,
-      `extract_entities` (GLiNER), `describe_image` (a vision model when the chat model cannot
-      see), `search_notes` (embeddings over chats and files). Several calls per turn, independent
-      ones in parallel; each call shown in the chat as a step (tool, model, seconds, result);
-      `x-hypnos-next-model` pre-stages the model a call will need and `x-hypnos-workflow` names
-      the turn. Native tool formats where the model has one, the prompt convention otherwise.
+- [ ] 🩵 **DESK-25** `P3` A `search_notes` tool over the chats and attached files
+      Split from DESK-23. Embed the chats' messages and attachments with the embeddings model
+      (chunked, cached by content hash in the app's store), and offer `search_notes(query)`
+      returning the closest passages with their chat and date, so "what did we decide about X
+      last week" works across chats. Offered only with an embeddings model; the index updates
+      in the background after each answer.
+
 - [ ] 🩵 **DESK-24** `P3` Sub-agents as tools: research and documents first
       After DESK-23. A sub-agent is a tool with its own loop: system prompt, a subset of the
       registry's tools, a model (or a job routed as now) and a step limit, returning a summary to
@@ -144,6 +142,22 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 _No cards yet._
 
 ## Done
+
+- [x] 🩵 **DESK-23** `P2` A tool registry: the chat model orchestrates the specialist models
+      Generalize `images.rs` into a registry of tools, each offered only when a running model does
+      its job (as the image tool is now): `generate_image` / `edit_image` (DESK-22),
+      `read_document` and `fetch_url` (docling, `web.rs`), `transcribe`, `speak`,
+      `extract_entities` (GLiNER), `describe_image` (a vision model when the chat model cannot
+      see), `search_notes` (embeddings over chats and files). Several calls per turn, independent
+      ones in parallel; each call shown in the chat as a step (tool, model, seconds, result);
+      `x-hypnos-next-model` pre-stages the model a call will need and `x-hypnos-workflow` names
+      the turn. Native tool formats where the model has one, the prompt convention otherwise.
+      Done: `tools.rs` with generate_image, fetch_url, speak, extract_entities, describe_image;
+      `read_document` and `transcribe` are not tools since attachments are converted when they
+      are attached; `search_notes` is DESK-25. Up to 4 rounds, parallel calls, `step` events,
+      a Settings switch apart from the image tool; `Client::with_headers` (sdk/rust) for the
+      workflow and next-model headers. Tested on the lineup (Gemma 4 26B): a page and entities
+      in one round, 1.4 s; speak; the image tool through the new loop.
 
 - [x] 🩵 **DESK-22** `P2` The image tool takes its settings from the conversation
       `generate_image` (`images.rs` `image_tool_spec`, `TOOL_INSTRUCTION`) passes only `prompt` and

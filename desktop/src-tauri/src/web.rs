@@ -206,7 +206,18 @@ pub async fn url_extract(
     hypnos: State<'_, Hypnos>,
     url: String,
 ) -> Result<Attachment, ErrorPayload> {
-    let fetched = fetch(&url).await?;
+    let client = hypnos.client().await?;
+    extract(&hypnos, &client, &url).await
+}
+
+/// [`url_extract`] with the client to convert through (the tools send theirs with workflow
+/// headers, DESK-23).
+pub(crate) async fn extract(
+    hypnos: &Hypnos,
+    client: &hypnos_client::Client,
+    url: &str,
+) -> Result<Attachment, ErrorPayload> {
+    let fetched = fetch(url).await?;
     let size = fetched.bytes.len() as u64;
     let html_title_text = (fetched.content_type == "text/html")
         .then(|| html_title(&String::from_utf8_lossy(&fetched.bytes)))
@@ -215,7 +226,6 @@ pub async fn url_extract(
         String::from_utf8_lossy(&fetched.bytes).into_owned()
     } else {
         let model = hypnos.pick("document_conversion", None).await?;
-        let client = hypnos.client().await?;
         client
             .convert_document(&DocumentRequest::file(
                 model,

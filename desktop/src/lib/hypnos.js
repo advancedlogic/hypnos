@@ -41,20 +41,32 @@ export const THINKING_LEVELS = [
  * the end. With `tools`, the model may ask for an image: `onToolCall({ prompt, size, negativePrompt,
  * n, steps, seed, reference })`, then `onImage({ dataUrl, prompt, size, model, seconds, seed,
  * negativePrompt, steps, reference, more: [{ dataUrl, seed }], note })`, then its comment as
- * deltas. Resolves to
+ * deltas. With `assistant`, the other tools of the registry (DESK-23: web pages, reading aloud,
+ * entities, describing an image) are offered too: each call arrives as `onStep({ id, tool, label,
+ * status, model, seconds, summary })` (`running`, then `done` or `error` with the same id),
+ * `onSpeak(text)` asks to read a text aloud, `onToolError(message)` reports a failed image
+ * call. Resolves to
  * `{ cancelled }`; `cancelChat(requestId)` stops it.
  */
-export function chat(requestId, model, messages, { onModel, onReasoning, onDelta, onDone, onToolCall, onImage, tools = false, thinking = 'none' }) {
+export function chat(
+  requestId,
+  model,
+  messages,
+  { onModel, onReasoning, onDelta, onDone, onToolCall, onImage, onStep, onSpeak, onToolError, tools = false, assistant = false, thinking = 'none' },
+) {
   const onEvent = new Channel();
   onEvent.onmessage = (e) => {
     if (e.event === 'model') onModel?.(e.id, e.reason);
     else if (e.event === 'toolCall') onToolCall?.(e);
     else if (e.event === 'image') onImage?.(e);
+    else if (e.event === 'step') onStep?.(e);
+    else if (e.event === 'speak') onSpeak?.(e.text);
+    else if (e.event === 'toolError') onToolError?.(e.message);
     else if (e.event === 'reasoning') onReasoning?.(e.text);
     else if (e.event === 'delta') onDelta(e.text);
     else if (e.event === 'done') onDone(e);
   };
-  return invoke('hypnos_chat', { requestId, model, messages, tools, reasoningEffort: thinking, onEvent });
+  return invoke('hypnos_chat', { requestId, model, messages, tools, assistant, reasoningEffort: thinking, onEvent });
 }
 
 export const cancelChat = (requestId) => invoke('hypnos_chat_cancel', { requestId });
@@ -146,6 +158,21 @@ export function imageToolOn() {
 export function setImageTool(on) {
   try {
     localStorage.setItem('hypnos.desktop.imageTool', String(on));
+  } catch {}
+}
+
+/** Whether the chat model may use the other tools (DESK-23; on unless turned off in the settings). */
+export function assistantToolsOn() {
+  try {
+    return localStorage.getItem('hypnos.desktop.assistantTools') !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+export function setAssistantTools(on) {
+  try {
+    localStorage.setItem('hypnos.desktop.assistantTools', String(on));
   } catch {}
 }
 

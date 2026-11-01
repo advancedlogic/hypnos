@@ -14,8 +14,7 @@ use hypnos_client::{
 
 use crate::attachments::Attachment;
 use crate::images::{
-    generate, image_tool_spec, Generated, Reference, ToolCall as ImageCall, ToolGate, IMAGE_TOOL,
-    TOOL_INSTRUCTION,
+    generate, Generated, Reference, ToolCall as ImageCall, ToolGate, TOOL_INSTRUCTION,
 };
 use serde::{Deserialize, Serialize};
 use tauri::async_runtime::JoinHandle;
@@ -274,7 +273,7 @@ pub async fn hypnos_route(
     .map(str::to_string))
 }
 
-fn serves(m: &ModelStatus, modality: &str) -> bool {
+pub(crate) fn serves(m: &ModelStatus, modality: &str) -> bool {
     m.enabled
         && (m.modalities.iter().any(|x| x == modality)
             || (m.modalities.is_empty() && m.modality == modality))
@@ -370,7 +369,7 @@ pub(crate) struct References {
 }
 
 impl References {
-    fn of(messages: &[InMessage]) -> Self {
+    pub(crate) fn of(messages: &[InMessage]) -> Self {
         let attached = messages
             .iter()
             .rev()
@@ -390,7 +389,15 @@ impl References {
 
     /// The reference a call asks for, falling back to the other one when it is missing (a
     /// model says "previous" for the image the user just attached, or the reverse).
-    fn pick(&self, reference: Reference) -> Option<&str> {
+    #[cfg(test)]
+    pub(crate) fn with_previous(data_url: &str) -> Self {
+        Self {
+            attached: None,
+            previous: Some(data_url.into()),
+        }
+    }
+
+    pub(crate) fn pick(&self, reference: Reference) -> Option<&str> {
         match reference {
             Reference::None => None,
             Reference::Attached => self.attached.as_deref().or(self.previous.as_deref()),
@@ -514,6 +521,12 @@ pub enum ChatEvent {
     ToolCall(ImageCall),
     /// The generated image.
     Image(Box<Generated>),
+    /// The image tool failed (its progress is shown apart from the other steps).
+    ToolError { message: String },
+    /// Another tool's call (DESK-23): `running`, then `done` or `error` with the same id.
+    Step(crate::tools::Step),
+    /// The `speak` tool: the webview reads `text` aloud with the user's voice.
+    Speak { text: String },
     /// The answer is complete.
     #[serde(rename_all = "camelCase")]
     Done {
@@ -551,6 +564,7 @@ pub async fn hypnos_chat<R: Runtime>(
     messages: Vec<InMessage>,
     tools: Option<bool>,
     reasoning_effort: Option<ReasoningEffort>,
+    assistant: Option<bool>,
     on_event: Channel<ChatEvent>,
 ) -> CmdResult<ChatOutcome> {
     let thinking = Thinking(reasoning_effort.unwrap_or(ReasoningEffort::None));
@@ -585,23 +599,31 @@ pub async fn hypnos_chat<R: Runtime>(
     let vision = can_see(&model);
     let references = References::of(&messages);
     let messages: Vec<ChatMessage> = messages.iter().map(|m| m.to_chat_message(vision)).collect();
-    let image_tool = tools.unwrap_or(false) && models.iter().any(|m| serves(m, "image_generation"));
+    let toolset = crate::tools::available(
+        &models,
+        &model,
+        tools.unwrap_or(false),
+        assistant.unwrap_or(false),
+        &references,
+    );
+    // Every request of the turn is one workflow (`latency.workflows` on the server).
+    let workflow = format!("chat-turn/{request_id}");
+    let client = client.with_headers(&[("x-hypnos-workflow", workflow.as_str())]);
     let (tx, rx) = tokio::sync::oneshot::channel();
     let task = tauri::async_runtime::spawn(async move {
-        let result = if image_tool {
-            answer_with_image_tool(
-                &app,
-                &client,
-                &model,
-                messages,
-                &references,
-                thinking,
-                &on_event,
-            )
-            .await
-        } else {
+        let result = if toolset.is_empty() {
             let request = thinking.apply(ChatRequest::new(model, messages));
             stream_answer(&client, &request, &on_event).await
+        } else {
+            let turn = Turn {
+                app: &app,
+                client: &client,
+                model: &model,
+                references: &references,
+                thinking,
+                on_event: &on_event,
+            };
+            answer_with_tools(&turn, messages, &toolset).await
         };
         let _ = tx.send(result);
     });
@@ -700,96 +722,122 @@ fn send_done(stream: &ChatStream, on_event: &Channel<ChatEvent>) {
     });
 }
 
-/// The image tool: as a native tool call when the server can run tools for the model (API-9),
-/// else through the prompt convention.
-async fn answer_with_image_tool<R: Runtime>(
-    app: &AppHandle<R>,
-    client: &Client,
-    model: &str,
-    messages: Vec<ChatMessage>,
-    references: &References,
+/// What a turn with tools runs with.
+struct Turn<'a, R: Runtime> {
+    app: &'a AppHandle<R>,
+    /// With the turn's workflow header.
+    client: &'a Client,
+    model: &'a str,
+    references: &'a References,
     thinking: Thinking,
-    on_event: &Channel<ChatEvent>,
+    on_event: &'a Channel<ChatEvent>,
+}
+
+/// Rounds a turn may take: each round's calls, then the model reads their results. The last
+/// round runs with `tool_choice: none`, so the turn always ends with an answer.
+const MAX_TOOL_ROUNDS: usize = 4;
+
+/// A turn with tools (DESK-23): native tool calls when the server can run tools for the model
+/// (API-9); without a native format, the image tool alone through the prompt convention.
+async fn answer_with_tools<R: Runtime>(
+    turn: &Turn<'_, R>,
+    messages: Vec<ChatMessage>,
+    toolset: &[crate::tools::Tool],
 ) -> CmdResult<()> {
-    let native = answer_with_native_tool(
-        app,
-        client,
-        model,
-        messages.clone(),
-        references,
-        thinking,
-        on_event,
-    );
-    match native.await {
+    match answer_with_native_tools(turn, messages.clone(), toolset).await {
         Err(e)
             if e.kind == "bad_request"
                 && e.detail.as_deref().is_some_and(|d| d.contains("tool")) =>
         {
-            answer_with_prompt_tool(app, client, model, messages, references, thinking, on_event)
+            if toolset.contains(&crate::tools::Tool::Image) {
+                answer_with_prompt_tool(
+                    turn.app,
+                    turn.client,
+                    turn.model,
+                    messages,
+                    turn.references,
+                    turn.thinking,
+                    turn.on_event,
+                )
                 .await
+            } else {
+                let request = turn.thinking.apply(ChatRequest::new(turn.model, messages));
+                stream_answer(turn.client, &request, turn.on_event).await
+            }
         }
         other => other,
     }
 }
 
-/// `generate_image` as a real tool: the answer streams as usual, a call becomes an image and a
-/// `tool` result, and the model comments on it in a second round (tools hidden, so no new call).
-///
-/// The first round thinks at the chat's level (it decides whether to draw and what); the second
-/// one never does ([`Thinking::OFF`]): it only says in one sentence that the image is ready.
-async fn answer_with_native_tool<R: Runtime>(
-    app: &AppHandle<R>,
-    client: &Client,
-    model: &str,
+/// The tool loop: each round streams as usual; its calls run in parallel
+/// ([`crate::tools::run_all`]), their results go back as `tool` messages, and the next round
+/// reads them. Calls that only show something (an image, speech) end the turn with a short
+/// comment, without thinking and without further calls, as the image tool did (DESK-11); other
+/// results (a page, entities, a description) are read at the chat's thinking level.
+async fn answer_with_native_tools<R: Runtime>(
+    turn: &Turn<'_, R>,
     messages: Vec<ChatMessage>,
-    references: &References,
-    thinking: Thinking,
-    on_event: &Channel<ChatEvent>,
+    toolset: &[crate::tools::Tool],
 ) -> CmdResult<()> {
-    let tools = vec![image_tool_spec()];
-    let request = thinking.apply(
-        ChatRequest::new(model, messages.clone())
-            .tools(tools.clone())
-            .tool_choice(ToolChoice::Auto),
-    );
-    let mut stream = client.chat_stream(&request).await?;
-    if !relay(&mut stream, on_event, |p| Some(p.to_string())).await? {
-        return Ok(());
-    }
-    let calls = stream.tool_calls().to_vec();
-    let Some(call) = calls.iter().find(|c| c.function.name == IMAGE_TOOL) else {
-        send_done(&stream, on_event);
-        return Ok(());
+    use crate::tools::Tool;
+    let specs: Vec<_> = toolset.iter().map(|t| t.spec()).collect();
+    // Tool requests name the chat model as the next one: when a specialist had to evict it, the
+    // server loads it again while the tool runs.
+    let tool_client = turn
+        .client
+        .with_headers(&[("x-hypnos-next-model", turn.model)]);
+    let ctx = crate::tools::Ctx {
+        app: turn.app,
+        client: &tool_client,
+        references: turn.references,
+        on_event: turn.on_event,
     };
-    let args: ImageCall = call.function.parse_arguments().map_err(|e| ErrorPayload {
-        kind: "image".into(),
-        message: "The model asked for an image without a usable prompt.".into(),
-        detail: Some(e.to_string()),
-        retry_after_secs: None,
-    })?;
-    let args = args.normalized();
-    let _ = on_event.send(ChatEvent::ToolCall(args.clone()));
-    let reference = references.pick(args.reference);
-    let image = generate(&app.state::<Hypnos>(), &args, reference).await?;
-    let result = tool_result(&image);
-    let _ = on_event.send(ChatEvent::Image(Box::new(image)));
-
-    let mut follow_up = messages;
-    follow_up.push(ChatMessage::assistant_with_calls("", calls.clone()));
-    for c in &calls {
-        let text = if c.id == call.id {
-            result.as_str()
+    let mut conversation = messages;
+    let mut thinking = turn.thinking;
+    let mut last = false;
+    for round in 0..MAX_TOOL_ROUNDS {
+        last = last || round == MAX_TOOL_ROUNDS - 1;
+        let choice = if last {
+            ToolChoice::None
         } else {
-            "Unknown tool."
+            ToolChoice::Auto
         };
-        follow_up.push(ChatMessage::tool(c.id.clone(), text));
+        let request = thinking.apply(
+            ChatRequest::new(turn.model, conversation.clone())
+                .tools(specs.clone())
+                .tool_choice(choice),
+        );
+        let mut stream = turn.client.chat_stream(&request).await?;
+        let mut said = String::new();
+        let relayed = relay(&mut stream, turn.on_event, |p| {
+            said.push_str(p);
+            Some(p.to_string())
+        });
+        if !relayed.await? {
+            return Ok(());
+        }
+        let calls = stream.tool_calls().to_vec();
+        if calls.is_empty() || last {
+            send_done(&stream, turn.on_event);
+            return Ok(());
+        }
+        let results = crate::tools::run_all(&ctx, &calls).await;
+        conversation.push(ChatMessage::assistant_with_calls(said, calls.clone()));
+        for (c, result) in calls.iter().zip(results) {
+            conversation.push(ChatMessage::tool(c.id.clone(), result));
+        }
+        let only_shown = calls.iter().all(|c| {
+            matches!(
+                Tool::by_name(&c.function.name),
+                Some(Tool::Image | Tool::Speak)
+            )
+        });
+        if only_shown {
+            thinking = Thinking::OFF;
+            last = true;
+        }
     }
-    let request = Thinking::OFF.apply(
-        ChatRequest::new(model, follow_up)
-            .tools(tools)
-            .tool_choice(ToolChoice::None),
-    );
-    stream_answer(client, &request, on_event).await
+    Ok(())
 }
 
 /// The prompt convention for models without a native tool format: the first round runs with the
@@ -854,7 +902,7 @@ async fn answer_with_prompt_tool<R: Runtime>(
 
 /// What the chat model is told after the image tool ran: the settings used (so a follow-up can
 /// reuse the seed or change one setting) and what to say.
-fn tool_result(image: &Generated) -> String {
+pub(crate) fn tool_result(image: &Generated) -> String {
     let note = image
         .note
         .as_ref()
@@ -1137,6 +1185,7 @@ mod tests {
             message,
             None,
             Some(ReasoningEffort::Low),
+            None,
             channel,
         )
         .await
@@ -1260,6 +1309,7 @@ mod tests {
             message("Reply with exactly: hello from rust"),
             None,
             None,
+            None,
             channel,
         )
         .await
@@ -1283,6 +1333,7 @@ mod tests {
             message("Count from 1 to 500, one number per line."),
             None,
             None,
+            None,
             channel,
         );
         let cancel = async {
@@ -1302,6 +1353,7 @@ mod tests {
             "r3".into(),
             "no-such-model".into(),
             message("hi"),
+            None,
             None,
             None,
             channel,
@@ -1355,6 +1407,7 @@ mod tests {
             "log1".into(),
             model.clone(),
             message,
+            None,
             None,
             None,
             channel,
