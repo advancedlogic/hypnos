@@ -58,7 +58,9 @@ jobs:
             echo "CMAKE_C_COMPILER_LAUNCHER=sccache"
             echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache"
           } >> "$GITHUB_ENV"
-          [ "$RUNNER_OS" = macOS ] || echo "CMAKE_CUDA_COMPILER_LAUNCHER=sccache" >> "$GITHUB_ENV"
+          # nvcc through sccache only on Linux: on Windows CMake's CUDA test compile uses MSVC's
+          # shared-PDB debug flags, which sccache refuses with an error instead of compiling.
+          [ "$RUNNER_OS" = Linux ] && echo "CMAKE_CUDA_COMPILER_LAUNCHER=sccache" >> "$GITHUB_ENV" || true
 
       - name: CUDA architectures
         if: runner.os != 'macOS'
