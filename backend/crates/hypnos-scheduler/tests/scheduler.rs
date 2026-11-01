@@ -114,6 +114,11 @@ fn model(id: &str, weight_gb: u64, priority: ModelPriority, initial: MemoryTier)
             non_layer_overhead_bytes: 64 * 1024 * 1024,
             activation_workspace_bytes: 64 * 1024 * 1024,
             expert_bytes: 0,
+            global_kv_layers: None,
+            global_num_kv_heads: None,
+            swa_kv_layers: None,
+            swa_num_kv_heads: None,
+            swa_head_dim: None,
             configured_keys: None,
         },
     }

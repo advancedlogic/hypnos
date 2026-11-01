@@ -28,6 +28,10 @@ pub struct GgufArchMetadata {
     /// Bytes of the Mixture-of-Experts expert tensors (`*_exps`), from the tensor table; `None`
     /// for a dense model or when the table could not be read.
     pub expert_bytes: Option<u64>,
+    /// The KV layout when it is not uniform (per-layer KV heads, or a sliding-window pattern):
+    /// `(global_kv_layers, global_num_kv_heads, swa_kv_layers, swa_num_kv_heads, swa_head_dim)`.
+    /// Layers without KV heads (a hybrid model's convolution layers) count in neither.
+    pub kv_layout: Option<(u32, u32, u32, u32, u32)>,
 }
 
 #[derive(Debug, Clone)]
@@ -303,7 +307,49 @@ impl GgufArchMetadata {
         }
         .filter(|_| sliding_window.is_some());
 
+        // Per layer: KV heads (an array, or the scalar everywhere) and sliding or not.
+        let blocks = int("block_count").unwrap_or(0) as usize;
+        let kv_per_layer: Option<Vec<u64>> = match key("attention.head_count_kv") {
+            Some(Value::IntArray(v)) => Some(v.clone()),
+            Some(Value::Int(n)) => Some(vec![*n; blocks]),
+            _ => None,
+        };
+        let sliding: Option<Vec<bool>> = match key("attention.sliding_window_pattern") {
+            Some(Value::BoolArray(v)) => Some(v.clone()),
+            _ => None,
+        };
+        let non_uniform =
+            matches!(key("attention.head_count_kv"), Some(Value::IntArray(_))) || sliding.is_some();
+        let kv_layout = match (kv_per_layer, non_uniform) {
+            (Some(kv), true) => {
+                let is_swa = |i: usize| sliding.as_ref().is_some_and(|s| s.get(i) == Some(&true));
+                let (mut global, mut swa, mut swa_heads, mut global_heads) =
+                    (0u32, 0u32, 0u64, 0u64);
+                for (i, heads) in kv.iter().enumerate() {
+                    if *heads == 0 {
+                        continue;
+                    }
+                    if is_swa(i) && sliding_window.is_some() {
+                        swa += 1;
+                        swa_heads = swa_heads.max(*heads);
+                    } else {
+                        global += 1;
+                        global_heads = global_heads.max(*heads);
+                    }
+                }
+                let swa_dim = ["attention.key_length_swa", "attention.value_length_swa"]
+                    .iter()
+                    .filter_map(|k| int(k))
+                    .max()
+                    .or(head_dim)
+                    .unwrap_or(0);
+                Some((global, global_heads as u32, swa, swa_heads as u32, swa_dim))
+            }
+            _ => None,
+        };
+
         Some(Self {
+            kv_layout,
             architecture: arch.clone(),
             block_count: int("block_count").filter(|n| *n > 0),
             head_count_kv: int_or_max("attention.head_count_kv"),
@@ -422,6 +468,7 @@ mod tests {
                 sliding_window: Some(1024),
                 global_attn_every_n_layers: Some(6),
                 expert_bytes: None,
+                kv_layout: Some((1, 2, 5, 8, 256)),
             }
         );
     }

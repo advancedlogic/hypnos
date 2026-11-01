@@ -53,7 +53,7 @@ slots = 3
 default_context_len = 16384
 kv_dtype = "f16"
 non_layer_overhead_bytes = 2415919104
-activation_workspace_bytes = 2147483648
+activation_workspace_bytes = 2952790016 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
 
 [models.estimate]                   # what the GGUF reports (sizing without the files)
 num_layers = 30
@@ -63,6 +63,11 @@ max_context_len = 262144
 sliding_window_len = 1024
 global_attn_every_n_layers = 6
 expert_bytes = 12846382080
+global_kv_layers = 5
+global_num_kv_heads = 2
+swa_kv_layers = 25
+swa_num_kv_heads = 8
+swa_head_dim = 256
 
 [[models.variants]]
 quant = "Q4_0"
@@ -96,7 +101,7 @@ slots = 4
 default_context_len = 8192
 kv_dtype = "q8_0"
 non_layer_overhead_bytes = 1610612736
-activation_workspace_bytes = 536870912
+activation_workspace_bytes = 1342177280 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
 
 [models.estimate]                   # what the GGUF reports (sizing without the files)
 num_layers = 42
@@ -105,6 +110,11 @@ head_dim = 512
 max_context_len = 131072
 sliding_window_len = 512
 global_attn_every_n_layers = 6
+global_kv_layers = 7
+global_num_kv_heads = 2
+swa_kv_layers = 35
+swa_num_kv_heads = 2
+swa_head_dim = 256
 
 [[models.variants]]
 quant = "Q4_0"
@@ -144,6 +154,11 @@ head_dim = 128
 max_context_len = 262144
 sliding_window_len = 256
 global_attn_every_n_layers = 1
+global_kv_layers = 6
+global_num_kv_heads = 4
+swa_kv_layers = 5
+swa_num_kv_heads = 4
+swa_head_dim = 128
 
 [[models.variants]]
 quant = "Q8_0"
@@ -181,7 +196,7 @@ priority = "high"
 default_context_len = 16384
 kv_dtype = "q8_0"
 non_layer_overhead_bytes = 671088640
-activation_workspace_bytes = 805306368
+activation_workspace_bytes = 1879048192 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
 
 [models.estimate]                   # what the GGUF reports (sizing without the files)
 num_layers = 24
@@ -190,6 +205,11 @@ head_dim = 128
 max_context_len = 128000
 sliding_window_len = 256
 global_attn_every_n_layers = 1
+global_kv_layers = 6
+global_num_kv_heads = 4
+swa_kv_layers = 5
+swa_num_kv_heads = 4
+swa_head_dim = 128
 
 [[models.variants]]
 quant = "Q8_0"
@@ -228,7 +248,7 @@ priority = "high"
 default_context_len = 8192
 kv_dtype = "q8_0"
 non_layer_overhead_bytes = 838860800
-activation_workspace_bytes = 536870912
+activation_workspace_bytes = 1610612736 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
 
 [models.estimate]                   # what the GGUF reports (sizing without the files)
 num_layers = 24
@@ -237,6 +257,11 @@ head_dim = 128
 max_context_len = 128000
 sliding_window_len = 256
 global_attn_every_n_layers = 1
+global_kv_layers = 6
+global_num_kv_heads = 4
+swa_kv_layers = 5
+swa_num_kv_heads = 4
+swa_head_dim = 128
 
 [[models.variants]]
 quant = "Q8_0"
@@ -288,6 +313,11 @@ num_kv_heads = 2
 head_dim = 512
 sliding_window_len = 1024
 global_attn_every_n_layers = 6
+global_kv_layers = 4
+global_num_kv_heads = 1
+swa_kv_layers = 20
+swa_num_kv_heads = 2
+swa_head_dim = 256
 
 [[models.variants]]
 quant = "Q8_0"
@@ -308,6 +338,7 @@ summary = "Text-to-speech with many voices, faster than real time on the CPU."
 lineup = true
 
 [models.config]
+device = "cpu"                        # ONNX Runtime on the CPU: booked in RAM, not GPU memory
 min_gpu_layer_ratio = 1.0
 initial_tier = "tier1_gpu_vram"
 keep_warm_in_ram = true
@@ -355,7 +386,7 @@ default_context_len = 512
 max_context_len = 1024
 kv_dtype = "f16"
 non_layer_overhead_bytes = 6442450944
-activation_workspace_bytes = 3221225472
+activation_workspace_bytes = 6174015488 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
 
 [[models.variants]]
 quant = "Q4_K"

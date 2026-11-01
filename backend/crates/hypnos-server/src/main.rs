@@ -129,11 +129,45 @@ async fn run() -> Result<()> {
         }
         Some("--help" | "-h") => {
             println!(
-                "usage: hypnos [config.toml] [--port N]   start the server (config: $HYPNOS_CONFIG, then ./hypnos.toml;\n                                         port: --port, then $HYPNOS_PORT, then server.port, default 9999)\n       hypnos --check-config [config.toml]   validate the config and exit (1 on errors)\n       hypnos --catalog-block <id>[:<quant>]   print the [[models]] block of a models.catalog.toml entry\n       hypnos --catalog-files <id>[:<quant>]   print its files as models.manifest lines\n       hypnos advise --needs chat,voice,documents [--vram 24G] [--ram 64G] [--unified] [--json|--config]\n                                         recommend a lineup from the catalog for this (or that) machine\n       hypnos --version"
+                "usage: hypnos [config.toml] [--port N]   start the server (config: $HYPNOS_CONFIG, then ./hypnos.toml;\n                                         port: --port, then $HYPNOS_PORT, then server.port, default 9999)\n       hypnos --check-config [config.toml]   validate the config and exit (1 on errors)\n       hypnos --catalog-block <id>[:<quant>]   print the [[models]] block of a models.catalog.toml entry\n       hypnos --catalog-files <id>[:<quant>]   print its files as models.manifest lines\n       hypnos advise --needs chat,voice,documents [--vram 24G] [--ram 64G] [--unified] [--json|--config]\n                                         recommend a lineup from the catalog for this (or that) machine\n       hypnos measure-memory [config.toml] [--models a,b] [--json] [--out file]   booked vs real memory per model\n       hypnos --version"
             );
             return Ok(());
         }
         _ => {}
+    }
+    // `hypnos measure-memory [config] [--models a,b] [--json]` (TEST-3): booked vs real per model.
+    let measure_mode = args.first().map(String::as_str) == Some("measure-memory");
+    let mut measure_models: Vec<String> = Vec::new();
+    let mut measure_json = false;
+    let mut measure_out: Option<String> = None;
+    if measure_mode {
+        args.remove(0);
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--models" => {
+                    let list = args
+                        .get(i + 1)
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("--models needs a list"))?;
+                    measure_models = list.split(',').map(|m| m.trim().to_string()).collect();
+                    args.drain(i..i + 2);
+                }
+                "--json" => {
+                    measure_json = true;
+                    args.remove(i);
+                }
+                "--out" => {
+                    measure_out = Some(
+                        args.get(i + 1)
+                            .cloned()
+                            .ok_or_else(|| anyhow::anyhow!("--out needs a file"))?,
+                    );
+                    args.drain(i..i + 2);
+                }
+                _ => i += 1,
+            }
+        }
     }
     let check_only = args.first().map(String::as_str) == Some("--check-config");
     let config_arg = if check_only {
@@ -299,6 +333,22 @@ async fn run() -> Result<()> {
         .scheduler
         .memory()
         .set_gpu_probe(std::sync::Arc::new(hypnos_backends::LlamaGpuProbe));
+
+    if measure_mode {
+        let rows = hypnos_server::measure::measure(&state, &measure_models).await;
+        let text = if measure_json {
+            serde_json::to_string_pretty(&rows)?
+        } else {
+            hypnos_server::measure::markdown(&rows)
+        };
+        // The log goes to stdout as well: --out keeps the result apart.
+        match &measure_out {
+            Some(path) => std::fs::write(path, &text).with_context(|| format!("writing {path}"))?,
+            None => println!("{text}"),
+        }
+        state.scheduler.shutdown().await;
+        return Ok(());
+    }
 
     // Listen before the startup pre-staging (`initial_tier = tier1_gpu_vram` / `tier2_pinned_ram`),
     // which takes minutes with a large model: `/health` answers at once, `/ready` and the

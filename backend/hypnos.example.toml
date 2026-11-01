@@ -154,7 +154,7 @@ sliding_window_len = 1024
 global_attn_every_n_layers = 6          # 5 local SWA layers per 1 full global layer
 kv_dtype = "f16"                        # q8_0 halves the KV cache but trips the CUDA-graph re-capture above
 non_layer_overhead_bytes = 2415919104   # token embeddings + 1.1 GiB vision tower (not splittable)
-activation_workspace_bytes = 2147483648 # 2 GiB: llama.cpp's compute buffer is 2.2 GB at n_batch 2048 (measured)
+activation_workspace_bytes = 2952790016 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
 
 # -----------------------------------------------------------------------------
 # 2. Gemma 4 E4B (Q4_0) — Audio / Speech-to-Text (/v1/audio/transcriptions) + Chat
@@ -185,7 +185,7 @@ sliding_window_len = 512
 global_attn_every_n_layers = 6
 kv_dtype = "q8_0"
 non_layer_overhead_bytes = 1610612736   # embeddings + conformer audio encoder + vision tower
-activation_workspace_bytes = 536870912
+activation_workspace_bytes = 1342177280 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
 
 # -----------------------------------------------------------------------------
 # 3. Kokoro 82M (fp32 ONNX) — Text-to-Speech (/v1/audio/speech)
@@ -200,6 +200,7 @@ activation_workspace_bytes = 536870912
 id = "kokoro-82m-q4"
 modality = "text_to_speech"
 engine = "onnx_runtime"
+device = "cpu"                          # runs on the CPU (PreferCPU): booked in RAM, not VRAM (TEST-3)
 weights_path = "kokoro/model.onnx"
 voices_path = "kokoro/voices"
 total_weight_bytes = 0                  # auto-detected from the file (~82 MiB)
@@ -275,7 +276,7 @@ default_context_len = 512
 max_context_len = 1024
 kv_dtype = "f16"
 non_layer_overhead_bytes = 6442450944   # text encoder + VAE are not block-splittable
-activation_workspace_bytes = 3221225472
+activation_workspace_bytes = 6174015488 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
 
 # -----------------------------------------------------------------------------
 # 6. docling — Document conversion (/v1/documents/convert): PDFs, images, DOCX/PPTX/XLSX, HTML

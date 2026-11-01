@@ -3,6 +3,7 @@ pub mod catalog;
 pub mod default_profile;
 mod documents;
 mod entities;
+pub mod measure;
 pub mod metrics;
 pub mod pictures;
 pub mod pool;

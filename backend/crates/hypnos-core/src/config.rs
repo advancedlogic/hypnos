@@ -200,6 +200,20 @@ pub struct ModelArchitectureParams {
     /// Bytes of the Mixture-of-Experts expert tensors (filled from the GGUF; 0 = dense model).
     #[serde(default)]
     pub expert_bytes: u64,
+    /// Exact KV layout (TEST-3), from the GGUF's per-layer KV heads and sliding-window pattern:
+    /// layers with a full-context KV cache, layers with a sliding-window one (a hybrid model's
+    /// convolution layers have none), and the sliding-window layers' KV heads and head size.
+    /// Unset: every layer is booked as `num_kv_heads` x `head_dim`, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global_kv_layers: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global_num_kv_heads: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swa_kv_layers: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swa_num_kv_heads: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swa_head_dim: Option<u32>,
     /// Keys written in the config's `[models.arch]` table, recorded by
     /// [`HypnosConfig::from_toml_str`]. `None` when the params were built in code; then every
     /// field counts as explicit and [`HypnosConfig::detect_arch_from_gguf`] leaves them alone.
@@ -246,6 +260,11 @@ impl Default for ModelArchitectureParams {
             non_layer_overhead_bytes: 512 * 1024 * 1024,
             activation_workspace_bytes: default_activation_workspace(),
             expert_bytes: 0,
+            global_kv_layers: None,
+            global_num_kv_heads: None,
+            swa_kv_layers: None,
+            swa_num_kv_heads: None,
+            swa_head_dim: None,
             configured_keys: None,
         }
     }
@@ -986,6 +1005,25 @@ impl HypnosConfig {
                     arch.global_attn_every_n_layers = Some(n);
                     applied.push(format!(
                         "sliding_window_len={w}, global_attn_every_n_layers={n}"
+                    ));
+                }
+            }
+            if let Some((global, global_heads, swa, swa_heads, swa_dim)) = meta.kv_layout {
+                let keys = [
+                    "global_kv_layers",
+                    "global_num_kv_heads",
+                    "swa_kv_layers",
+                    "swa_num_kv_heads",
+                    "swa_head_dim",
+                ];
+                if keys.iter().all(|k| !arch.is_configured(k)) {
+                    arch.global_kv_layers = Some(global);
+                    arch.global_num_kv_heads = Some(global_heads);
+                    arch.swa_kv_layers = Some(swa);
+                    arch.swa_num_kv_heads = Some(swa_heads);
+                    arch.swa_head_dim = Some(swa_dim);
+                    applied.push(format!(
+                        "KV layout: {global} full ({global_heads} KV heads) + {swa} sliding-window layers ({swa_heads} x {swa_dim})"
                     ));
                 }
             }

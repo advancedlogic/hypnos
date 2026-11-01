@@ -237,6 +237,15 @@ the same folder, and run a demo (chat, the logo described, a voice round trip). 
 Model Catalog tab has an Advisor panel. The catalog route's `configured_quant` names the variant
 a configured model runs.
 
+Memory estimates (TEST-3): `hypnos measure-memory [config] [--models a,b] [--json] [--out f]`
+(`hypnos-server/src/measure.rs`) loads each model alone, runs one request of its kind (plus an
+image / `jfk.wav` for models that see / hear) and compares the booking with the real peak (Metal
+device memory, process footprint). KV is booked from the exact layout GGUF detection reads
+(`global_kv_layers`, `global_num_kv_heads`, `swa_kv_layers`, `swa_num_kv_heads`, `swa_head_dim`;
+sliding-window caches = window + micro-batch, padded to 256); `activation_workspace_bytes` values
+in the configs and the catalog are measured peaks (`docs/bench/memory-2026-11-01.md`); Kokoro is
+`device = "cpu"`. `/metrics` `hypnos_memory_bytes{kind}` shows booked vs held.
+
 ### Engines (`hypnos-backends`)
 
 - `llama.rs`: `ggml_llama`. Text, vision, audio-in (via mtmd), embeddings, tool calling (`tools.rs`:

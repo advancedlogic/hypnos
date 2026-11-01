@@ -457,6 +457,13 @@ fn finish(best: Scored, req: &AdvisorRequest, b: &Budgets) -> Advice {
         let small = p.cfg.total_weight_bytes < GIB;
         let (initial_tier, priority, mut keep_warm) = if mods.contains(&Modality::ImageGeneration) {
             (MemoryTier::Tier3NvmeSsd, ModelPriority::Low, false)
+        } else if p.cfg.runs_on_cpu() && p.is_interactive() {
+            // Kokoro: someone waits for it; loaded (in RAM) from the start and kept.
+            (
+                MemoryTier::Tier1GpuVram,
+                ModelPriority::RealtimePinned,
+                false,
+            )
         } else if p.cfg.runs_on_cpu() {
             (MemoryTier::Tier3NvmeSsd, ModelPriority::Normal, false)
         } else if p.is_interactive() && small {

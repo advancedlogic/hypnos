@@ -168,7 +168,7 @@ priority = "high"
 default_context_len = 16384
 kv_dtype = "q8_0"
 non_layer_overhead_bytes = 671088640    # token embeddings + vision tower
-activation_workspace_bytes = 805306368
+activation_workspace_bytes = 1879048192 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
 
 # -----------------------------------------------------------------------------
 # 3. LFM3-Audio 2B (Q8_0) — Audio / Speech-to-Text (/v1/audio/transcriptions) + Chat
@@ -192,7 +192,7 @@ priority = "high"
 default_context_len = 8192
 kv_dtype = "q8_0"
 non_layer_overhead_bytes = 838860800    # token embeddings + audio encoder
-activation_workspace_bytes = 536870912
+activation_workspace_bytes = 1610612736 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
 
 # -----------------------------------------------------------------------------
 # 4. Kokoro 82M (fp32 ONNX) — Text-to-Speech (/v1/audio/speech)
@@ -205,6 +205,7 @@ activation_workspace_bytes = 536870912
 id = "kokoro-82m-q4"
 modality = "text_to_speech"
 engine = "onnx_runtime"
+device = "cpu"                          # runs on the CPU (PreferCPU): booked in RAM, not VRAM (TEST-3)
 # fp32 graph (onnx-community/Kokoro-82M-v1.0-ONNX, onnx/model.onnx). The fp16 graph overflows to an
 # all-NaN waveform for some voice/text pairs on Apple Silicon (16 of 110 in a scan) and is slower.
 weights_path = "kokoro/model.onnx"
@@ -282,7 +283,7 @@ default_context_len = 512
 max_context_len = 1024
 kv_dtype = "f16"
 non_layer_overhead_bytes = 6442450944   # text encoder + VAE are not block-splittable
-activation_workspace_bytes = 3221225472
+activation_workspace_bytes = 6174015488 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
 
 # -----------------------------------------------------------------------------
 # 7. docling — Document conversion (/v1/documents/convert): PDFs, images, DOCX/PPTX/XLSX, HTML

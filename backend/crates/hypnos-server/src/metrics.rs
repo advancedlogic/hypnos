@@ -402,6 +402,24 @@ impl Metrics {
             "hypnos_vram_bytes{{kind=\"unaccounted\"}} {}",
             status.tier1_vram_unaccounted_bytes
         );
+        // Booked vs real (TEST-3): the planner's estimates are not OS limits; a held figure well
+        // above the booked one means some engine needs more than its booking says.
+        let _ = writeln!(
+            out,
+            "# HELP hypnos_memory_bytes What the planner booked (Tier 1 + Tier 2) and what the process really holds (footprint, and held = footprint plus weights mapped into Metal)."
+        );
+        let _ = writeln!(out, "# TYPE hypnos_memory_bytes gauge");
+        let _ = writeln!(
+            out,
+            "hypnos_memory_bytes{{kind=\"booked\"}} {}",
+            status.tier1_vram_used_bytes + status.tier2_pinned_ram_used_bytes
+        );
+        if let Some(v) = status.process_footprint_bytes {
+            let _ = writeln!(out, "hypnos_memory_bytes{{kind=\"footprint\"}} {v}");
+        }
+        if let Some(v) = status.process_memory_bytes {
+            let _ = writeln!(out, "hypnos_memory_bytes{{kind=\"held\"}} {v}");
+        }
         if let Some(gpu) = &status.gpu {
             let _ = writeln!(
                 out,

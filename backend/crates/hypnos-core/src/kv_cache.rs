@@ -67,6 +67,49 @@ impl KvCacheEstimator {
         let elements_per_token_per_layer =
             2u64 * (model.arch.num_kv_heads as u64) * (model.arch.head_dim as u64);
 
+        // The exact layout (TEST-3): full-context layers, and sliding-window layers whose cache
+        // llama.cpp sizes as the window plus one micro-batch, padded to 256 cells (2048-token
+        // micro-batches with a vision / audio projector, 512 otherwise; see engine.rs).
+        if let (Some(global), Some(swa)) = (model.arch.global_kv_layers, model.arch.swa_kv_layers) {
+            let total = model.arch.num_layers.max(1) as u64;
+            let share =
+                |n: u32| (n as u64 * layers.min(model.arch.num_layers) as u64).div_ceil(total);
+            let ubatch: u64 = if model.aux_weights_path.is_some() {
+                2048
+            } else {
+                512
+            };
+            let swa_tokens = model
+                .arch
+                .sliding_window_len
+                .map(|w| (w as u64 + ubatch).div_ceil(256) * 256)
+                .unwrap_or(context_len as u64)
+                .min(context_len as u64);
+            let swa_per_token = 2u64
+                * model
+                    .arch
+                    .swa_num_kv_heads
+                    .unwrap_or(model.arch.num_kv_heads) as u64
+                * model.arch.swa_head_dim.unwrap_or(model.arch.head_dim) as u64;
+            let global_per_token = 2u64
+                * model
+                    .arch
+                    .global_num_kv_heads
+                    .unwrap_or(model.arch.num_kv_heads) as u64
+                * model.arch.head_dim as u64;
+            let elements = global_per_token
+                .saturating_mul(share(global))
+                .saturating_mul(context_len as u64)
+                .saturating_add(
+                    swa_per_token
+                        .saturating_mul(share(swa))
+                        .saturating_mul(swa_tokens),
+                )
+                .saturating_mul(batch_size.max(1) as u64)
+                .saturating_mul(model.slots.max(1) as u64);
+            return ((elements as f64) * model.arch.kv_dtype.bytes_per_element()).ceil() as u64;
+        }
+
         let total_layer_tokens: u64 = match (
             model.arch.sliding_window_len,
             model.arch.global_attn_every_n_layers,
@@ -266,6 +309,46 @@ impl KvCacheEstimator {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_exact_layout_books_only_the_layers_that_hold_a_cache() {
+        // LFM3 1.7B: 24 layers, 6 full-attention + 5 sliding-window (window 256) with 4 KV heads
+        // x 128, the other 13 convolution layers without a KV cache.
+        let mut m = ModelConfig {
+            slots: 1,
+            ..sample_gemma4_26b_config()
+        };
+        m.aux_weights_path = None;
+        m.arch.num_layers = 24;
+        m.arch.num_kv_heads = 4;
+        m.arch.head_dim = 128;
+        m.arch.sliding_window_len = Some(256);
+        m.arch.global_attn_every_n_layers = Some(1);
+        m.arch.kv_dtype = crate::config::KvDataType::F16;
+        let all_layers = KvCacheEstimator::kv_bytes_for_layers(&m, 24, 16384, 1);
+        assert_eq!(
+            all_layers,
+            2 * 4 * 128 * 24 * 16384 * 2,
+            "old: every layer, full context"
+        );
+        m.arch.global_kv_layers = Some(6);
+        m.arch.global_num_kv_heads = Some(4);
+        m.arch.swa_kv_layers = Some(5);
+        m.arch.swa_num_kv_heads = Some(4);
+        m.arch.swa_head_dim = Some(128);
+        // Text-only: the window plus a 512-token micro-batch, padded to 256 cells = 768.
+        let exact = KvCacheEstimator::kv_bytes_for_layers(&m, 24, 16384, 1);
+        assert_eq!(exact, 2 * 4 * 128 * (6 * 16384 + 5 * 768) * 2);
+        assert!(exact * 3 < all_layers);
+        // With a projector the micro-batch is 2048 tokens: 2304 cells per sliding layer.
+        m.aux_weights_path = Some("mmproj.gguf".into());
+        let mm = KvCacheEstimator::kv_bytes_for_layers(&m, 24, 16384, 1);
+        assert_eq!(mm, 2 * 4 * 128 * (6 * 16384 + 5 * 2304) * 2);
+        // Half the layers on the GPU: half of each kind (rounded up).
+        let half = KvCacheEstimator::kv_bytes_for_layers(&m, 12, 16384, 1);
+        assert_eq!(half, 2 * 4 * 128 * (3 * 16384 + 3 * 2304) * 2);
+    }
+
     use super::*;
     use crate::config::{EngineKind, KvDataType, Modality, ModelArchitectureParams, ModelPriority};
     use std::path::PathBuf;
@@ -304,6 +387,11 @@ mod tests {
                 non_layer_overhead_bytes: 1200 * 1024 * 1024,
                 activation_workspace_bytes: 512 * 1024 * 1024,
                 expert_bytes: 0,
+                global_kv_layers: None,
+                global_num_kv_heads: None,
+                swa_kv_layers: None,
+                swa_num_kv_heads: None,
+                swa_head_dim: None,
                 configured_keys: None,
             },
         }

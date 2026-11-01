@@ -37,6 +37,13 @@ machine with the default lineup, 24 GiB for the two chat models (with projectors
 **Tier 3 (NVMe)** is the file. Promotion from Tier 3 reads it through the OS page cache: 4.6 s for
 the 26B on this laptop when the cache is warm, disk speed when it is not.
 
+The bookings are estimates, not limits the OS enforces. `hypnos measure-memory hypnos.toml
+[--models a,b] --out report.md` loads each model alone, runs one request of its kind and reports
+booked against real memory per model (`docs/bench/memory-2026-11-01.md`, Apple Silicon); run it on
+a new machine or after adding a model, and raise `activation_workspace_bytes` where real is above
+booked. At runtime `/metrics` has `hypnos_memory_bytes{kind="booked"|"footprint"|"held"}`: alert
+when held stays well above booked.
+
 Three startup sanity checks: `hypnos --check-config hypnos.toml` validates the file without
 starting; the first lines of the log print the detected device, the budgets and every model's
 booking; `/v1/memory/status` right after `/ready` shows the pre-staged models in their tiers.
