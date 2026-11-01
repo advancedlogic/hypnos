@@ -367,7 +367,8 @@ default working set and a 4 GiB OS reserve on unified memory; VRAM minus 512 MiB
 most half the RAM, on a discrete GPU), and every candidate model is placed with the scheduler's own
 planner (catalog `estimate` values stand in for what the GGUF reports). All combinations of catalog
 models and variants serving the needs are tried; a lineup scores for the size of the model doing
-each need, for keeping the interactive models (chat, vision, speech, embeddings) resident together
+each need (its parameter count, estimated from the weights file and the quantization;
+transcription counts half, since its accuracy levels off early), for keeping the interactive models (chat, vision, speech, embeddings) resident together
 (trying one slot and 8k context on the chat models when that is what makes them fit, and
 Mixture-of-Experts offload on a discrete GPU), and against models that only partly fit the GPU.
 `serves` lists the needs a model is the lineup's choice for. `load_secs_*` are rough (3 GB/s).

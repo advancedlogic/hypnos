@@ -231,8 +231,8 @@ The mock server's pool makes mock engines without file checks (`ModelPool::with_
 Advisor (API-12): `hypnos-memory/src/advisor.rs` recommends a lineup from the catalog for a
 machine (VRAM / RAM / unified) and needs. Budgets as `detect` derives them; each candidate placed
 with `KvCacheEstimator::compute_optimal_placement`; catalog `[models.estimate]` stands in for the
-GGUF values (`CatalogEntry::model_config`). Exhaustive over entries x variants; scores model size
-per need, interactive co-residency (tries 1 slot / 8k context, MoE offload on discrete GPUs), minus
+GGUF values (`CatalogEntry::model_config`). Exhaustive over entries x variants; scores model parameters
+(weights bytes / the quant's bits per weight) per need, transcription at half weight, interactive co-residency (tries 1 slot / 8k context, MoE offload on discrete GPUs), minus
 partial GPU fits and extra models; every model must be the lineup's largest for some need.
 `hypnos advise ...` (CLI) and `POST /v1/advisor` (`hypnos-server/src/catalog.rs`). CPU models
 are sized against RAM after the OS reserve (`Budgets::host_bytes`), not the warm-memory budget.
@@ -286,7 +286,9 @@ remote fetches go through `media.rs` `PublicOnly` (no loopback / private / link-
 ### Engines (`hypnos-backends`)
 
 - `llama.rs`: `ggml_llama`. Text, vision, audio-in (via mtmd), embeddings, tool calling (`tools.rs`:
-  Gemma 4's native format, rendered by `gemma4_prompt` as its GGUF template does; with tools the
+  Gemma 4's native format, rendered by `gemma4_prompt` as its GGUF template does, with
+  `Gemma4Template` read from the template text for the variants in circulation: an empty
+  thought block when thinking is off (12B / 26B / 31B), text before tool calls (Nemotron Bolt); with tools the
   engine passes `<|tool_call>` / `<tool_call|>` / `<|"|>` through and stops at `<|tool_response>`,
   and a `CallParser` turns the raw text into OpenAI `tool_calls`; `tool_choice` required / named
   is forced by prefilling the call's opening; other architectures refuse `tools` with 400).

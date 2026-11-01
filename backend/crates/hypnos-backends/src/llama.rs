@@ -224,12 +224,14 @@ pub(crate) fn load_model(
 /// spans. `<bos>` is added by the tokenizer (`add_special`). With `tools`, the declarations close
 /// the system turn and past calls and their results sit in the model's turn (see `tools.rs`);
 /// `prefill` is appended after the generation prompt (a forced tool call's opening).
+/// `variant` holds the differences between the Gemma 4 templates in circulation.
 fn gemma4_prompt(
     messages: &[ChatMessage],
     marker: &str,
     think: bool,
     tools: &[ToolSpec],
     prefill: &str,
+    variant: Gemma4Template,
 ) -> String {
     let mut out = String::new();
     let system_text: Vec<String> = messages
@@ -270,6 +272,12 @@ fn gemma4_prompt(
             out.push('\n');
         }
         let calls = m.tool_calls.as_deref().unwrap_or(&[]);
+        let content = m.content.render_with_media_marker(marker);
+        let content = content.trim();
+        let content_first = variant.content_before_calls && role == "model" && !calls.is_empty();
+        if content_first {
+            out.push_str(content);
+        }
         for call in calls {
             out.push_str(&crate::tools::call_text(call));
         }
@@ -290,9 +298,9 @@ fn gemma4_prompt(
                 answered = true;
             }
         }
-        let content = m.content.render_with_media_marker(marker);
-        let content = content.trim();
-        out.push_str(content);
+        if !content_first {
+            out.push_str(content);
+        }
         let next_role = turns[i + 1..]
             .iter()
             .find(|f| f.role != "tool")
@@ -312,6 +320,9 @@ fn gemma4_prompt(
     }
     if !ended_on_results {
         out.push_str("<|turn>model\n");
+        if variant.empty_thought && !think {
+            out.push_str(GEMMA4_EMPTY_THOUGHT);
+        }
     }
     out.push_str(prefill);
     out
@@ -378,6 +389,41 @@ fn lfm3_prompt(messages: &[ChatMessage], marker: &str, think: Option<bool>) -> S
     out
 }
 
+/// What a Gemma 4 template writes after `<|turn>model\n` when thinking is off, if it does.
+const GEMMA4_EMPTY_THOUGHT: &str = "<|channel>thought\n<channel|>";
+
+/// How a Gemma 4 GGUF's template differs from the E4B one `gemma4_prompt` was written against,
+/// read from the template text itself (ENG-5).
+#[derive(Debug, Clone, Copy, Default)]
+struct Gemma4Template {
+    /// An empty thought block after `<|turn>model\n` when thinking is off (12B, 26B, 31B).
+    empty_thought: bool,
+    /// An assistant message's text before its tool calls rather than after their results
+    /// (NVIDIA Nemotron 3.5 Bolt).
+    content_before_calls: bool,
+}
+
+impl Gemma4Template {
+    fn of(model: &LlamaModel) -> Self {
+        Self {
+            empty_thought: template_has(model, "'<|channel>thought\\n<channel|>'"),
+            content_before_calls: template_has(
+                model,
+                "OpenAI assistant content before its tool calls",
+            ),
+        }
+    }
+}
+
+/// Whether the model's GGUF template contains `literal` (a Jinja string, so `\n` as written).
+fn template_has(model: &LlamaModel, literal: &str) -> bool {
+    model
+        .chat_template(None)
+        .ok()
+        .and_then(|t| t.to_str().ok().map(|t| t.contains(literal)))
+        .unwrap_or(false)
+}
+
 /// Whether the model's native tool format is implemented (Gemma 4, `tools.rs`).
 pub(crate) fn supports_tools(arch: &str) -> bool {
     arch.starts_with("gemma4")
@@ -395,15 +441,12 @@ pub(crate) fn build_prompt(
     prefill: &str,
 ) -> String {
     if supports_tools(arch) || arch.starts_with("gemma-embedding") {
-        return gemma4_prompt(messages, marker, think, tools, prefill);
+        let variant = Gemma4Template::of(model);
+        return gemma4_prompt(messages, marker, think, tools, prefill, variant);
     }
     if arch == "lfm3" {
         // The chat models' template has a thinking switch; the audio model's has none.
-        let thinks = model
-            .chat_template(None)
-            .ok()
-            .and_then(|t| t.to_str().ok().map(|t| t.contains("enable_thinking")))
-            .unwrap_or(false);
+        let thinks = template_has(model, "enable_thinking");
         return lfm3_prompt(messages, marker, thinks.then_some(think));
     }
     if let Ok(tmpl) = model.chat_template(None) {
@@ -1069,7 +1112,9 @@ impl ModelBackend for GgmlLlamaBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{cpu_expert_pattern, gemma4_prompt, lfm3_prompt, transcription_messages};
+    use super::{
+        cpu_expert_pattern, gemma4_prompt, lfm3_prompt, transcription_messages, Gemma4Template,
+    };
 
     #[test]
     fn lfm3_renders_like_its_chat_template() {
@@ -1183,6 +1228,10 @@ mod tests {
             false,
             std::slice::from_ref(&tool),
             "",
+            Gemma4Template {
+                empty_thought: true,
+                ..Default::default()
+            },
         );
         assert_eq!(
             prompt,
@@ -1195,10 +1244,92 @@ mod tests {
         let mut later = messages.clone();
         later.push(msg("assistant", "It is 18 C."));
         later.push(msg("user", "Thanks"));
-        let prompt = gemma4_prompt(&later, "<__media__>", false, &[tool], "<|tool_call>call:");
+        let prompt = gemma4_prompt(
+            &later,
+            "<__media__>",
+            false,
+            &[tool],
+            "<|tool_call>call:",
+            Gemma4Template::default(),
+        );
         assert!(prompt.contains("<tool_response|>It is 18 C.<turn|>\n<|turn>user\nThanks<turn|>\n<|turn>model\n<|tool_call>call:"));
         // Without tools nothing changes for an ordinary chat.
-        let plain = gemma4_prompt(&[msg("user", "Hi")], "<__media__>", false, &[], "");
+        let plain = gemma4_prompt(
+            &[msg("user", "Hi")],
+            "<__media__>",
+            false,
+            &[],
+            "",
+            Gemma4Template::default(),
+        );
         assert_eq!(plain, "<|turn>user\nHi<turn|>\n<|turn>model\n");
+    }
+
+    /// The 12B / 26B / 31B templates close an empty thought block on the model's turn when thinking
+    /// is off (E2B / E4B do not); never after tool results, never with thinking on.
+    #[test]
+    fn gemma4_empty_thought_block_when_the_template_has_one() {
+        let hi = [msg("user", "Hi")];
+        let t = Gemma4Template {
+            empty_thought: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            gemma4_prompt(&hi, "<__media__>", false, &[], "", t),
+            "<|turn>user\nHi<turn|>\n<|turn>model\n<|channel>thought\n<channel|>"
+        );
+        assert_eq!(
+            gemma4_prompt(&hi, "<__media__>", true, &[], "", t),
+            "<|turn>system\n<|think|>\n<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n"
+        );
+        // The forced tool-call opening follows the empty block.
+        assert!(
+            gemma4_prompt(&hi, "<__media__>", false, &[], "<|tool_call>call:", t)
+                .ends_with("<|turn>model\n<|channel>thought\n<channel|><|tool_call>call:")
+        );
+    }
+
+    /// Nemotron 3.5 Bolt's template writes an assistant message's text before its tool calls.
+    #[test]
+    fn bolt_puts_assistant_text_before_its_tool_calls() {
+        let mut call = msg("assistant", "Let me check.");
+        call.tool_calls = Some(vec![ToolCall {
+            id: "c1".into(),
+            kind: "function".into(),
+            function: FunctionCall {
+                name: "get_weather".into(),
+                arguments: r#"{"city":"Paris"}"#.into(),
+            },
+        }]);
+        let mut result = msg("tool", "18 C");
+        result.tool_call_id = Some("c1".into());
+        let messages = [msg("user", "Weather?"), call, result];
+        let render = |content_before_calls| {
+            gemma4_prompt(
+                &messages,
+                "<__media__>",
+                false,
+                &[],
+                "",
+                Gemma4Template {
+                    content_before_calls,
+                    ..Default::default()
+                },
+            )
+        };
+        let bolt = render(true);
+        assert!(
+            bolt.contains("<|turn>model\nLet me check.<|tool_call>call:get_weather"),
+            "{bolt}"
+        );
+        assert!(
+            bolt.ends_with("<tool_response|><turn|>\n<|turn>model\n"),
+            "{bolt}"
+        );
+        let gemma = render(false);
+        assert!(
+            gemma.contains("<tool_response|>Let me check.<turn|>"),
+            "{gemma}"
+        );
     }
 }

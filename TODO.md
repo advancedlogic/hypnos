@@ -107,13 +107,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       probably makes llama.cpp b11982 re-capture its CUDA graph every step again. Check with the
       graph counters / `GGML_CUDA_DISABLE_GRAPHS`, try 2 slots and 4 x 8k, and ship the shape that
       batches well (on Metal 4 slots gave 1.43x).
-- [ ] 🟩 **ENG-5** `P1` Catalog: the other Gemma 4 sizes, Nemotron 3.5 Bolt E4B, LFM3-Omni 2B
-      Architectures Hypnos already runs (`gemma4`, `lfm3`), so catalog entries + `[models.estimate]`
-      + a smoke run each: `ggml-org/gemma-4-E2B-it-GGUF` (2.8 GB Q4_0, vision + audio in),
-      `gemma-4-12B-it` (7.2 GB, vision), `gemma-4-31B-it` (18 GB, vision),
-      `NVIDIA-Nemotron-3.5-Bolt-E4B-GGUF` (gemma4 arch, text, 8 GB Q8; check its template matches
-      `gemma4_prompt`), `LFM3-Omni-2B-GGUF` (1.1 GB, text + vision + audio in, LFM 1.0 license).
-      Measure `activation_workspace_bytes` with `hypnos measure-memory` (TEST-3).
 - [ ] 🟩 **ENG-6** `P1` Qwen chat format: Qwen 3.5 / 3.6 / 3.8 and the models built on them
       One renderer (`qwen_prompt`: ChatML, `<think>` thinking with the budget/close logic of
       `lfm3_prompt`, Qwen's `<tool_call>` JSON tool format in `tools.rs`, vision markers) and
@@ -160,6 +153,21 @@ _No cards yet._
 
 ## Done
 
+- [x] 🟩 **ENG-5** `P1` Catalog: the other Gemma 4 sizes, Nemotron 3.5 Bolt E4B, LFM3-Omni 2B
+      Architectures Hypnos already runs (`gemma4`, `lfm3`), so catalog entries + `[models.estimate]`
+      + a smoke run each: `ggml-org/gemma-4-E2B-it-GGUF` (2.8 GB Q4_0, vision + audio in),
+      `gemma-4-12B-it` (7.2 GB, vision), `gemma-4-31B-it` (18 GB, vision),
+      `NVIDIA-Nemotron-3.5-Bolt-E4B-GGUF` (gemma4 arch, text, 8 GB Q8; check its template matches
+      `gemma4_prompt`), `LFM3-Omni-2B-GGUF` (1.1 GB, text + vision + audio in, LFM 1.0 license).
+      Measure `activation_workspace_bytes` with `hypnos measure-memory` (TEST-3).
+      Done: entries for all five, each tested on the M5 Max (chat, thinking, vision, tools,
+      transcription where it hears) and measured (`docs/bench/memory-2026-11-01.md`). The 12B /
+      26B / 31B templates close an empty thought block when thinking is off and Bolt's puts text
+      before tool calls: `Gemma4Template`, read from the GGUF template, renders both (this also
+      corrects the lineup's 26B with thinking off). LFM3-Omni is non-reasoning (no `thinking`
+      capability). The advisor now scores parameters (bytes / bits per weight) instead of file
+      size, with transcription at half weight: it picks the 31B on large Macs, which is slower
+      than the 26B MoE (speed is not scored).
 - [x] ⬛ **BUILD-11** `P1` Cut the release workflow from ~3 h to under 1 h
       v0.4.0's release run took 3h09m: Windows CUDA 2h44m, Linux CUDA 1h42m, Docker 2h31m (it
       compiles the CUDA server again and only starts after CI); the CI checks finish in ~25 min.

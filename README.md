@@ -234,8 +234,9 @@ print(client.chat.completions.create(
 ## Bring your own models
 
 The quickest way is the catalog (`backend/models.catalog.toml`): the default lineup plus other
-models Hypnos has been tested with (Liquid AI's LFM3 text, vision and audio models), each in
-several quantizations.
+models Hypnos has been tested with (the other Gemma 4 sizes E2B, 12B and 31B, NVIDIA's Nemotron
+3.5 Bolt E4B, and Liquid AI's LFM3 text, vision, audio and omni models), each in several
+quantizations.
 
 ```bash
 hypnos advise --needs chat,voice,documents             # this machine; or --vram 24G --ram 64G, --unified --ram 32G

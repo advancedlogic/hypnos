@@ -17,7 +17,7 @@
 
 use std::collections::BTreeSet;
 
-use hypnos_core::catalog::{CatalogEntry, CatalogVariant, ModelCatalog};
+use hypnos_core::catalog::{CatalogEntry, CatalogVariant, FileRole, ModelCatalog};
 use hypnos_core::config::{MemoryTier, Modality, ModelConfig, ModelPriority, MoeOffload};
 use hypnos_core::kv_cache::{KvCacheEstimator, LayerPlacementPlan};
 use serde::{Deserialize, Serialize};
@@ -195,7 +195,42 @@ struct Pick<'a> {
     plan: LayerPlacementPlan,
 }
 
+/// Bits per weight of a quantization, for turning a file size back into a parameter count.
+fn bits_per_weight(quant: &str) -> f64 {
+    let q = quant.to_ascii_uppercase();
+    match q.as_str() {
+        _ if q.starts_with("Q4_0") || q.starts_with("Q4_1") => 4.5,
+        _ if q.starts_with("Q4_K") || q.starts_with("IQ4") => 4.85,
+        _ if q.starts_with("Q5") => 5.7,
+        _ if q.starts_with("Q6") => 6.56,
+        _ if q.starts_with("Q8") || q == "INT8" => 8.5,
+        _ if q.starts_with("Q3") => 3.9,
+        _ if q.starts_with("Q2") => 2.9,
+        "FP32" | "F32" => 32.0,
+        _ => 16.0, // BF16, F16, FP16
+    }
+}
+
 impl Pick<'_> {
+    /// Approximate parameters in billions, from the weights file(s) and the quantization: the
+    /// stand-in for answer quality. File size alone would rank a 12B at Q8 next to a 26B at Q4
+    /// and count projectors and encoders, which are the same size in every variant.
+    fn params_b(&self) -> f64 {
+        let weights: u64 = self
+            .variant
+            .files
+            .iter()
+            .filter(|f| f.role == FileRole::Weights)
+            .map(|f| f.size)
+            .sum();
+        let bytes = if weights > 0 {
+            weights
+        } else {
+            self.cfg.total_weight_bytes
+        };
+        bytes as f64 * 8.0 / bits_per_weight(&self.variant.quant) / 1e9
+    }
+
     fn modalities(&self) -> Vec<Modality> {
         let mut m = vec![self.entry.modality];
         m.extend(self.entry.additional_modalities.iter().copied());
@@ -282,16 +317,22 @@ fn score<'a>(picks: Vec<Pick<'a>>, needed: &BTreeSet<ModalityKey>, b: &Budgets) 
         .map(Pick::resident_bytes)
         .sum();
     let coresident = interactive_bytes <= b.tier1_bytes;
-    let gb = |bytes: u64| bytes as f64 / GIB as f64;
-    // Each needed modality counts the largest model serving it.
+    // Each needed modality counts the largest model (in parameters) serving it. Transcription
+    // counts half: its accuracy levels off with size (E2B transcribes as well as the 12B), so a
+    // model that also hears must not outrank a stronger chat model next to a small listener.
     let quality: f64 = needed
         .iter()
         .map(|m| {
             picks
                 .iter()
                 .filter(|p| p.modalities().iter().any(|x| ModalityKey(*x) == *m))
-                .map(|p| (gb(p.cfg.total_weight_bytes) + 1.0).ln() * 10.0)
+                .map(|p| (p.params_b() + 1.0).ln() * 10.0)
                 .fold(0.0, f64::max)
+                * if m.0 == Modality::SpeechToText {
+                    0.5
+                } else {
+                    1.0
+                }
         })
         .sum();
     let any_interactive = picks.iter().any(Pick::is_interactive);
@@ -753,7 +794,11 @@ mod tests {
     fn a_large_machine_gets_the_largest_chat_model() {
         let a = ask(0, 128, true, &[Need::Chat, Need::Images]).unwrap();
         covers(&a, &[Need::Chat, Need::Images]);
-        assert!(a.models.iter().any(|m| m.id == "gemma4:26b-q4"));
+        assert!(
+            a.models.iter().any(|m| m.id == "gemma4:31b-q4"),
+            "{:?}",
+            a.models.iter().map(|m| &m.id).collect::<Vec<_>>()
+        );
         let image = a
             .models
             .iter()

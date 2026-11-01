@@ -279,6 +279,264 @@ files = [
   { role = "aux", repo = "LiquidAI/LFM3-Audio-2B-GGUF", remote = "mmproj-LFM3-Audio-2B-Q8_0.gguf", local = "mmproj-LFM3-Audio-2B-Q8_0.gguf", size = 303811840 },
 ]
 
+[[models]]
+id = "gemma4:e2b-q4"
+name = "Gemma 4 E2B"
+publisher = "Google"
+license = "apache-2.0"
+architecture = "gemma4"
+modality = "speech_to_text"
+additional_modalities = ["text_generation", "vision"]
+engine = "ggml_llama"
+capabilities = ["thinking", "tools"]
+summary = "The smallest Gemma 4: hears, sees and chats on machines with little memory."
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+slots = 4
+
+[models.config.arch]
+default_context_len = 8192
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 1342177280
+activation_workspace_bytes = 1342177280 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 35
+num_kv_heads = 1
+head_dim = 512
+max_context_len = 131072
+sliding_window_len = 512
+global_attn_every_n_layers = 5
+global_kv_layers = 7
+global_num_kv_heads = 1
+swa_kv_layers = 28
+swa_num_kv_heads = 1
+swa_head_dim = 256
+
+[[models.variants]]
+quant = "Q4_0"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/gemma-4-E2B-it-GGUF", remote = "gemma-4-E2B-it-Q4_0.gguf", local = "gemma-4-E2B-it-Q4_0.gguf", size = 2841481184 },
+  { role = "aux", repo = "ggml-org/gemma-4-E2B-it-GGUF", remote = "mmproj-gemma-4-E2B-it-BF16.gguf", local = "mmproj-gemma-4-E2B-it-BF16.gguf", size = 986833664 },
+]
+
+[[models.variants]]
+quant = "Q8_0"
+note = "Larger and a little more accurate, with a Q8_0 projector."
+files = [
+  { role = "weights", repo = "ggml-org/gemma-4-E2B-it-GGUF", remote = "gemma-4-E2B-it-Q8_0.gguf", local = "gemma-4-E2B-it-Q8_0.gguf", size = 4967497152 },
+  { role = "aux", repo = "ggml-org/gemma-4-E2B-it-GGUF", remote = "mmproj-gemma-4-E2B-it-Q8_0.gguf", local = "mmproj-gemma-4-E2B-it-Q8_0.gguf", size = 557368064 },
+]
+
+[[models]]
+id = "gemma4:12b-q4"
+name = "Gemma 4 12B"
+publisher = "Google"
+license = "apache-2.0"
+architecture = "gemma4"
+modality = "text_generation"
+additional_modalities = ["vision", "speech_to_text"]
+engine = "ggml_llama"
+capabilities = ["thinking", "tools"]
+summary = "Dense mid-size Gemma 4 that also sees and hears: stronger than E4B, lighter than the 26B."
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+slots = 3
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 1610612736
+activation_workspace_bytes = 2818572288 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 48
+num_kv_heads = 8
+head_dim = 512
+max_context_len = 262144
+sliding_window_len = 1024
+global_attn_every_n_layers = 6
+global_kv_layers = 8
+global_num_kv_heads = 1
+swa_kv_layers = 40
+swa_num_kv_heads = 8
+swa_head_dim = 256
+
+[[models.variants]]
+quant = "Q4_0"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/gemma-4-12B-it-GGUF", remote = "gemma-4-12B-it-Q4_0.gguf", local = "gemma-4-12B-it-Q4_0.gguf", size = 7219673216 },
+  { role = "aux", repo = "ggml-org/gemma-4-12B-it-GGUF", remote = "mmproj-gemma-4-12B-it-BF16.gguf", local = "mmproj-gemma-4-12B-it-BF16.gguf", size = 175115648 },
+]
+
+[[models.variants]]
+quant = "Q8_0"
+note = "Near-lossless; needs about 13 GB for the weights."
+files = [
+  { role = "weights", repo = "ggml-org/gemma-4-12B-it-GGUF", remote = "gemma-4-12B-it-Q8_0.gguf", local = "gemma-4-12B-it-Q8_0.gguf", size = 12669641920 },
+  { role = "aux", repo = "ggml-org/gemma-4-12B-it-GGUF", remote = "mmproj-gemma-4-12B-it-Q8_0.gguf", local = "mmproj-gemma-4-12B-it-Q8_0.gguf", size = 158987648 },
+]
+
+[[models]]
+id = "gemma4:31b-q4"
+name = "Gemma 4 31B"
+publisher = "Google"
+license = "apache-2.0"
+architecture = "gemma4"
+modality = "text_generation"
+additional_modalities = ["vision"]
+engine = "ggml_llama"
+capabilities = ["thinking", "tools"]
+summary = "The largest dense Gemma 4: the strongest Gemma answers and image understanding, for machines with 32 GB or more."
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = true
+priority = "high"
+slots = 2
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 2415919104
+activation_workspace_bytes = 3221225472 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 60
+num_kv_heads = 16
+head_dim = 512
+max_context_len = 262144
+sliding_window_len = 1024
+global_attn_every_n_layers = 6
+global_kv_layers = 10
+global_num_kv_heads = 4
+swa_kv_layers = 50
+swa_num_kv_heads = 16
+swa_head_dim = 256
+
+[[models.variants]]
+quant = "Q4_0"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/gemma-4-31B-it-GGUF", remote = "gemma-4-31B-it-Q4_0.gguf", local = "gemma-4-31B-it-Q4_0.gguf", size = 17992313088 },
+  { role = "aux", repo = "ggml-org/gemma-4-31B-it-GGUF", remote = "mmproj-gemma-4-31B-it-BF16.gguf", local = "mmproj-gemma-4-31B-it-BF16.gguf", size = 1200726368 },
+]
+
+[[models.variants]]
+quant = "Q8_0"
+note = "Near-lossless; needs about 33 GB for the weights."
+files = [
+  { role = "weights", repo = "ggml-org/gemma-4-31B-it-GGUF", remote = "gemma-4-31B-it-Q8_0.gguf", local = "gemma-4-31B-it-Q8_0.gguf", size = 32635676896 },
+  { role = "aux", repo = "ggml-org/gemma-4-31B-it-GGUF", remote = "mmproj-gemma-4-31B-it-Q8_0.gguf", local = "mmproj-gemma-4-31B-it-Q8_0.gguf", size = 809541728 },
+]
+
+[[models]]
+id = "nemotron3.5-bolt:e4b"
+name = "NVIDIA Nemotron 3.5 Bolt E4B"
+publisher = "NVIDIA"
+license = "apache-2.0"
+architecture = "gemma4"
+modality = "text_generation"
+engine = "ggml_llama"
+capabilities = ["thinking", "tools"]
+summary = "NVIDIA's text-only post-training of Gemma 4 E4B: quick chat and tool use, 64k context."
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+slots = 4
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 1610612736
+activation_workspace_bytes = 805306368
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 42
+num_kv_heads = 2
+head_dim = 512
+max_context_len = 65536
+sliding_window_len = 512
+global_attn_every_n_layers = 6
+global_kv_layers = 7
+global_num_kv_heads = 2
+swa_kv_layers = 35
+swa_num_kv_heads = 2
+swa_head_dim = 256
+
+[[models.variants]]
+quant = "Q8_0"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/NVIDIA-Nemotron-3.5-Bolt-E4B-GGUF", remote = "NVIDIA-Nemotron-3.5-Bolt-E4B-Q8_0.gguf", local = "NVIDIA-Nemotron-3.5-Bolt-E4B-Q8_0.gguf", size = 8031245312 },
+]
+
+[[models]]
+id = "lfm3-omni:2b"
+name = "LFM3-Omni 2B"
+publisher = "Liquid AI"
+license = "lfm1.0"
+architecture = "lfm3"
+modality = "text_generation"
+additional_modalities = ["vision", "speech_to_text"]
+engine = "ggml_llama"
+summary = "One small model for text, images and audio in: chat, image questions and transcription (no thinking: a non-reasoning model)."
+
+[models.config]
+min_gpu_layer_ratio = 1.0
+initial_tier = "tier2_pinned_ram"
+keep_warm_in_ram = true
+priority = "high"
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 838860800
+activation_workspace_bytes = 2147483648 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 24
+num_kv_heads = 4
+head_dim = 128
+max_context_len = 128000
+sliding_window_len = 256
+global_attn_every_n_layers = 1
+global_kv_layers = 6
+global_num_kv_heads = 4
+swa_kv_layers = 5
+swa_num_kv_heads = 4
+swa_head_dim = 128
+
+[[models.variants]]
+quant = "Q8_0"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/LFM3-Omni-2B-GGUF", remote = "LFM3-Omni-2B-Q8_0.gguf", local = "LFM3-Omni-2B-Q8_0.gguf", size = 1846240736 },
+  { role = "aux", repo = "ggml-org/LFM3-Omni-2B-GGUF", remote = "mmproj-LFM3-Omni-2B-BF16.gguf", local = "mmproj-LFM3-Omni-2B-BF16.gguf", size = 949841152 },
+]
+
+[[models.variants]]
+quant = "Q4_K_M"
+note = "Smaller weights and a Q8_0 projector."
+files = [
+  { role = "weights", repo = "ggml-org/LFM3-Omni-2B-GGUF", remote = "LFM3-Omni-2B-Q4_K_M.gguf", local = "LFM3-Omni-2B-Q4_K_M.gguf", size = 1099630048 },
+  { role = "aux", repo = "ggml-org/LFM3-Omni-2B-GGUF", remote = "mmproj-LFM3-Omni-2B-Q8_0.gguf", local = "mmproj-LFM3-Omni-2B-Q8_0.gguf", size = 506842432 },
+]
+
 # -----------------------------------------------------------------------------------------------
 # Embeddings, speech, images, documents, entities
 # -----------------------------------------------------------------------------------------------
