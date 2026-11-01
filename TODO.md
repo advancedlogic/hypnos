@@ -57,6 +57,16 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Backlog
 
+- [ ] ⬛ **BUILD-12** `P1` Cut the Windows CUDA release build (3h10m) to the Linux one's time
+      After BUILD-11 Windows CUDA is the release's critical path: 3h10m in run 41273996212 against
+      1h31m on Linux, because nvcc does not go through sccache on Windows (CMake's CUDA test compile
+      uses MSVC's shared-PDB flags, which sccache refuses). Options, measure each: (1) make nvcc
+      cacheable on Windows (`CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded` / `/Z7`, policy CMP0141,
+      so no shared PDB, then `CMAKE_CUDA_COMPILER_LAUNCHER=sccache`); (2) cache the CMake build
+      folders of llama.cpp and sd.cpp between runs keyed on the vendor pins (`actions/cache`);
+      (3) a narrower Windows target list (drop the PTX entries or 75/80) if (1) and (2) fall short.
+      Done when the Windows CUDA job takes under 1h30m on a warm cache; record the timings here.
+
 - [ ] 🟨 **TEST-5** `P2` Starvation under sustained load; real-engine drills and reproducible releases
       From TEST-4. (1) The stress test showed that when two resident models stay busy, a third
       model's requests all get 507 `insufficient_vram_or_ram` (neither can be evicted while
@@ -221,7 +231,9 @@ _No cards yet._
       diffusion-rs patch forwards `CMAKE_CUDA_ARCHITECTURES`, `setup-build-env` writes it for the
       local GPU); `build-linux` / `build-windows` calls, Docker `SERVER=archive` after
       `build-linux`; sccache for the CMake builds; job and apt-step timeouts. Drops Maxwell,
-      Pascal and Volta. Timings to confirm on the next release run.
+      Pascal and Volta. Measured (release runs of 2026-11-01): Docker 2h31m -> 1 min, Linux
+      CUDA 1h42m -> 1h31m (sccache 54% hits on the second run), macOS 10 min; Windows CUDA
+      3h10m (nvcc not through sccache there), so the release still takes ~3 h: BUILD-12.
 - [x] ⬛ **BUILD-10** `P2` `run.sh build all` / `run.bat build all` builds backend, playground and desktop
       Today `build` (target `all` by default) compiles the backend and installs the playground's
       packages, and the desktop app is only built when named. An explicit `build all` builds
