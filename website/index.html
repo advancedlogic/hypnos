@@ -96,23 +96,23 @@
     <!-- Measured -->
     <section class="stats" aria-label="Measured results">
       <div class="container">
-        <h2 class="stat-group-title">CUDA <span>one 24 GB GPU, default lineup</span></h2>
+        <h2 class="stat-group-title">CUDA <span>RTX 5090 laptop, 24 GB, default lineup</span></h2>
         <div class="stat-grid">
-          <div class="stat"><span class="stat-value">~100<small> tok/s</small></span><span class="stat-label">Chat decode per stream, Gemma 4 26B-A4B Q4; 150 on an RTX 5090 laptop with 3 slots</span></div>
-          <div class="stat"><span class="stat-value">145<small> ms</small></span><span class="stat-label">Time to first token on a follow-up turn, with KV prefix reuse (from 300 ms)</span></div>
-          <div class="stat"><span class="stat-value">2.18<small>×</small></span><span class="stat-label">Aggregate decode throughput with four concurrent clients (continuous batching)</span></div>
-          <div class="stat"><span class="stat-value">385<small> ms</small></span><span class="stat-label">Time to first audio with streaming text-to-speech (from 5.4 s)</span></div>
-          <div class="stat"><span class="stat-value">3.7<small> s</small></span><span class="stat-label">15.8 GB model from pinned RAM to its first token (RTX 5090 laptop; from 7.5 s)</span></div>
+          <div class="stat"><span class="stat-value">142<small> tok/s</small></span><span class="stat-label">Chat decode per stream, Gemma 4 26B-A4B Q4; prefill up to 3,600 tok/s</span></div>
+          <div class="stat"><span class="stat-value">136<small> ms</small></span><span class="stat-label">Time to first token on a follow-up turn, with KV prefix reuse (195 ms on the first turn)</span></div>
+          <div class="stat"><span class="stat-value">1.39<small>×</small></span><span class="stat-label">Aggregate decode of four concurrent clients against one (continuous batching, 3 slots)</span></div>
+          <div class="stat"><span class="stat-value">380<small> ms</small></span><span class="stat-label">Time to first audio with streaming text-to-speech (5.3 s without streaming)</span></div>
+          <div class="stat"><span class="stat-value">3.7<small> s</small></span><span class="stat-label">15.8 GB model from warm RAM (Tier 2) to its first token; 4.3 s from disk, 131 ms resident</span></div>
         </div>
-        <h2 class="stat-group-title">Apple Silicon <span>M5 Max, 128 GB, Metal</span></h2>
+        <h2 class="stat-group-title">Apple Silicon <span>M5 Max, 128 GB, default lineup</span></h2>
         <div class="stat-grid">
-          <div class="stat"><span class="stat-value">113<small> tok/s</small></span><span class="stat-label">Chat decode per stream, Gemma 4 26B-A4B Q4; prefill up to 4,000 tok/s</span></div>
-          <div class="stat"><span class="stat-value">97<small> ms</small></span><span class="stat-label">Time to first token on a follow-up turn, with KV prefix reuse (from 182 ms)</span></div>
-          <div class="stat"><span class="stat-value">54<small> ms</small></span><span class="stat-label">First token of a 15.8 GB model already in Tier 1; 0.99 s from Tier 2, 2.32 s from Tier 3</span></div>
-          <div class="stat"><span class="stat-value">1.1<small> s</small></span><span class="stat-label">Next turn of a 12.6k-token chat after its model was swapped out, with KV parking (from 4.6 s)</span></div>
-          <div class="stat"><span class="stat-value">359<small> ms</small></span><span class="stat-label">Time to first audio with streaming text-to-speech; 2.25 s for a full voice round trip</span></div>
+          <div class="stat"><span class="stat-value">113<small> tok/s</small></span><span class="stat-label">Chat decode per stream, Gemma 4 26B-A4B Q4; prefill up to 3,800 tok/s</span></div>
+          <div class="stat"><span class="stat-value">99<small> ms</small></span><span class="stat-label">Time to first token on a follow-up turn, with KV prefix reuse (182 ms on the first turn)</span></div>
+          <div class="stat"><span class="stat-value">1.43<small>×</small></span><span class="stat-label">Aggregate decode of four concurrent clients against one (continuous batching, 4 slots)</span></div>
+          <div class="stat"><span class="stat-value">364<small> ms</small></span><span class="stat-label">Time to first audio with streaming text-to-speech (5.0 s without streaming)</span></div>
+          <div class="stat"><span class="stat-value">0.99<small> s</small></span><span class="stat-label">15.8 GB model from warm RAM (Tier 2) to its first token; 2.3 s from disk, 54 ms resident</span></div>
         </div>
-        <p class="stats-note">Full reports, including MoE expert offload and slot counts, in <a href="https://github.com/advancedlogic/hypnos/tree/main/docs/bench" rel="noopener">docs/bench</a>.</p>
+        <p class="stats-note">The same benchmark (<code>backend/scripts/bench.sh</code>) on both machines, 2026-10-31. Full reports, including KV parking, MoE expert offload, the voice round trip and slot counts, in <a href="https://github.com/advancedlogic/hypnos/tree/main/docs/bench" rel="noopener">docs/bench</a>.</p>
       </div>
     </section>
 
