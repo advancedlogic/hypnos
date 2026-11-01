@@ -35,8 +35,22 @@ the big ones come in when asked for, and nothing is evicted while a request is u
   optional API keys and in-process HTTPS. Plus `/v1/documents/convert` (PDFs, images and office
   documents to Markdown with docling, page by page) and `/v1/entities` (zero-shot named-entity
   extraction with GLiNER2.5, labels chosen per request).
+- **Picks models for your machine.** A curated catalog lists the models Hypnos has been tested
+  with; `hypnos advise --needs chat,voice,documents` recommends a lineup that fits your GPU and RAM
+  (sized with the scheduler's own planner), and the desktop app's guided setup downloads it and
+  checks it works. Models can be added, swapped for another variant and removed while the server
+  runs, without dropping a request.
+- **Thinking you can see.** `reasoning_effort` (`low` / `medium` / `high`) turns on a model's
+  thinking with a token budget; the thoughts come back as `reasoning_content`, shown in a
+  collapsible panel in the playground and the desktop app.
+- **Predictable, not just fast.** Workload profiles (`voice_assistant`, `interactive_chat`, ...)
+  set priorities and slots for an outcome; eviction keeps the models asked for most often; a
+  request can name the model it needs next so it loads ahead; a request with a deadline is
+  refused at once rather than queued past it; p50 / p95 / p99 are tracked per route and per
+  multi-step workflow.
 - **Observable.** A live playground shows each model's tier as requests come in, every response
   carries its placement and timing, `/metrics` is Prometheus, and a request log keeps recent calls.
+  `hypnos measure-memory` compares each model's real memory with what the planner books.
 - **Runs on CUDA (Windows, Linux) and Apple Silicon (Metal).**
 
 <p align="center">
@@ -216,8 +230,25 @@ print(client.chat.completions.create(
 
 ## Bring your own models
 
-Any GGUF that llama.cpp loads works for chat and embeddings; the chat template is read from the
-file. A complete config with a single model looks like this (paths are relative to `backend/`):
+The quickest way is the catalog (`backend/models.catalog.toml`): the default lineup plus other
+models Hypnos has been tested with (Liquid AI's LFM3 text, vision and audio models), each in
+several quantizations.
+
+```bash
+hypnos advise --needs chat,voice,documents             # this machine; or --vram 24G --ram 64G, --unified --ram 32G
+./run.sh models lfm3-vl:2b:Q4_K_M                      # download a variant (SHA-256 checked)
+curl -X POST localhost:9999/v1/models -d '{"catalog": "lfm3-vl:2b:Q4_K_M"}'   # add it to the running server
+```
+
+`PUT /v1/models/{id}` swaps a model for another variant or another model under the same name
+(requests wait for the swap, running ones finish first) and `DELETE` removes one; the changes are
+kept in `<config name>.models.toml` next to the config. The desktop app's Models dialog and guided
+setup and the playground's Model Catalog tab do the same with buttons. The catalog only lists
+architectures Hypnos has been tested with: a GGUF that merely loads can still get its prompt
+format, media markers or memory handling wrong.
+
+Any GGUF that llama.cpp loads also works by hand for chat and embeddings; the chat template is
+read from the file. A complete config with a single model looks like this (paths are relative to `backend/`):
 
 ```toml
 # backend/my.toml
@@ -261,8 +292,9 @@ it without editing the file, so one config can serve several instances.
 - `[models.arch]` fields you leave out are read from the GGUF header at startup
   (`<arch>.block_count`, `.attention.head_count_kv`, `.attention.key_length`, `.context_length`,
   `.attention.sliding_window[_pattern]`) and logged; values you set always win, and a mismatch with
-  the file is logged too. Per-layer values (Gemma 4) are booked at their largest, so the plan errs
-  on the safe side.
+  the file is logged too. The KV cache is booked from the file's exact layout: full-attention
+  and sliding-window layers counted apart, and a hybrid model's convolution layers (LFM3), which
+  hold no KV cache, left out.
 - Weight size is read from the file. `[server]`, `[limits]` and `[hardware]` are optional; GPU
   memory is detected, so you only set budgets to stay below what the device has.
 - Speech, text-to-speech and image generation need the engine-specific fields shown in
@@ -311,6 +343,11 @@ LM Studio or Python sidecar is involved.
 | **`moss-image`** | **Image Generation** (`/v1/images/generations`) | `ggml_diffusion` | `MOSS-Image-SFT-Q4_K.gguf` (3.3 GiB) + `Qwen3.5-9B-Q4_K_M.gguf` (5.7 GiB) + `flux2-vae.safetensors` + `moss_tokenizer.json` | `Low` (promoted to Tier 1 VRAM on demand, evicts idle models) |
 | **`docling`** | **Document Conversion** (`/v1/documents/convert`) | `docling` | `docling/` (310 MiB: layout, TableFormer, OCR) | `Normal`, `device = "cpu"` (loaded on demand into host RAM in ~0.3 s, ~1.8 GiB booked, no VRAM) |
 | **`gliner2.5-multi`** | **Entity Extraction** (`/v1/entities`) | `gliner` | `gliner2.5-multi/` (1.15 GiB: encoder, boundary heads, tokenizer) | `Normal`, `device = "cpu"` (loaded on demand in under a second, ~3.2 GiB booked, no VRAM) |
+
+For smaller machines, `backend/hypnos.lfm3.macos.example.toml` replaces the two Gemma chat models
+with Liquid AI's LFM3 1.7B (text), LFM3-VL 2B (vision) and LFM3-Audio 2B (speech-to-text), about
+6.4 GB together: everything but the image model fits in 16 GB. `hypnos advise` picks a lineup for
+any other machine.
 
 ### Model files
 
@@ -458,14 +495,18 @@ npm run dev
 
 ### Desktop app
 
-`desktop/` is a Tauri 2 app for a running server, in the spirit of the Ollama app: a chat with
-streaming answers and a model picker, and a collapsible right panel with the server's live
-state (memory tiers, the models in each, the last answer's timings, evictions). It connects to
-`http://localhost:9999` by default; the server URL and an API key (kept in the system keychain)
-are set in its connection dialog. It does not contain the server.
+`desktop/` is a Tauri 2 app, in the spirit of the Ollama app: a chat with streaming answers, a
+model picker, a thinking level (Off to High, the thoughts in a collapsible panel), attachments
+(images, documents, audio, video, web pages), voice in and out, and a collapsible right panel with
+the server's live state (memory tiers, the models in each, the last answer's timings, evictions).
+On first run its guided setup asks what you want to do, recommends a lineup for the machine,
+downloads it and runs a short demo; the Models dialog adds, swaps and removes catalog models on the
+running server. The macOS app bundles the server; elsewhere it starts an installed one or connects
+to `http://localhost:9999` (the server URL and an API key, kept in the system keychain, are set in
+its connection dialog).
 
 ```bash
-./run.sh build desktop && ./run.sh start desktop   # or: cd desktop && npm install && npx tauri dev
+./run.sh build all && ./run.sh start desktop       # server, playground and app; or: cd desktop && npx tauri dev
 ```
 
 Prerequisites per OS, shortcuts and how it reaches a remote server: [desktop/README.md](desktop/README.md).
@@ -516,6 +557,9 @@ yet; install them from the repository.
 | `POST /v1/memory/tier` | manual promote / demote (`{"model": "...", "target_tier": "tier2_pinned_ram"}`); refused with 429 while the model is leased |
 | `POST /v1/models/{id}/disable`, `.../enable` | take a model out of service without removing its config, or put it back. Disabling evicts it to Tier 3 (refused with 429 while leased), hides it from `/v1/models` and makes requests for it answer 404 `model_disabled`; enabling lets it load on its next request. Same as `enabled = false` in its `[[models]]` block (which also tolerates missing weights), but not written back to the file. `/v1/memory/status` shows `enabled` per model, and the playground's model cards carry the switch |
 | `GET /v1/memory/kv-park`, `POST /v1/memory/kv-park` | KV parking state (parked models, slots, tokens, bytes) and the runtime switch: `{"enabled": true, "max_bytes": 4294967296}`; turning it off drops every parked state |
+| `GET /v1/models/catalog` | the curated model catalog: per variant its files, what is on disk, whether it is configured (and which variant), and the `[[models]]` block that runs it |
+| `POST /v1/advisor` | a lineup from the catalog for a machine and a set of needs (`{"needs": ["chat", "voice"], "vram_bytes": ..., "ram_bytes": ...}`; left-out fields are this server's machine), with tiers, priorities, slots, warnings and a config file |
+| `POST /v1/models`, `PUT` / `DELETE /v1/models/{id}` | add a model to the running pool (`{"catalog": "<id>:<quant>"}` or a `[[models]]` block), swap one under the same id, remove one; checked like the config at startup, kept in `<config>.models.toml`, admin key needed when API keys are set |
 | `POST /v1/models/{id}/moe-offload` | a Mixture-of-Experts model's expert offload at runtime: `{"mode": "off" \| "auto" \| "on"}`; an idle resident model is unloaded so its next load uses the new mode |
 | `GET /v1/logs` | recent API calls, newest first (`?model=&route=&status=ok|error|4xx|5xx&limit=`): route, status, duration, model, tokens in / out / cached, tokens/s, tier switch; `GET /v1/logs/{id}` adds the prompt and completion text (level `debug`) and the request / response payloads with media replaced by placeholders (level `trace`) |
 | `POST /v1/logs/level` | `{"level": "off|error|warn|info|debug|trace"}` changes what is captured at runtime (`server.request_log_level` sets the start value, `server.request_log_capacity` the ring size); `DELETE /v1/logs` empties the ring. The playground's "Request Logs" tab is a client of these |
@@ -524,6 +568,30 @@ Behaviour that matters in production:
 
 - **Startup validation**: missing weight files, duplicate ids, impossible budgets or engine
   combinations abort startup with one error per problem; warnings are logged.
+- **Thinking** (Gemma 4 and LFM3 chat models): `reasoning_effort` `none` / `low` / `medium` /
+  `high` (512 / 2048 / 6144 thinking tokens; past the budget the server closes the thinking block
+  and the model answers). The thoughts come back as `message.reasoning_content`, or
+  `delta.reasoning_content` chunks before the answer when streaming, and count in
+  `completion_tokens`.
+- **Workload profiles**: `[server] profile = "voice_assistant"` (or `interactive_chat`,
+  `document_pipeline`, `batch_processing`) fills in priorities, starting tiers, slots and queue
+  depth for each model's role, only where the config leaves them out; `--check-config` lists what
+  it set. Presets per profile: [docs/operating.md](docs/operating.md).
+- **Scheduling for the workload**: within a priority, eviction keeps the models whose return would
+  cost most (measured reload time x recent request rate). A request can carry
+  `x-hypnos-next-model: <id>` to have the next stage of a pipeline (the chat after a transcription,
+  the speech after the chat) loaded while it runs.
+- **Deadlines and latency**: `x-hypnos-deadline-ms` makes a request that cannot start in time fail
+  at once with 503 `deadline_unmeetable` and `Retry-After` instead of waiting
+  (`limits.overload = "shed"` applies the profile's objective to every request); responses carry
+  `x-hypnos-estimated-wait-ms`; `x-hypnos-workflow: <name>/<id>` groups the requests of one task,
+  and `/v1/memory/status` reports p50 / p95 / p99 per route and per workflow, end to end
+  (`hypnos_request_e2e_ms`, `hypnos_workflow_e2e_ms` on `/metrics`).
+- **Measured memory**: the planner's bookings are estimates, not OS limits. `hypnos measure-memory
+  [config]` loads each model alone, runs one request of its kind and reports booked against real
+  memory; the example configs' values come from it
+  ([docs/bench/memory-2026-11-01.md](docs/bench/memory-2026-11-01.md)), and
+  `hypnos_memory_bytes{kind}` on `/metrics` shows booked against held at runtime.
 - **Real VRAM reconciliation**: after every load/unload the planner compares its bookings with the
   device's free memory (ggml backend API) and never hands out more than the device really has.
 - **Admission and limits** (`[limits]` in `hypnos.toml`): per-model queue bound (HTTP 429 when
@@ -580,6 +648,9 @@ Behaviour that matters in production:
     API gateway in front: Hypnos authenticates and limits per key, nothing finer.
   - `[server.tls]` with `cert_path` / `key_path` (PEM) to serve HTTPS in-process (rustls); plain
     HTTP when absent. A bad certificate stops startup before any model loads.
+  - Remote image and document URLs never reach loopback, private or link-local addresses (the
+    LAN, `localhost`, cloud metadata), redirects included, unless `limits.allow_private_urls =
+    true` ([docs/security-review-2026-11-01.md](docs/security-review-2026-11-01.md)).
 
   Startup warns when a non-loopback `host` has no keys, or keys but no TLS. The playground has an
   API-key field next to the backend URL; the key is stored in that browser only.
@@ -589,9 +660,11 @@ Behaviour that matters in production:
 - **Tests**: `cargo test --workspace` runs engine-free scheduler tests (mock backend: promotion,
   eviction order, rollback on load failure, admission, cancellation, shutdown) plus unit tests;
   `cargo test -- --ignored` runs the GPU lifecycle test against the real weights;
-  `backend/scripts/smoke_test.sh` exercises every endpoint of a running server. CI
-  (`.github/workflows/ci.yml`) runs fmt + clippy, CPU (Linux, Windows) and Metal (macOS) builds
-  and tests, and the frontend build on every push and pull request.
+  `backend/scripts/smoke_test.sh` exercises every endpoint of a running server. The tests also
+  run 300 concurrent clients with cancellations at every stage against the real router and
+  scheduler, and load the example configs of every release. CI (`.github/workflows/ci.yml`) runs
+  fmt + clippy, CPU (Linux, Windows) and Metal (macOS) builds and tests, the SDK tests and the
+  desktop and frontend builds; it runs by hand and for every release tag.
 - **Telemetry**: every response's `hypnos_telemetry` carries the tier placement plus an `engine`
   object with the request's timing split (`queue_ms`, `context_ms`, `prefill_ms`, `decode_ms`,
   `ttft_ms`, `prefill_tokens_per_s`, `decode_tokens_per_s`; `audio_secs` and `rtf` for speech).

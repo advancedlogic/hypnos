@@ -79,6 +79,7 @@
             <li><strong>No sidecars.</strong> llama.cpp, stable-diffusion.cpp, ONNX Runtime, docling.rs and GLiNER are linked in.</li>
             <li><strong>One memory budget.</strong> Every engine books weights, KV cache and scratch space with the same planner.</li>
             <li><strong>Drop-in.</strong> Works with any OpenAI client; optional API keys and in-process HTTPS.</li>
+            <li><strong>Picks models for your machine.</strong> A tested catalog, an advisor that sizes a lineup for your GPU and RAM, and models added or swapped while the server runs.</li>
             <li><strong>A desktop chat app.</strong> For macOS, Windows and Linux: attachments, voice, image generation and live memory stats.</li>
           </ul>
         </div>
@@ -165,9 +166,24 @@
             <p>On a discrete GPU, a Mixture-of-Experts model can keep its expert weights on the CPU: Gemma 4 26B-A4B needs 3 GB of VRAM instead of 15.8 GB and stays resident next to the image model, at a cost in speed. Off by default.</p>
           </article>
           <article class="card">
-            <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
-            <h3>A desktop app</h3>
-            <p>A chat client for macOS, Windows and Linux built with Tauri. It talks to a local or remote Hypnos, can start a local server itself, and shows the memory tiers live. <a href="#desktop">More below</a>.</p>
+            <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/><path d="M8.5 11h5M11 8.5v5"/></svg></div>
+            <h3>A catalog and an advisor</h3>
+            <p>A curated catalog of models Hypnos has been tested with, each in several quantizations. <code>hypnos advise --needs chat,voice,documents</code> recommends a lineup that fits your GPU and RAM, sized with the scheduler's own planner, and writes the config.</p>
+          </article>
+          <article class="card">
+            <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8h12"/><path d="M13 5l3 3-3 3"/><path d="M20 16H8"/><path d="M11 13l-3 3 3 3"/></svg></div>
+            <h3>Models in and out while it runs</h3>
+            <p>Add a model, swap it for another variant or remove it with one call, no restart. Requests that arrive during a swap wait for it instead of failing, and the changes survive a restart.</p>
+          </article>
+          <article class="card">
+            <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.9V16h5v-.2c0-.8.4-1.5 1-1.9A6 6 0 0 0 12 3z"/></svg></div>
+            <h3>Thinking you can see</h3>
+            <p><code>reasoning_effort</code> from low to high turns on a model's thinking with a token budget. The thoughts come back as <code>reasoning_content</code>, in a collapsible panel in the playground and the desktop app.</p>
+          </article>
+          <article class="card">
+            <div class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M9 2h6"/></svg></div>
+            <h3>Predictable, not just fast</h3>
+            <p>Workload profiles set priorities for an outcome (<code>voice_assistant</code>, <code>interactive_chat</code>, ...). Eviction keeps the models asked for most; a request can name the model it needs next; one with a deadline is refused at once instead of queued past it; p95 is tracked per workflow.</p>
           </article>
         </div>
       </div>
@@ -234,13 +250,15 @@
           <table>
             <thead><tr><th>Endpoint</th><th>What it serves</th><th>Notes</th></tr></thead>
             <tbody>
-              <tr><td><code>POST /v1/chat/completions</code></td><td>Text, vision and audio chat</td><td>SSE streaming, images and audio clips in messages, tool calling (<code>tools</code>, <code>tool_choice</code>), continuous batching across slots, KV prefix reuse</td></tr>
+              <tr><td><code>POST /v1/chat/completions</code></td><td>Text, vision and audio chat</td><td>SSE streaming, images and audio clips in messages, tool calling (<code>tools</code>, <code>tool_choice</code>), thinking levels (<code>reasoning_effort</code>, thoughts in <code>reasoning_content</code>), continuous batching across slots, KV prefix reuse</td></tr>
               <tr><td><code>POST /v1/embeddings</code></td><td>Dense vector embeddings</td><td>Any GGUF embedding model llama.cpp loads</td></tr>
-              <tr><td><code>POST /v1/audio/transcriptions</code></td><td>Speech-to-text</td><td>Multipart or JSON; Gemma 4 audio through libmtmd</td></tr>
+              <tr><td><code>POST /v1/audio/transcriptions</code></td><td>Speech-to-text</td><td>Multipart or JSON; Gemma 4 and LFM3-Audio through libmtmd</td></tr>
               <tr><td><code>POST /v1/audio/speech</code></td><td>Text-to-speech</td><td><code>stream: true</code> returns PCM or an open-ended WAV as it is synthesized</td></tr>
               <tr><td><code>POST /v1/images/generations</code></td><td>Image generation</td><td>stable-diffusion.cpp; MOSS-Image in the default lineup</td></tr>
               <tr><td><code>POST /v1/documents/convert</code> <span class="pill">extension</span></td><td>PDFs, images and office files to Markdown or JSON</td><td>docling.rs page by page, OCR, picture descriptions through a vision model</td></tr>
               <tr><td><code>POST /v1/entities</code> <span class="pill">extension</span></td><td>Zero-shot named-entity extraction</td><td>GLiNER2.5, labels chosen per request, multilingual</td></tr>
+              <tr><td><code>GET /v1/models/catalog</code> · <code>POST /v1/advisor</code> <span class="pill">extension</span></td><td>Tested models and a lineup for a machine</td><td>Variants, what is on disk, the config block; a recommended lineup for given VRAM, RAM and needs</td></tr>
+              <tr><td><code>POST /v1/models</code> · <code>PUT</code> / <code>DELETE /v1/models/{id}</code> <span class="pill">extension</span></td><td>The model pool, live</td><td>Add, swap and remove models without a restart; requests wait for a swap; admin key when keys are set</td></tr>
               <tr><td><code>GET /v1/memory/status</code> · <code>POST /v1/memory/tier</code></td><td>Tier snapshot and manual moves</td><td>Refused with 429 while the model is leased</td></tr>
               <tr><td><code>/v1/memory/kv-park</code> · <code>POST /v1/models/{id}/moe-offload</code> <span class="pill">extension</span></td><td>Runtime switches</td><td>KV parking on or off with its RAM cap and parked conversations; a MoE model's expert offload mode</td></tr>
               <tr><td><code>GET /metrics</code> · <code>/health</code> · <code>/ready</code> · <code>/v1/logs</code></td><td>Operations</td><td>Prometheus text, probes, recent request log with timing split</td></tr>
@@ -276,7 +294,7 @@ print(client.chat.completions.create(
         <div class="section-head">
           <p class="eyebrow">Default lineup</p>
           <h2>Seven models, every modality, about 33 GB of files.</h2>
-          <p class="section-lede">Downloaded with one command from public Hugging Face repositories. Bring your own: any GGUF that llama.cpp loads works for chat and embeddings, with the chat template read from the file.</p>
+          <p class="section-lede">Downloaded with one command from public Hugging Face repositories. Smaller machines can use Liquid AI's LFM3 text, vision and audio models (about 6.4 GB together), and <code>hypnos advise</code> picks a lineup from the catalog for any machine. Bring your own: any GGUF that llama.cpp loads works for chat and embeddings, with the chat template read from the file.</p>
         </div>
         <div class="table-wrap">
           <table class="models">
@@ -374,6 +392,18 @@ docker run --gpus all -p 9999:9999 -v ./models:/opt/hypnos/models ghcr.io/advanc
         </div>
         <div class="feature-grid">
           <article class="card">
+            <h3>Guided setup</h3>
+            <p>On first run the app asks what you want to do, recommends models that fit the machine in plain words, downloads them and runs a short demo: a chat answer, an image described, a spoken answer transcribed back.</p>
+          </article>
+          <article class="card">
+            <h3>Thinking, when you want it</h3>
+            <p>Pick a thinking level from Off to High per chat; the model's thoughts stream into a collapsible panel above the answer.</p>
+          </article>
+          <article class="card">
+            <h3>Models from the catalog</h3>
+            <p>The Models dialog lists the tested models the server does not have yet: pick a variant and it is downloaded and added to the running server, or swapped for the one in use.</p>
+          </article>
+          <article class="card">
             <h3>Attach anything</h3>
             <p>Images, PDFs and office documents (converted with docling), audio (transcribed) and video (soundtrack transcript plus sampled frames). Paste a URL and its content becomes part of the conversation.</p>
           </article>
@@ -395,7 +425,7 @@ docker run --gpus all -p 9999:9999 -v ./models:/opt/hypnos/models ghcr.io/advanc
           </article>
           <article class="card">
             <h3>Download</h3>
-            <p>Every <a href="https://github.com/advancedlogic/hypnos/releases/latest" rel="noopener">release</a> carries a <code>.dmg</code> for Apple Silicon, a <code>.msi</code> and a setup <code>.exe</code> for Windows, and a <code>.deb</code> and an <code>.AppImage</code> for Linux. The app does not include the server.</p>
+            <p>Every <a href="https://github.com/advancedlogic/hypnos/releases/latest" rel="noopener">release</a> carries a <code>.dmg</code> for Apple Silicon, a <code>.msi</code> and a setup <code>.exe</code> for Windows, and a <code>.deb</code> and an <code>.AppImage</code> for Linux. The macOS app includes the server; on Windows and Linux it starts an installed one.</p>
           </article>
         </div>
         <div class="cta-row">
