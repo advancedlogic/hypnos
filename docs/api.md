@@ -648,8 +648,9 @@ unchanged. Text the model writes before a call arrives as `delta.content` as usu
 chunk has `finish_reason: "tool_calls"`.
 
 **Models.** Tool calling uses the model's native format: Gemma 4 (all the default chat models,
-and Nemotron 3.5 Bolt) and Qwen 3.5 / 3.6 / 3.8 (and MiniCPM-V 4.6, built on Qwen 3.5). LFM3
-models have none in Hypnos (the catalog lists each entry's `capabilities`).
+and Nemotron 3.5 Bolt), Qwen 3.5 / 3.6 / 3.8 (and MiniCPM-V 4.6), Qwen3-Coder, NVIDIA Nemotron
+3.5 Lightning, GLM-4.7-Flash and the LFM3 models. LFM2.5 has none in Hypnos (the catalog lists
+each entry's `capabilities`).
 A request with `tools` (and `tool_choice` other than `"none"`) for a model without one is refused
 with 400 `invalid_request_error`. `"required"` and a named function are enforced by starting the
 model's answer with a call, not by a grammar: the arguments follow the schema as well as the model

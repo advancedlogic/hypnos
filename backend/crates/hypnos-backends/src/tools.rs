@@ -38,22 +38,24 @@ pub enum ToolFormat {
     /// `<|tool_call>call:NAME{key:value}<tool_call|>` (Gemma 4).
     Gemma4,
     /// `<tool_call>\n<function=NAME>\n<parameter=KEY>\nVALUE\n</parameter>\n</function>\n</tool_call>`
-    /// (Qwen 3.5 and later, and models built on them).
+    /// (Qwen 3.5 and later, Qwen3-Coder, Nemotron 3.5, LFM3).
     QwenXml,
+    /// `<tool_call>NAME<arg_key>KEY</arg_key><arg_value>VALUE</arg_value></tool_call>` (GLM 4.x).
+    GlmXml,
 }
 
 impl ToolFormat {
     fn open(self) -> &'static str {
         match self {
             ToolFormat::Gemma4 => CALL_OPEN,
-            ToolFormat::QwenXml => QWEN_CALL_OPEN,
+            ToolFormat::QwenXml | ToolFormat::GlmXml => QWEN_CALL_OPEN,
         }
     }
 
     fn close(self) -> &'static str {
         match self {
             ToolFormat::Gemma4 => CALL_CLOSE,
-            ToolFormat::QwenXml => QWEN_CALL_CLOSE,
+            ToolFormat::QwenXml | ToolFormat::GlmXml => QWEN_CALL_CLOSE,
         }
     }
 
@@ -70,6 +72,8 @@ impl ToolFormat {
             (ToolFormat::QwenXml, ToolChoice::Function(name)) => {
                 format!("{QWEN_CALL_OPEN}\n<function={name}>\n")
             }
+            (ToolFormat::GlmXml, ToolChoice::Required) => QWEN_CALL_OPEN.to_string(),
+            (ToolFormat::GlmXml, ToolChoice::Function(name)) => format!("{QWEN_CALL_OPEN}{name}"),
         }
     }
 }
@@ -266,26 +270,118 @@ pub fn qwen_tools_block(tools: &[ToolSpec]) -> String {
     let mut out = String::from("# Tools\n\nYou have access to the following functions:\n\n<tools>");
     for tool in tools {
         out.push('\n');
-        out.push_str(&py_json(&serde_json::to_value(tool).unwrap_or(Value::Null)));
+        out.push_str(&py_json(&tool_json(tool)));
     }
     out.push_str("\n</tools>");
     out.push_str(QWEN_TOOL_INSTRUCTIONS);
     out
 }
 
-const QWEN_TOOL_INSTRUCTIONS: &str = "\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>";
+/// A tool as templates see it: `{"type": "function", "function": {name, description, parameters}}`
+/// in that order, without absent fields.
+pub fn tool_json(tool: &ToolSpec) -> Value {
+    let mut outer = Map::new();
+    outer.insert("type".into(), Value::String(tool.kind.clone()));
+    outer.insert("function".into(), function_json(tool));
+    Value::Object(outer)
+}
 
-/// A past call as a Qwen template writes it in the assistant turn (without the separator before
-/// it, which depends on its place).
-pub fn qwen_call_text(call: &ToolCall) -> String {
+/// The `function` object of a tool (LFM3 declares these alone).
+pub fn function_json(tool: &ToolSpec) -> Value {
+    let f = &tool.function;
+    let mut m = Map::new();
+    m.insert("name".into(), Value::String(f.name.clone()));
+    if let Some(d) = &f.description {
+        m.insert("description".into(), Value::String(d.clone()));
+    }
+    if let Some(p) = &f.parameters {
+        m.insert("parameters".into(), p.clone());
+    }
+    Value::Object(m)
+}
+
+/// Qwen3-Coder's (and Nemotron 3.5's) declaration block: each tool as XML, after `# Tools`.
+pub fn coder_tools_block(tools: &[ToolSpec]) -> String {
+    let extra = |map: &Map<String, Value>, handled: &[&str]| {
+        let mut out = String::new();
+        for (k, v) in map.iter().filter(|(k, _)| !handled.contains(&k.as_str())) {
+            let v = match v {
+                Value::Object(_) | Value::Array(_) => py_json(v),
+                other => py_str(other),
+            };
+            out.push_str(&format!("\n<{k}>{v}</{k}>"));
+        }
+        out
+    };
+    let mut out =
+        String::from("\n\n# Tools\n\nYou have access to the following functions:\n\n<tools>");
+    for tool in tools {
+        let f = &tool.function;
+        out.push_str(&format!("\n<function>\n<name>{}</name>", f.name));
+        if let Some(d) = &f.description {
+            out.push_str(&format!("\n<description>{}</description>", d.trim()));
+        }
+        out.push_str("\n<parameters>");
+        let params = f.parameters.as_ref().and_then(Value::as_object);
+        if let Some(props) = params
+            .and_then(|p| p.get("properties"))
+            .and_then(Value::as_object)
+        {
+            for (name, fields) in props {
+                out.push_str(&format!("\n<parameter>\n<name>{name}</name>"));
+                if let Some(fields) = fields.as_object() {
+                    if let Some(t) = fields.get("type") {
+                        out.push_str(&format!("\n<type>{}</type>", py_str(t)));
+                    }
+                    if let Some(d) = fields.get("description").and_then(Value::as_str) {
+                        out.push_str(&format!("\n<description>{}</description>", d.trim()));
+                    }
+                    out.push_str(&extra(fields, &["name", "type", "description"]));
+                }
+                out.push_str("\n</parameter>");
+            }
+        }
+        if let Some(p) = params {
+            out.push_str(&extra(p, &["type", "properties"]));
+        }
+        out.push_str("\n</parameters>\n</function>");
+    }
+    out.push_str("\n</tools>");
+    out.push_str(QWEN_TOOL_INSTRUCTIONS);
+    out
+}
+
+/// Jinja's `| string` of a JSON value, as Python prints it (`True`, `None`, numbers, strings).
+fn py_str(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Bool(true) => "True".into(),
+        Value::Bool(false) => "False".into(),
+        Value::Null => "None".into(),
+        Value::Object(_) | Value::Array(_) => py_json(v),
+        Value::Number(n) => n.to_string(),
+    }
+}
+
+/// How a family writes a past call's argument values: strings as they are; mappings and lists
+/// as JSON; scalars as `| string` (Coder, Nemotron) or as JSON (Qwen 3.5+, LFM3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArgStyle {
+    Json,
+    PyString,
+}
+
+/// A past call in the Qwen XML notation (no separator before it).
+pub fn xml_call_text(call: &ToolCall, style: ArgStyle) -> String {
     let args: Value =
         serde_json::from_str(&call.function.arguments).unwrap_or(Value::Object(Map::new()));
     let mut out = format!("{QWEN_CALL_OPEN}\n<function={}>\n", call.function.name);
     if let Value::Object(map) = &args {
         for (k, v) in map {
-            let v = match v {
-                Value::String(s) => s.clone(),
-                other => py_json(other),
+            let v = match (v, style) {
+                (Value::String(s), _) => s.clone(),
+                (Value::Object(_) | Value::Array(_), _) | (_, ArgStyle::Json) => py_json(v),
+                (other, ArgStyle::PyString) => py_str(other),
             };
             out.push_str(&format!("<parameter={k}>\n{v}\n</parameter>\n"));
         }
@@ -293,6 +389,73 @@ pub fn qwen_call_text(call: &ToolCall) -> String {
     out.push_str("</function>\n");
     out.push_str(QWEN_CALL_CLOSE);
     out
+}
+
+/// GLM 4.x: the declaration block opening the prompt's first system turn.
+pub fn glm_tools_block(tools: &[ToolSpec]) -> String {
+    let mut out = String::from("<|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n");
+    for tool in tools {
+        out.push_str(&py_json(&tool_json(tool)));
+        out.push('\n');
+    }
+    out.push_str("</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call>");
+    out
+}
+
+/// A past call in GLM's notation.
+pub fn glm_call_text(call: &ToolCall) -> String {
+    let args: Value =
+        serde_json::from_str(&call.function.arguments).unwrap_or(Value::Object(Map::new()));
+    let mut out = format!("{QWEN_CALL_OPEN}{}", call.function.name);
+    if let Value::Object(map) = &args {
+        for (k, v) in map {
+            let v = match v {
+                Value::String(s) => s.clone(),
+                other => py_json(other),
+            };
+            out.push_str(&format!("<arg_key>{k}</arg_key><arg_value>{v}</arg_value>"));
+        }
+    }
+    out.push_str(QWEN_CALL_CLOSE);
+    out
+}
+
+/// `NAME<arg_key>K</arg_key><arg_value>V</arg_value>...` (GLM) as a name and JSON arguments.
+pub fn parse_glm_call(body: &str, string_params: &BTreeSet<String>) -> Option<(String, Value)> {
+    let body = body.trim();
+    let name_end = body.find("<arg_key>").unwrap_or(body.len());
+    let name = body[..name_end].trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let mut map = Map::new();
+    let mut s = &body[name_end..];
+    while let Some(k0) = s.find("<arg_key>") {
+        let rest = &s[k0 + "<arg_key>".len()..];
+        let k1 = rest.find("</arg_key>")?;
+        let key = rest[..k1].trim().to_string();
+        let rest = &rest[k1 + "</arg_key>".len()..];
+        let v0 = rest.find("<arg_value>")?;
+        let rest = &rest[v0 + "<arg_value>".len()..];
+        let v1 = rest.find("</arg_value>").unwrap_or(rest.len());
+        let raw = &rest[..v1];
+        let value = if string_params.contains(&format!("{name}.{key}")) {
+            Value::String(raw.to_string())
+        } else {
+            serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.to_string()))
+        };
+        map.insert(key, value);
+        s = rest.get(v1 + "</arg_value>".len()..).unwrap_or("");
+    }
+    Some((name, Value::Object(map)))
+}
+
+const QWEN_TOOL_INSTRUCTIONS: &str = "\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>";
+
+/// A past call as a Qwen template writes it in the assistant turn (without the separator before
+/// it, which depends on its place).
+pub fn qwen_call_text(call: &ToolCall) -> String {
+    xml_call_text(call, ArgStyle::Json)
 }
 
 /// One tool result inside the user turn that carries them.
@@ -547,7 +710,7 @@ impl CallParser {
     fn text(&self, t: &str) -> String {
         match self.format {
             ToolFormat::Gemma4 => t.replace(QUOTE, "\""),
-            ToolFormat::QwenXml => t.to_string(),
+            ToolFormat::QwenXml | ToolFormat::GlmXml => t.to_string(),
         }
     }
 
@@ -614,6 +777,7 @@ impl CallParser {
         let parsed = match self.format {
             ToolFormat::Gemma4 => parse_call(body),
             ToolFormat::QwenXml => parse_qwen_call(body, &self.string_params),
+            ToolFormat::GlmXml => parse_glm_call(body, &self.string_params),
         };
         match parsed {
             Some((name, args)) => {
@@ -829,6 +993,47 @@ mod tests {
         parsed.extend(p.finish());
         assert!(
             matches!(&parsed[..], [Parsed::Call(c)] if c.function.arguments == r#"{"city":"Oslo"}"#),
+            "{parsed:?}"
+        );
+    }
+
+    #[test]
+    fn glm_calls_round_trip() {
+        let call = ToolCall {
+            id: "c1".into(),
+            kind: "function".into(),
+            function: FunctionCall {
+                name: "get_weather".into(),
+                arguments: r#"{"city":"Paris","days":3}"#.into(),
+            },
+        };
+        let text = glm_call_text(&call);
+        assert_eq!(
+            text,
+            "<tool_call>get_weather<arg_key>city</arg_key><arg_value>Paris</arg_value>\
+             <arg_key>days</arg_key><arg_value>3</arg_value></tool_call>"
+        );
+        let tools = [weather_tool()];
+        let mut p = CallParser::new(ToolFormat::GlmXml, "", "g", &tools);
+        let mut parsed = p.feed("Checking.");
+        parsed.extend(p.feed(&text));
+        parsed.extend(p.finish());
+        let call = parsed
+            .iter()
+            .find_map(|x| match x {
+                Parsed::Call(c) => Some(c),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(call.function.name, "get_weather");
+        assert_eq!(call.function.arguments, r#"{"city":"Paris","days":3}"#);
+        // A forced named call starts inside the call, after the name.
+        let prefill = ToolFormat::GlmXml.prefill(&ToolChoice::Function("get_weather".into()));
+        let mut p = CallParser::new(ToolFormat::GlmXml, &prefill, "h", &tools);
+        let mut parsed = p.feed("<arg_key>city</arg_key><arg_value>Rome</arg_value></tool_call>");
+        parsed.extend(p.finish());
+        assert!(
+            matches!(&parsed[..], [Parsed::Call(c)] if c.function.arguments == r#"{"city":"Rome"}"#),
             "{parsed:?}"
         );
     }

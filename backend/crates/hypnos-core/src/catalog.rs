@@ -29,6 +29,10 @@ pub const TESTED_GGUF_ARCHITECTURES: &[&str] = &[
     "qwen35moe",
     "qwen3vl",
     "qwen3tts",
+    "qwen3moe",
+    "lfm2moe",
+    "deepseek2",
+    "nemotron_h_moe",
 ];
 
 /// Keys the rendered block writes itself; an entry's `config` may not set them.

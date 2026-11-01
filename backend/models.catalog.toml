@@ -132,7 +132,7 @@ license = "lfm1.0"
 architecture = "lfm3"
 modality = "text_generation"
 engine = "ggml_llama"
-capabilities = ["thinking"]
+capabilities = ["thinking", "tools"]
 summary = "Small hybrid (convolution + attention) chat model: fast on any machine, with optional thinking."
 
 [models.config]
@@ -183,7 +183,7 @@ architecture = "lfm3"
 modality = "vision"
 additional_modalities = ["text_generation"]
 engine = "ggml_llama"
-capabilities = ["thinking"]
+capabilities = ["thinking", "tools"]
 summary = "Small vision-language model: describes and answers questions about images, with optional thinking."
 
 [models.config]
@@ -236,6 +236,7 @@ architecture = "lfm3"
 modality = "speech_to_text"
 additional_modalities = ["text_generation", "text_to_speech"]
 engine = "ggml_llama"
+capabilities = ["tools"]
 summary = "Small audio model that hears, chats and speaks: transcription in 18 languages, speech in 19 (female and male voices)."
 
 [models.config]
@@ -494,6 +495,7 @@ architecture = "lfm3"
 modality = "text_generation"
 additional_modalities = ["vision", "speech_to_text", "text_to_speech"]
 engine = "ggml_llama"
+capabilities = ["tools"]
 summary = "One small model for everything: chat, image questions, transcription and speech (no thinking: a non-reasoning model)."
 
 [models.config]
@@ -976,6 +978,168 @@ files = [
   { role = "aux", repo = "ggml-org/Qwen3-ASR-0.6B-GGUF", remote = "mmproj-Qwen3-ASR-0.6B-bf16.gguf", local = "mmproj-Qwen3-ASR-0.6B-bf16.gguf", size = 378575520 },
 ]
 
+
+[[models]]
+id = "qwen3-coder:30b-a3b"
+name = "Qwen3-Coder 30B-A3B"
+publisher = "Qwen (Alibaba)"
+license = "apache-2.0"
+architecture = "qwen3moe"
+modality = "text_generation"
+engine = "ggml_llama"
+capabilities = ["tools"]
+summary = "Coding Mixture-of-Experts model (3B active parameters) with tool calling, for agents and code assistants."
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = true
+priority = "high"
+slots = 2
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 536870912
+activation_workspace_bytes = 2147483648 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 48
+num_kv_heads = 4
+head_dim = 128
+max_context_len = 262144
+expert_bytes = 16307453952
+
+[[models.variants]]
+quant = "Q4_K_M"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/Qwen3-Coder-30B-A3B-Instruct-GGUF", remote = "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf", local = "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf", size = 17988419552 },
+]
+
+[[models]]
+id = "lfm2.5:24b-a2b"
+name = "LFM2.5 24B-A2B"
+publisher = "Liquid AI"
+license = "lfm1.0"
+architecture = "lfm2moe"
+modality = "text_generation"
+engine = "ggml_llama"
+capabilities = ["thinking"]
+summary = "Hybrid Mixture-of-Experts chat model (2B active parameters): fast answers with thinking on large machines."
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = true
+priority = "high"
+slots = 2
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 536870912
+activation_workspace_bytes = 2147483648 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 40
+num_kv_heads = 8
+head_dim = 64
+max_context_len = 131072
+expert_bytes = 13844348928
+global_kv_layers = 10
+global_num_kv_heads = 8
+swa_kv_layers = 0
+swa_num_kv_heads = 0
+swa_head_dim = 64
+
+[[models.variants]]
+quant = "Q4_K_M"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/LFM2.5-24B-A2B-GGUF", remote = "LFM2.5-24B-A2B-Q4_K_M.gguf", local = "LFM2.5-24B-A2B-Q4_K_M.gguf", size = 14526259296 },
+]
+
+[[models]]
+id = "nemotron3.5-lightning:30b-a3b"
+name = "NVIDIA Nemotron 3.5 Lightning 30B-A3B"
+publisher = "NVIDIA"
+license = "openmdw-1.1"
+architecture = "nemotron_h_moe"
+modality = "text_generation"
+engine = "ggml_llama"
+capabilities = ["thinking", "tools"]
+summary = "Hybrid Mamba Mixture-of-Experts model (3B active parameters) with a 1M-token context, thinking and tool calling."
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = true
+priority = "high"
+slots = 2
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 536870912
+activation_workspace_bytes = 2147483648 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 52
+num_kv_heads = 2
+head_dim = 128
+max_context_len = 1048576
+expert_bytes = 16523329536
+global_kv_layers = 6
+global_num_kv_heads = 2
+swa_kv_layers = 0
+swa_num_kv_heads = 0
+swa_head_dim = 128
+
+[[models.variants]]
+quant = "Q4_0"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF", remote = "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf", local = "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf", size = 18898091584 },
+]
+
+[[models]]
+id = "glm-4.7-flash"
+name = "GLM-4.7-Flash"
+publisher = "Z.ai"
+license = "mit"
+architecture = "deepseek2"
+modality = "text_generation"
+engine = "ggml_llama"
+capabilities = ["thinking", "tools"]
+summary = "Mixture-of-Experts chat model (30B, 3B active) strong at tool use and agents, with thinking."
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = true
+priority = "high"
+slots = 2
+
+[models.config.arch]
+default_context_len = 16384
+kv_dtype = "q8_0"
+non_layer_overhead_bytes = 536870912
+activation_workspace_bytes = 2147483648 # measured peak minus weights and KV, + 0.25 GiB (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[models.estimate]                   # what the GGUF reports (sizing without the files)
+num_layers = 47
+num_kv_heads = 1
+head_dim = 576
+max_context_len = 202752
+expert_bytes = 16769875968
+
+[[models.variants]]
+quant = "Q4_K"
+default = true
+files = [
+  { role = "weights", repo = "ggml-org/GLM-4.7-Flash-GGUF", remote = "GLM-4.7-Flash-Q4_K.gguf", local = "GLM-4.7-Flash-Q4_K.gguf", size = 18244193920 },
+]
 
 # -----------------------------------------------------------------------------------------------
 # Embeddings, speech, images, documents, entities

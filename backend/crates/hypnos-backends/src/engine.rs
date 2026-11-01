@@ -44,7 +44,9 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 
-use crate::llama::{build_prompt, llama_backend, load_model, supports_tools, transcription_prompt};
+use crate::llama::{
+    build_prompt, llama_backend, load_model, model_family, supports_tools, transcription_prompt,
+};
 use crate::tools::{PASS_THROUGH, RESPONSE_OPEN};
 use crate::worker::{FailJob, WorkerHandle, WorkerInbox, WorkerMsg};
 use crate::EngineOptions;
@@ -1195,7 +1197,7 @@ impl<'m> Engine<'m> {
                 tools,
                 prefill,
             } => {
-                if !tools.is_empty() && !supports_tools(&self.arch) {
+                if !tools.is_empty() && !supports_tools(model_family(self.model, &self.arch)) {
                     let _ = reply.send(Err(HypnosError::InvalidRequest(format!(
                         "{} ({}) has no tool-calling format in Hypnos; tools work with Gemma 4 and Qwen 3.5+ models",
                         self.cfg.id, self.arch

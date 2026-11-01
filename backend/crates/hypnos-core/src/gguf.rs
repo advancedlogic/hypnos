@@ -32,6 +32,8 @@ pub struct GgufArchMetadata {
     /// `(global_kv_layers, global_num_kv_heads, swa_kv_layers, swa_num_kv_heads, swa_head_dim)`.
     /// Layers without KV heads (a hybrid model's convolution layers) count in neither.
     pub kv_layout: Option<(u32, u32, u32, u32, u32)>,
+    /// `tokenizer.chat_template`, which tells chat families apart (`hypnos-backends`).
+    pub chat_template: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -196,7 +198,8 @@ fn read_metadata(path: &Path) -> io::Result<Option<Metadata>> {
     for _ in 0..kv_count {
         let key = r.string()?;
         let ty = r.u32()?;
-        let decode = !key.starts_with("tokenizer.");
+        // Tokenizer arrays are large and unused; the chat template is read (ENG-9: families).
+        let decode = !key.starts_with("tokenizer.") || key == "tokenizer.chat_template";
         let value = r.value(ty, decode)?;
         if !matches!(value, Value::Other) {
             out.insert(key, value);
@@ -368,6 +371,10 @@ impl GgufArchMetadata {
 
         Some(Self {
             kv_layout,
+            chat_template: match kv.get("tokenizer.chat_template") {
+                Some(Value::Str(t)) => Some(t.clone()),
+                _ => None,
+            },
             architecture: arch.clone(),
             block_count: int("block_count").filter(|n| *n > 0),
             head_count_kv: int_or_max("attention.head_count_kv"),
@@ -487,6 +494,7 @@ mod tests {
                 global_attn_every_n_layers: Some(6),
                 expert_bytes: None,
                 kv_layout: Some((1, 2, 5, 8, 256)),
+                chat_template: None,
             }
         );
     }

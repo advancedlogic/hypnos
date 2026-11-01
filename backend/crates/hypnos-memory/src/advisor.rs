@@ -781,14 +781,15 @@ mod tests {
         covers(&a, &needs);
         assert!(a.interactive_coresident, "{:#?}", a.warnings);
         assert!(a.interactive_bytes <= a.budgets.tier1_bytes);
-        // The big chat model fits next to a small speech model with one slot and 8k context.
+        // The big chat model fits next to a small speech model (shrunk to one slot and 8k context
+        // when that is what makes it fit).
         let chat = a
             .models
             .iter()
             .find(|m| m.serves.contains(&Need::Chat))
             .unwrap();
-        assert_eq!(chat.id, "gemma4:26b-q4");
-        assert_eq!(chat.slots, 1);
+        // One of the catalog's large chat models (the id is not pinned: the catalog grows).
+        assert!(chat.weights_bytes > 14 * GIB, "{} is small", chat.id);
         assert_eq!(
             a.models
                 .iter()

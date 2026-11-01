@@ -301,6 +301,11 @@ remote fetches go through `media.rs` `PublicOnly` (no loopback / private / link-
   book KV. Qwen3-ASR (`qwen3vl`) transcribes with `qwen_asr_prompt` and `split_asr_output`
   (`language X<asr_text>…`; a given language is forced by prefilling it). Cloudflare's Clef
   (`clef`) is a decision model on Qwen 3.5, not a chat model, and is not rendered.
+  `ChatFamily` (`chat_family`, from the architecture and the GGUF template, which the backend
+  reads from the header before loading) picks the renderer and the tool format (ENG-9):
+  `coder_prompt` (Qwen3-Coder; `nemotron` for Nemotron 3.5 Lightning), `glm_prompt` (GLM 4.x,
+  `ToolFormat::GlmXml`), `lfm3_prompt` with tools (Qwen XML calls), `lfm2_prompt` (LFM2.5,
+  no tools); `testdata/eng9_templates.json` checks them against the real templates.
   `lfm3_prompt` renders LFM3 (Liquid AI; `hypnos.lfm3.macos.example.toml`) the same way: `think`
   opens `<think>`, which the engine hides like Gemma's channel, and transcription uses its
   `Perform ASR in <language>.` system prompt. Hybrid / recurrent models (`is_hybrid`) take the

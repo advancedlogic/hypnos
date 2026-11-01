@@ -107,11 +107,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       probably makes llama.cpp b11982 re-capture its CUDA graph every step again. Check with the
       graph counters / `GGML_CUDA_DISABLE_GRAPHS`, try 2 slots and 4 x 8k, and ship the shape that
       batches well (on Metal 4 slots gave 1.43x).
-- [ ] 🟩 **ENG-9** `P3` More chat formats: Mistral, Nemotron, GLM, LFM2, Qwen 3
-      One renderer each, only where a model earns it: Voxtral Mini 4B Realtime (`mistral3`,
-      streaming transcription, Apache-2.0), Nemotron 3.5 Lightning 30B-A3B (`nemotron_h_moe`, 1M
-      context, NVIDIA license), GLM-4.7-Flash 30B (MIT, tool use), Qwen3-Coder-30B-A3B
-      (`qwen3moe`), LFM2.5-24B-A2B (`lfm2moe`).
 - [ ] 🟩 **ENG-10** `P3` Image engine: optional VAE and other encoders; Parakeet transcription
       Iris-3B works in pixel space (no VAE; Apache-2.0), Krea 2 uses the Wan 2.1 VAE, LLaDA-Image
       a 9.7 GB diffusion-LLM encoder: make `aux_weights_path` optional and check each pipeline.
@@ -129,6 +124,18 @@ _No cards yet._
 
 ## Done
 
+- [x] 🟩 **ENG-9** `P3` More chat formats: Mistral, Nemotron, GLM, LFM2, Qwen 3
+      One renderer each, only where a model earns it: Voxtral Mini 4B Realtime (`mistral3`,
+      streaming transcription, Apache-2.0), Nemotron 3.5 Lightning 30B-A3B (`nemotron_h_moe`, 1M
+      context, NVIDIA license), GLM-4.7-Flash 30B (MIT, tool use), Qwen3-Coder-30B-A3B
+      (`qwen3moe`), LFM2.5-24B-A2B (`lfm2moe`).
+      Done: `ChatFamily` (architecture + GGUF template, read from the header before loading)
+      picks the renderer and the tool format. `coder_prompt` (Qwen3-Coder; Nemotron 3.5
+      Lightning's variant), `glm_prompt` + `ToolFormat::GlmXml`, `lfm2_prompt`, and tools for every
+      LFM3 model (Qwen XML calls): 30 cases byte-identical to the templates (jinja2). Catalog:
+      Qwen3-Coder 30B-A3B, Nemotron 3.5 Lightning 30B-A3B, GLM-4.7-Flash, LFM2.5 24B-A2B, all
+      tested live (tool round, forced and streamed calls) and measured. Voxtral Realtime left out:
+      a streaming recognizer, not a chat model. LFM2.5's Python-style tool calls not done.
 - [x] 🟩 **ENG-8** `P2` Speech output through llama.cpp (LFM3-Audio, Qwen3-TTS)
       b11982's libmtmd generates audio (`mtmd-helper-gen.cpp`, `tools/tts`): an engine path for
       `text_to_speech` on `ggml_llama` models, WAV / streamed PCM like Kokoro. First LFM3-Audio

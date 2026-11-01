@@ -336,23 +336,28 @@ fn gemma4_prompt(
 /// thoughts out of the answer) or closes it empty, and earlier answers carry an empty block with
 /// any thoughts stripped, as the template does. Images and audio are the media marker alone:
 /// libmtmd adds `<|vision_start|>` / `<|vision_end|>` around them.
-fn lfm3_prompt(messages: &[ChatMessage], marker: &str, think: Option<bool>) -> String {
+fn lfm3_prompt(
+    messages: &[ChatMessage],
+    marker: &str,
+    think: Option<bool>,
+    tools: &[ToolSpec],
+    prefill: &str,
+) -> String {
     let mut out = String::from("<|startoftext|>");
-    let system_text: Vec<String> = messages
-        .iter()
-        .filter(|m| m.role == "system" || m.role == "developer")
-        .map(|m| {
-            m.content
-                .render_with_media_marker(marker)
-                .trim()
-                .to_string()
-        })
-        .filter(|s| !s.is_empty())
-        .collect();
-    if !system_text.is_empty() {
-        out.push_str("<|im_start|>system\n");
-        out.push_str(&system_text.join("\n"));
-        out.push_str("<|im_end|>\n");
+    let mut system = system_text(messages, marker);
+    if !tools.is_empty() {
+        // Each tool's function object as JSON, one per line, after the system text.
+        let lines: Vec<String> = tools
+            .iter()
+            .map(|t| crate::tools::py_json(&crate::tools::function_json(t)))
+            .collect();
+        if !system.is_empty() {
+            system.push_str("\n\n");
+        }
+        system.push_str(&format!("<tools>\n{}\n</tools>", lines.join("\n")));
+    }
+    if !system.is_empty() {
+        out.push_str(&format!("<|im_start|>system\n{system}<|im_end|>\n"));
     }
     for m in messages
         .iter()
@@ -368,6 +373,16 @@ fn lfm3_prompt(messages: &[ChatMessage], marker: &str, think: Option<bool>) -> S
                     out.push_str("<think></think>");
                 }
                 out.push_str(answer);
+                // Calls right after the text, a blank line between calls.
+                for (k, call) in m.tool_calls.iter().flatten().enumerate() {
+                    if k > 0 {
+                        out.push_str("\n\n");
+                    }
+                    out.push_str(&crate::tools::xml_call_text(
+                        call,
+                        crate::tools::ArgStyle::Json,
+                    ));
+                }
             }
             "tool" => {
                 out.push_str("<|im_start|>tool\n<tool_response>\n");
@@ -387,6 +402,7 @@ fn lfm3_prompt(messages: &[ChatMessage], marker: &str, think: Option<bool>) -> S
         Some(false) => out.push_str("<think></think>"),
         None => {}
     }
+    out.push_str(prefill);
     out
 }
 
@@ -425,26 +441,249 @@ fn template_has(model: &LlamaModel, literal: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// The GGUF architectures rendered by [`qwen_prompt`]: Qwen 3.5 / 3.6 / 3.8 dense and MoE, and
-/// chat models built on them (MiniCPM-V 4.6 is `qwen35`).
-fn is_qwen_chat(arch: &str) -> bool {
-    matches!(arch, "qwen35" | "qwen35moe")
+/// Which renderer a chat model gets, from its architecture and its GGUF template text: the
+/// architecture alone is not enough (a `qwen3moe` GGUF can be Qwen3-Coder, with XML tool calls, or
+/// a Qwen3 chat model with JSON ones).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChatFamily {
+    /// Gemma 4 and models on it (Nemotron 3.5 Bolt); EmbeddingGemma's turns too.
+    Gemma4,
+    /// Qwen 3.5 / 3.6 / 3.8 and chat models on them (MiniCPM-V 4.6).
+    Qwen,
+    /// Qwen3-Coder's template (XML declarations and calls); `nemotron`: NVIDIA Nemotron 3.5's
+    /// version of it, with a system turn always and `<think>` blocks.
+    QwenCoder { nemotron: bool },
+    /// GLM 4.x (`[gMASK]<sop>`, `<|user|>` turns, `<arg_key>` calls).
+    Glm,
+    /// LFM3 chat, vision, audio and omni models; `tools`: the template declares tools.
+    Lfm3 { thinks: bool, tools: bool },
+    /// LFM2 / LFM2.5: ChatML that always opens `<think>`.
+    Lfm2,
+    /// Anything else: the GGUF template through llama.cpp, else ChatML.
+    Other,
 }
 
-/// The model's native tool-call format, when Hypnos implements it (`tools.rs`).
-pub(crate) fn tool_format(arch: &str) -> Option<ToolFormat> {
-    if arch.starts_with("gemma4") {
-        Some(ToolFormat::Gemma4)
-    } else if is_qwen_chat(arch) {
-        Some(ToolFormat::QwenXml)
+/// See [`ChatFamily`]; `template` is the GGUF's `tokenizer.chat_template` (empty if absent).
+pub(crate) fn chat_family(arch: &str, template: &str) -> ChatFamily {
+    if arch.starts_with("gemma4") || arch.starts_with("gemma-embedding") {
+        ChatFamily::Gemma4
+    } else if template.contains("<function>\\n<name>") && template.contains("<function=") {
+        ChatFamily::QwenCoder {
+            nemotron: template.contains("truncate_history_thinking"),
+        }
+    } else if matches!(arch, "qwen35" | "qwen35moe") {
+        ChatFamily::Qwen
+    } else if template.contains("[gMASK]") && template.contains("<arg_key>") {
+        ChatFamily::Glm
+    } else if arch == "lfm3" {
+        ChatFamily::Lfm3 {
+            thinks: template.contains("enable_thinking"),
+            tools: template.contains("<tool_call>"),
+        }
+    } else if arch.starts_with("lfm2") {
+        ChatFamily::Lfm2
     } else {
-        None
+        ChatFamily::Other
     }
 }
 
-/// Whether the model's native tool format is implemented.
-pub(crate) fn supports_tools(arch: &str) -> bool {
-    tool_format(arch).is_some()
+/// The family of a loaded model.
+pub(crate) fn model_family(model: &LlamaModel, arch: &str) -> ChatFamily {
+    let template = model
+        .chat_template(None)
+        .ok()
+        .and_then(|t| t.to_str().ok().map(str::to_string))
+        .unwrap_or_default();
+    chat_family(arch, &template)
+}
+
+/// The family's native tool-call format, when Hypnos implements it (`tools.rs`).
+pub(crate) fn tool_format(family: ChatFamily) -> Option<ToolFormat> {
+    match family {
+        ChatFamily::Gemma4 => Some(ToolFormat::Gemma4),
+        ChatFamily::Qwen | ChatFamily::QwenCoder { .. } => Some(ToolFormat::QwenXml),
+        ChatFamily::Lfm3 { tools: true, .. } => Some(ToolFormat::QwenXml),
+        ChatFamily::Glm => Some(ToolFormat::GlmXml),
+        _ => None,
+    }
+}
+
+/// Whether the family's native tool format is implemented.
+pub(crate) fn supports_tools(family: ChatFamily) -> bool {
+    tool_format(family).is_some()
+}
+
+/// The system text of `messages` (system and developer turns), joined.
+fn system_text(messages: &[ChatMessage], marker: &str) -> String {
+    messages
+        .iter()
+        .filter(|m| m.role == "system" || m.role == "developer")
+        .map(|m| {
+            m.content
+                .render_with_media_marker(marker)
+                .trim()
+                .to_string()
+        })
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Qwen3-Coder's turns (and NVIDIA Nemotron 3.5's, `nemotron`), as their GGUF templates render
+/// them: tools declared in XML after the system text, past calls in Qwen's XML notation, results
+/// in a user turn. Nemotron always has a system turn, opens every answer with a `<think>` block
+/// (empty in history, open when thinking) and puts a newline before each call and the turn end.
+fn coder_prompt(
+    messages: &[ChatMessage],
+    marker: &str,
+    think: bool,
+    tools: &[ToolSpec],
+    prefill: &str,
+    nemotron: bool,
+) -> String {
+    use crate::tools::{coder_tools_block, xml_call_text, ArgStyle};
+    let mut out = String::new();
+    let system = system_text(messages, marker);
+    if nemotron || !system.is_empty() || !tools.is_empty() {
+        let mut text = if system.is_empty() && !tools.is_empty() && !nemotron {
+            "You are Qwen, a helpful AI assistant that can interact with a computer to solve tasks."
+                .to_string()
+        } else {
+            system
+        };
+        if !tools.is_empty() {
+            let block = coder_tools_block(tools);
+            text.push_str(if text.is_empty() {
+                block.trim_start_matches('\n')
+            } else {
+                &block
+            });
+        }
+        out.push_str(&format!("<|im_start|>system\n{text}<|im_end|>\n"));
+    }
+    let turns: Vec<&ChatMessage> = messages
+        .iter()
+        .filter(|m| m.role != "system" && m.role != "developer")
+        .collect();
+    for (i, m) in turns.iter().enumerate() {
+        let content = m.content.render_with_media_marker(marker);
+        let content = content.trim();
+        let calls = m.tool_calls.as_deref().unwrap_or(&[]);
+        match m.role.as_str() {
+            "assistant" | "model" => {
+                let answer = content.rsplit("</think>").next().unwrap_or(content).trim();
+                if nemotron {
+                    out.push_str("<|im_start|>assistant\n<think></think>");
+                    out.push_str(answer);
+                    for call in calls {
+                        out.push('\n');
+                        out.push_str(&xml_call_text(call, ArgStyle::PyString));
+                    }
+                    if !calls.is_empty() {
+                        out.push('\n');
+                    }
+                } else if calls.is_empty() {
+                    out.push_str("<|im_start|>assistant\n");
+                    out.push_str(answer);
+                } else {
+                    out.push_str("<|im_start|>assistant");
+                    if !answer.is_empty() {
+                        out.push_str(&format!("\n{answer}\n"));
+                    }
+                    for call in calls {
+                        out.push('\n');
+                        out.push_str(&xml_call_text(call, ArgStyle::PyString));
+                    }
+                }
+                out.push_str("<|im_end|>\n");
+            }
+            "tool" => {
+                if i == 0 || turns[i - 1].role != "tool" {
+                    out.push_str("<|im_start|>user\n");
+                }
+                out.push_str(&format!("<tool_response>\n{content}\n</tool_response>\n"));
+                if turns.get(i + 1).is_none_or(|n| n.role != "tool") {
+                    out.push_str("<|im_end|>\n");
+                }
+            }
+            _ => out.push_str(&format!("<|im_start|>user\n{content}<|im_end|>\n")),
+        }
+    }
+    out.push_str("<|im_start|>assistant\n");
+    if nemotron {
+        out.push_str(if think {
+            "<think>\n"
+        } else {
+            "<think></think>"
+        });
+    }
+    out.push_str(prefill);
+    out
+}
+
+/// GLM 4.x's turns, as its GGUF template renders them: `[gMASK]<sop>`, the tools block as the first
+/// system turn, no separators between turns, `</think>` before each past answer, calls right
+/// after it, results after `<|observation|>`; the generation prompt opens `<think>` or closes it.
+fn glm_prompt(
+    messages: &[ChatMessage],
+    marker: &str,
+    think: bool,
+    tools: &[ToolSpec],
+    prefill: &str,
+) -> String {
+    let mut out = String::from("[gMASK]<sop>");
+    if !tools.is_empty() {
+        out.push_str(&crate::tools::glm_tools_block(tools));
+    }
+    for (i, m) in messages.iter().enumerate() {
+        let content = m.content.render_with_media_marker(marker);
+        let content = content.trim();
+        match m.role.as_str() {
+            "system" | "developer" => out.push_str(&format!("<|system|>{content}")),
+            "assistant" | "model" => {
+                let answer = content.rsplit("</think>").next().unwrap_or(content).trim();
+                out.push_str("<|assistant|></think>");
+                out.push_str(answer);
+                for call in m.tool_calls.iter().flatten() {
+                    out.push_str(&crate::tools::glm_call_text(call));
+                }
+            }
+            "tool" => {
+                if i == 0 || messages[i - 1].role != "tool" {
+                    out.push_str("<|observation|>");
+                }
+                out.push_str(&format!("<tool_response>{content}</tool_response>"));
+            }
+            _ => out.push_str(&format!("<|user|>{content}")),
+        }
+    }
+    out.push_str("<|assistant|>");
+    out.push_str(if think { "<think>" } else { "</think>" });
+    out.push_str(prefill);
+    out
+}
+
+/// LFM2 / LFM2.5's ChatML turns: past answers without their thinking, the generation prompt
+/// always opens `<think>` (thinking off is a budget of 0: the engine closes it at once).
+fn lfm2_prompt(messages: &[ChatMessage], marker: &str) -> String {
+    let mut out = String::from("<|startoftext|>");
+    for m in messages {
+        let content = m.content.render_with_media_marker(marker);
+        let content = content.trim();
+        let role = match m.role.as_str() {
+            "developer" => "system",
+            "model" => "assistant",
+            r => r,
+        };
+        let content = if role == "assistant" {
+            content.rsplit("</think>").next().unwrap_or(content).trim()
+        } else {
+            content
+        };
+        out.push_str(&format!("<|im_start|>{role}\n{content}<|im_end|>\n"));
+    }
+    out.push_str("<|im_start|>assistant\n<think>");
+    out
 }
 
 const QWEN_EFFORT_XHIGH: &str = "Reasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.";
@@ -593,18 +832,25 @@ pub(crate) fn build_prompt(
     tools: &[ToolSpec],
     prefill: &str,
 ) -> String {
-    if is_qwen_chat(arch) {
-        let variant = QwenTemplate::of(model);
-        return qwen_prompt(messages, marker, think, effort, tools, prefill, variant);
-    }
-    if arch.starts_with("gemma4") || arch.starts_with("gemma-embedding") {
-        let variant = Gemma4Template::of(model);
-        return gemma4_prompt(messages, marker, think, tools, prefill, variant);
-    }
-    if arch == "lfm3" {
+    match model_family(model, arch) {
+        ChatFamily::Qwen => {
+            let variant = QwenTemplate::of(model);
+            return qwen_prompt(messages, marker, think, effort, tools, prefill, variant);
+        }
+        ChatFamily::Gemma4 => {
+            let variant = Gemma4Template::of(model);
+            return gemma4_prompt(messages, marker, think, tools, prefill, variant);
+        }
+        ChatFamily::QwenCoder { nemotron } => {
+            return coder_prompt(messages, marker, think, tools, prefill, nemotron);
+        }
+        ChatFamily::Glm => return glm_prompt(messages, marker, think, tools, prefill),
         // The chat models' template has a thinking switch; the audio model's has none.
-        let thinks = template_has(model, "enable_thinking");
-        return lfm3_prompt(messages, marker, thinks.then_some(think));
+        ChatFamily::Lfm3 { thinks, .. } => {
+            return lfm3_prompt(messages, marker, thinks.then_some(think), tools, prefill);
+        }
+        ChatFamily::Lfm2 => return lfm2_prompt(messages, marker),
+        ChatFamily::Other => {}
     }
     if let Ok(tmpl) = model.chat_template(None) {
         let chat: Vec<LlamaChatMessage> = messages
@@ -823,19 +1069,33 @@ pub struct GgmlLlamaBackend {
     worker: Arc<StdMutex<Option<LlamaWorker>>>,
     n_threads: i32,
     opts: EngineOptions,
-    /// `general.architecture` from the GGUF header, read once (before any load).
-    arch: std::sync::OnceLock<String>,
+    /// `general.architecture` and the chat family, from the GGUF header (read once, before any
+    /// load: the server asks about tools before the model is resident).
+    meta: std::sync::OnceLock<(String, ChatFamily)>,
 }
 
 impl GgmlLlamaBackend {
-    fn arch(&self) -> &str {
-        self.arch.get_or_init(|| {
-            hypnos_core::gguf::GgufArchMetadata::read(&self.config.weights_path)
+    fn meta(&self) -> &(String, ChatFamily) {
+        self.meta.get_or_init(|| {
+            let m = hypnos_core::gguf::GgufArchMetadata::read(&self.config.weights_path)
                 .ok()
-                .flatten()
-                .map(|m| m.architecture)
-                .unwrap_or_default()
+                .flatten();
+            let arch = m
+                .as_ref()
+                .map(|m| m.architecture.clone())
+                .unwrap_or_default();
+            let template = m.and_then(|m| m.chat_template).unwrap_or_default();
+            let family = chat_family(&arch, &template);
+            (arch, family)
         })
+    }
+
+    fn arch(&self) -> &str {
+        &self.meta().0
+    }
+
+    fn family(&self) -> ChatFamily {
+        self.meta().1
     }
 
     pub fn new(config: ModelConfig, opts: EngineOptions) -> Self {
@@ -846,7 +1106,7 @@ impl GgmlLlamaBackend {
             worker: Arc::new(StdMutex::new(None)),
             n_threads: default_threads(),
             opts,
-            arch: std::sync::OnceLock::new(),
+            meta: std::sync::OnceLock::new(),
         }
     }
 
@@ -952,7 +1212,7 @@ impl GgmlLlamaBackend {
         let with_tools = !tools.is_empty();
         // A model without a format never gets here with tools (the server refuses them first,
         // the engine as well); Gemma's is only a placeholder for the parser then.
-        let format = tool_format(self.arch()).unwrap_or(ToolFormat::Gemma4);
+        let format = tool_format(self.family()).unwrap_or(ToolFormat::Gemma4);
         // No grammar constraint here: a required or named call is forced by writing its opening.
         let prefill = format.prefill(&choice);
         let total_chars: usize = req
@@ -1141,7 +1401,7 @@ impl ModelBackend for GgmlLlamaBackend {
     }
 
     fn supports_tool_calls(&self) -> bool {
-        supports_tools(self.arch())
+        supports_tools(self.family())
     }
 
     async fn apply_placement(
@@ -1479,8 +1739,9 @@ fn speech_timing(reply: &SpeechReply, queue_ms: f64) -> EngineTiming {
 #[cfg(test)]
 mod tests {
     use super::{
-        cpu_expert_pattern, gemma4_prompt, lfm3_prompt, qwen_asr_prompt, qwen_prompt,
-        split_asr_output, transcription_messages, Gemma4Template, QwenTemplate,
+        chat_family, coder_prompt, cpu_expert_pattern, gemma4_prompt, glm_prompt, lfm2_prompt,
+        lfm3_prompt, qwen_asr_prompt, qwen_prompt, split_asr_output, transcription_messages,
+        ChatFamily, Gemma4Template, QwenTemplate,
     };
 
     #[test]
@@ -1496,16 +1757,22 @@ mod tests {
              <|im_start|>assistant\n<think></think>Hello!<|im_end|>\n\
              <|im_start|>user\nBye<|im_end|>\n<|im_start|>assistant\n";
         assert_eq!(
-            lfm3_prompt(&conversation, "<__media__>", Some(false)),
+            lfm3_prompt(&conversation, "<__media__>", Some(false), &[], ""),
             format!("{expected_turns}<think></think>")
         );
         assert_eq!(
-            lfm3_prompt(&conversation, "<__media__>", Some(true)),
+            lfm3_prompt(&conversation, "<__media__>", Some(true), &[], ""),
             format!("{expected_turns}<think>")
         );
         // LFM3-Audio: no thinking block anywhere.
         assert_eq!(
-            lfm3_prompt(&[msg("user", "Hi"), msg("assistant", "Yo")], "<m>", None),
+            lfm3_prompt(
+                &[msg("user", "Hi"), msg("assistant", "Yo")],
+                "<m>",
+                None,
+                &[],
+                ""
+            ),
             "<|startoftext|><|im_start|>user\nHi<|im_end|>\n\
              <|im_start|>assistant\nYo<|im_end|>\n<|im_start|>assistant\n"
         );
@@ -1791,5 +2058,142 @@ mod tests {
             split_asr_output(" Plain text. "),
             (None, "Plain text.".into())
         );
+    }
+
+    /// The conversations of the template fixtures (`testdata/*_templates.json`).
+    fn fixture_conversation(conv: &str) -> (Vec<ChatMessage>, Vec<ToolSpec>) {
+        let tool: ToolSpec = serde_json::from_value(json!({
+            "type": "function",
+            "function": {"name": "get_weather", "description": "Weather",
+                         "parameters": {"properties": {"city": {"type": "string"}},
+                                        "required": ["city"], "type": "object"}}
+        }))
+        .unwrap();
+        let call = |id: &str, city: &str| ToolCall {
+            id: id.into(),
+            kind: "function".into(),
+            function: FunctionCall {
+                name: "get_weather".into(),
+                arguments: format!(r#"{{"city":"{city}"}}"#),
+            },
+        };
+        let result = |id: &str, text: &str| {
+            let mut r = msg("tool", text);
+            r.tool_call_id = Some(id.into());
+            r
+        };
+        match conv {
+            "plain" => (vec![msg("user", "Hi")], vec![]),
+            "system_history" => (
+                vec![
+                    msg("system", "Be brief."),
+                    msg("user", "Hi"),
+                    msg("assistant", "Hello!"),
+                    msg("user", "Bye"),
+                ],
+                vec![],
+            ),
+            "tools_round" => {
+                let mut a = msg("assistant", "Let me check.");
+                a.tool_calls = Some(vec![call("c1", "Paris")]);
+                (
+                    vec![
+                        msg("system", "Be brief."),
+                        msg("user", "Weather in Paris?"),
+                        a,
+                        result("c1", "18 C"),
+                    ],
+                    vec![tool],
+                )
+            }
+            "two_calls" => {
+                let mut a = msg("assistant", "");
+                a.tool_calls = Some(vec![call("c1", "Paris"), call("c2", "Rome")]);
+                (
+                    vec![
+                        msg("user", "Weather in Paris and Rome?"),
+                        a,
+                        result("c1", "18 C"),
+                        result("c2", "21 C"),
+                        msg("assistant", "Paris 18 C, Rome 21 C."),
+                        msg("user", "Thanks"),
+                    ],
+                    vec![tool],
+                )
+            }
+            other => panic!("unknown conversation {other}"),
+        }
+    }
+
+    /// LFM3 with tools, Qwen3-Coder, Nemotron 3.5 Lightning, GLM-4.7 and LFM2.5 against their
+    /// own templates, rendered with jinja2 (`testdata/eng9_templates.json`; the LFM templates'
+    /// `bos_token` was not set there, so `<|startoftext|>` is added back).
+    #[test]
+    fn eng9_families_render_like_their_chat_templates() {
+        let cases: serde_json::Value =
+            serde_json::from_str(include_str!("testdata/eng9_templates.json")).unwrap();
+        for case in cases.as_array().unwrap() {
+            let conv = case["conversation"].as_str().unwrap();
+            let (messages, tools) = fixture_conversation(conv);
+            let think = case["think"].as_bool().unwrap();
+            let m = "<__media__>";
+            let (got, expected) = match case["family"].as_str().unwrap() {
+                "lfm3" => (
+                    lfm3_prompt(&messages, m, Some(think), &tools, ""),
+                    format!("<|startoftext|>{}", case["expected"].as_str().unwrap()),
+                ),
+                "lfm2.5" => (
+                    lfm2_prompt(&messages, m),
+                    format!("<|startoftext|>{}", case["expected"].as_str().unwrap()),
+                ),
+                "coder" => (
+                    coder_prompt(&messages, m, think, &tools, "", false),
+                    case["expected"].as_str().unwrap().to_string(),
+                ),
+                "nemotron" => (
+                    coder_prompt(&messages, m, think, &tools, "", true),
+                    case["expected"].as_str().unwrap().to_string(),
+                ),
+                "glm" => (
+                    glm_prompt(&messages, m, think, &tools, ""),
+                    case["expected"].as_str().unwrap().to_string(),
+                ),
+                other => panic!("unknown family {other}"),
+            };
+            assert_eq!(
+                got,
+                expected,
+                "{other} / {conv} / think {think}",
+                other = case["family"]
+            );
+        }
+    }
+
+    #[test]
+    fn chat_families_come_from_arch_and_template() {
+        assert_eq!(chat_family("gemma4", ""), ChatFamily::Gemma4);
+        assert_eq!(chat_family("qwen35moe", ""), ChatFamily::Qwen);
+        // A Qwen3-Coder template (XML declarations) on a qwen3moe GGUF.
+        let t = "{{- \"\\n<function>\\n<name>\" ~ tool.name }} <function=";
+        assert_eq!(
+            chat_family("qwen3moe", t),
+            ChatFamily::QwenCoder { nemotron: false }
+        );
+        assert_eq!(
+            chat_family("qwen3moe", "<tool_call>{json}"),
+            ChatFamily::Other
+        );
+        assert_eq!(
+            chat_family("deepseek2", "[gMASK]<sop> <arg_key>"),
+            ChatFamily::Glm
+        );
+        assert_eq!(
+            chat_family("lfm3", "enable_thinking <tool_call>"),
+            ChatFamily::Lfm3 {
+                thinks: true,
+                tools: true
+            }
+        );
+        assert_eq!(chat_family("lfm2moe", ""), ChatFamily::Lfm2);
     }
 }

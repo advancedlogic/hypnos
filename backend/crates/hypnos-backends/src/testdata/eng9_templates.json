@@ -1,0 +1,242 @@
+[
+ {
+  "family": "lfm3",
+  "template": "LFM3-1.7B",
+  "conversation": "plain",
+  "think": false,
+  "effort": null,
+  "expected": "<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think>"
+ },
+ {
+  "family": "lfm3",
+  "template": "LFM3-1.7B",
+  "conversation": "plain",
+  "think": true,
+  "effort": null,
+  "expected": "<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>"
+ },
+ {
+  "family": "lfm3",
+  "template": "LFM3-1.7B",
+  "conversation": "system_history",
+  "think": false,
+  "effort": null,
+  "expected": "<|im_start|>system\nBe brief.<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think>Hello!<|im_end|>\n<|im_start|>user\nBye<|im_end|>\n<|im_start|>assistant\n<think></think>"
+ },
+ {
+  "family": "lfm3",
+  "template": "LFM3-1.7B",
+  "conversation": "system_history",
+  "think": true,
+  "effort": null,
+  "expected": "<|im_start|>system\nBe brief.<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think>Hello!<|im_end|>\n<|im_start|>user\nBye<|im_end|>\n<|im_start|>assistant\n<think>"
+ },
+ {
+  "family": "lfm3",
+  "template": "LFM3-1.7B",
+  "conversation": "tools_round",
+  "think": false,
+  "effort": null,
+  "expected": "<|im_start|>system\nBe brief.\n\n<tools>\n{\"name\": \"get_weather\", \"description\": \"Weather\", \"parameters\": {\"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"], \"type\": \"object\"}}\n</tools><|im_end|>\n<|im_start|>user\nWeather in Paris?<|im_end|>\n<|im_start|>assistant\n<think></think>Let me check.<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>tool\n<tool_response>\n18 C\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think></think>"
+ },
+ {
+  "family": "lfm3",
+  "template": "LFM3-1.7B",
+  "conversation": "tools_round",
+  "think": true,
+  "effort": null,
+  "expected": "<|im_start|>system\nBe brief.\n\n<tools>\n{\"name\": \"get_weather\", \"description\": \"Weather\", \"parameters\": {\"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"], \"type\": \"object\"}}\n</tools><|im_end|>\n<|im_start|>user\nWeather in Paris?<|im_end|>\n<|im_start|>assistant\n<think></think>Let me check.<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>tool\n<tool_response>\n18 C\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>"
+ },
+ {
+  "family": "lfm3",
+  "template": "LFM3-1.7B",
+  "conversation": "two_calls",
+  "think": false,
+  "effort": null,
+  "expected": "<|im_start|>system\n<tools>\n{\"name\": \"get_weather\", \"description\": \"Weather\", \"parameters\": {\"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"], \"type\": \"object\"}}\n</tools><|im_end|>\n<|im_start|>user\nWeather in Paris and Rome?<|im_end|>\n<|im_start|>assistant\n<think></think><tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n\n<tool_call>\n<function=get_weather>\n<parameter=city>\nRome\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>tool\n<tool_response>\n18 C\n</tool_response><|im_end|>\n<|im_start|>tool\n<tool_response>\n21 C\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think></think>Paris 18 C, Rome 21 C.<|im_end|>\n<|im_start|>user\nThanks<|im_end|>\n<|im_start|>assistant\n<think></think>"
+ },
+ {
+  "family": "lfm3",
+  "template": "LFM3-1.7B",
+  "conversation": "two_calls",
+  "think": true,
+  "effort": null,
+  "expected": "<|im_start|>system\n<tools>\n{\"name\": \"get_weather\", \"description\": \"Weather\", \"parameters\": {\"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"], \"type\": \"object\"}}\n</tools><|im_end|>\n<|im_start|>user\nWeather in Paris and Rome?<|im_end|>\n<|im_start|>assistant\n<think></think><tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n\n<tool_call>\n<function=get_weather>\n<parameter=city>\nRome\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>tool\n<tool_response>\n18 C\n</tool_response><|im_end|>\n<|im_start|>tool\n<tool_response>\n21 C\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think></think>Paris 18 C, Rome 21 C.<|im_end|>\n<|im_start|>user\nThanks<|im_end|>\n<|im_start|>assistant\n<think>"
+ },
+ {
+  "family": "coder",
+  "template": "Qwen3-Coder-30B-A3B-Instruct-GGUF",
+  "conversation": "plain",
+  "think": false,
+  "effort": null,
+  "expected": "<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n"
+ },
+ {
+  "family": "coder",
+  "template": "Qwen3-Coder-30B-A3B-Instruct-GGUF",
+  "conversation": "system_history",
+  "think": false,
+  "effort": null,
+  "expected": "<|im_start|>system\nBe brief.<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\nHello!<|im_end|>\n<|im_start|>user\nBye<|im_end|>\n<|im_start|>assistant\n"
+ },
+ {
+  "family": "coder",
+  "template": "Qwen3-Coder-30B-A3B-Instruct-GGUF",
+  "conversation": "tools_round",
+  "think": false,
+  "effort": null,
+  "expected": "<|im_start|>system\nBe brief.\n\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n<function>\n<name>get_weather</name>\n<description>Weather</description>\n<parameters>\n<parameter>\n<name>city</name>\n<type>string</type>\n</parameter>\n<required>[\"city\"]</required>\n</parameters>\n</function>\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWeather in Paris?<|im_end|>\n<|im_start|>assistant\nLet me check.\n\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\n18 C\n</tool_response>\n<|im_end|>\n<|im_start|>assistant\n"
+ },
+ {
+  "family": "coder",
+  "template": "Qwen3-Coder-30B-A3B-Instruct-GGUF",
+  "conversation": "two_calls",
+  "think": false,
+  "effort": null,
+  "expected": "<|im_start|>system\nYou are Qwen, a helpful AI assistant that can interact with a computer to solve tasks.\n\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n<function>\n<name>get_weather</name>\n<description>Weather</description>\n<parameters>\n<parameter>\n<name>city</name>\n<type>string</type>\n</parameter>\n<required>[\"city\"]</required>\n</parameters>\n</function>\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWeather in Paris and Rome?<|im_end|>\n<|im_start|>assistant\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=get_weather>\n<parameter=city>\nRome\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\n18 C\n</tool_response>\n<tool_response>\n21 C\n</tool_response>\n<|im_end|>\n<|im_start|>assistant\nParis 18 C, Rome 21 C.<|im_end|>\n<|im_start|>user\nThanks<|im_end|>\n<|im_start|>assistant\n"
+ },
+ {
+  "family": "nemotron",
+  "template": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+  "conversation": "plain",
+  "think": false,
+  "effort": null,
+  "expected": "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think>"
+ },
+ {
+  "family": "nemotron",
+  "template": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+  "conversation": "plain",
+  "think": true,
+  "effort": null,
+  "expected": "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>\n"
+ },
+ {
+  "family": "nemotron",
+  "template": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+  "conversation": "system_history",
+  "think": false,
+  "effort": null,
+  "expected": "<|im_start|>system\nBe brief.<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think>Hello!<|im_end|>\n<|im_start|>user\nBye<|im_end|>\n<|im_start|>assistant\n<think></think>"
+ },
+ {
+  "family": "nemotron",
+  "template": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+  "conversation": "system_history",
+  "think": true,
+  "effort": null,
+  "expected": "<|im_start|>system\nBe brief.<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think>Hello!<|im_end|>\n<|im_start|>user\nBye<|im_end|>\n<|im_start|>assistant\n<think>\n"
+ },
+ {
+  "family": "nemotron",
+  "template": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+  "conversation": "tools_round",
+  "think": false,
+  "effort": null,
+  "expected": "<|im_start|>system\nBe brief.\n\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n<function>\n<name>get_weather</name>\n<description>Weather</description>\n<parameters>\n<parameter>\n<name>city</name>\n<type>string</type>\n</parameter>\n<required>[\"city\"]</required>\n</parameters>\n</function>\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWeather in Paris?<|im_end|>\n<|im_start|>assistant\n<think></think>Let me check.\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n<|im_start|>user\n<tool_response>\n18 C\n</tool_response>\n<|im_end|>\n<|im_start|>assistant\n<think></think>"
+ },
+ {
+  "family": "nemotron",
+  "template": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+  "conversation": "tools_round",
+  "think": true,
+  "effort": null,
+  "expected": "<|im_start|>system\nBe brief.\n\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n<function>\n<name>get_weather</name>\n<description>Weather</description>\n<parameters>\n<parameter>\n<name>city</name>\n<type>string</type>\n</parameter>\n<required>[\"city\"]</required>\n</parameters>\n</function>\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWeather in Paris?<|im_end|>\n<|im_start|>assistant\n<think></think>Let me check.\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n<|im_start|>user\n<tool_response>\n18 C\n</tool_response>\n<|im_end|>\n<|im_start|>assistant\n<think>\n"
+ },
+ {
+  "family": "nemotron",
+  "template": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+  "conversation": "two_calls",
+  "think": false,
+  "effort": null,
+  "expected": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n<function>\n<name>get_weather</name>\n<description>Weather</description>\n<parameters>\n<parameter>\n<name>city</name>\n<type>string</type>\n</parameter>\n<required>[\"city\"]</required>\n</parameters>\n</function>\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWeather in Paris and Rome?<|im_end|>\n<|im_start|>assistant\n<think></think>\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=get_weather>\n<parameter=city>\nRome\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n<|im_start|>user\n<tool_response>\n18 C\n</tool_response>\n<tool_response>\n21 C\n</tool_response>\n<|im_end|>\n<|im_start|>assistant\n<think></think>Paris 18 C, Rome 21 C.<|im_end|>\n<|im_start|>user\nThanks<|im_end|>\n<|im_start|>assistant\n<think></think>"
+ },
+ {
+  "family": "nemotron",
+  "template": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+  "conversation": "two_calls",
+  "think": true,
+  "effort": null,
+  "expected": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n<function>\n<name>get_weather</name>\n<description>Weather</description>\n<parameters>\n<parameter>\n<name>city</name>\n<type>string</type>\n</parameter>\n<required>[\"city\"]</required>\n</parameters>\n</function>\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nWeather in Paris and Rome?<|im_end|>\n<|im_start|>assistant\n<think></think>\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=get_weather>\n<parameter=city>\nRome\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n<|im_start|>user\n<tool_response>\n18 C\n</tool_response>\n<tool_response>\n21 C\n</tool_response>\n<|im_end|>\n<|im_start|>assistant\n<think></think>Paris 18 C, Rome 21 C.<|im_end|>\n<|im_start|>user\nThanks<|im_end|>\n<|im_start|>assistant\n<think>\n"
+ },
+ {
+  "family": "glm",
+  "template": "GLM-4.7-Flash-GGUF",
+  "conversation": "plain",
+  "think": false,
+  "effort": null,
+  "expected": "[gMASK]<sop><|user|>Hi<|assistant|></think>"
+ },
+ {
+  "family": "glm",
+  "template": "GLM-4.7-Flash-GGUF",
+  "conversation": "plain",
+  "think": true,
+  "effort": null,
+  "expected": "[gMASK]<sop><|user|>Hi<|assistant|><think>"
+ },
+ {
+  "family": "glm",
+  "template": "GLM-4.7-Flash-GGUF",
+  "conversation": "system_history",
+  "think": false,
+  "effort": null,
+  "expected": "[gMASK]<sop><|system|>Be brief.<|user|>Hi<|assistant|></think>Hello!<|user|>Bye<|assistant|></think>"
+ },
+ {
+  "family": "glm",
+  "template": "GLM-4.7-Flash-GGUF",
+  "conversation": "system_history",
+  "think": true,
+  "effort": null,
+  "expected": "[gMASK]<sop><|system|>Be brief.<|user|>Hi<|assistant|></think>Hello!<|user|>Bye<|assistant|><think>"
+ },
+ {
+  "family": "glm",
+  "template": "GLM-4.7-Flash-GGUF",
+  "conversation": "tools_round",
+  "think": false,
+  "effort": null,
+  "expected": "[gMASK]<sop><|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_weather\", \"description\": \"Weather\", \"parameters\": {\"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"], \"type\": \"object\"}}}\n</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call><|system|>Be brief.<|user|>Weather in Paris?<|assistant|></think>Let me check.<tool_call>get_weather<arg_key>city</arg_key><arg_value>Paris</arg_value></tool_call><|observation|><tool_response>18 C</tool_response><|assistant|></think>"
+ },
+ {
+  "family": "glm",
+  "template": "GLM-4.7-Flash-GGUF",
+  "conversation": "tools_round",
+  "think": true,
+  "effort": null,
+  "expected": "[gMASK]<sop><|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_weather\", \"description\": \"Weather\", \"parameters\": {\"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"], \"type\": \"object\"}}}\n</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call><|system|>Be brief.<|user|>Weather in Paris?<|assistant|></think>Let me check.<tool_call>get_weather<arg_key>city</arg_key><arg_value>Paris</arg_value></tool_call><|observation|><tool_response>18 C</tool_response><|assistant|><think>"
+ },
+ {
+  "family": "glm",
+  "template": "GLM-4.7-Flash-GGUF",
+  "conversation": "two_calls",
+  "think": false,
+  "effort": null,
+  "expected": "[gMASK]<sop><|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_weather\", \"description\": \"Weather\", \"parameters\": {\"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"], \"type\": \"object\"}}}\n</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call><|user|>Weather in Paris and Rome?<|assistant|></think><tool_call>get_weather<arg_key>city</arg_key><arg_value>Paris</arg_value></tool_call><tool_call>get_weather<arg_key>city</arg_key><arg_value>Rome</arg_value></tool_call><|observation|><tool_response>18 C</tool_response><tool_response>21 C</tool_response><|assistant|></think>Paris 18 C, Rome 21 C.<|user|>Thanks<|assistant|></think>"
+ },
+ {
+  "family": "glm",
+  "template": "GLM-4.7-Flash-GGUF",
+  "conversation": "two_calls",
+  "think": true,
+  "effort": null,
+  "expected": "[gMASK]<sop><|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"get_weather\", \"description\": \"Weather\", \"parameters\": {\"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"], \"type\": \"object\"}}}\n</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call><|user|>Weather in Paris and Rome?<|assistant|></think><tool_call>get_weather<arg_key>city</arg_key><arg_value>Paris</arg_value></tool_call><tool_call>get_weather<arg_key>city</arg_key><arg_value>Rome</arg_value></tool_call><|observation|><tool_response>18 C</tool_response><tool_response>21 C</tool_response><|assistant|></think>Paris 18 C, Rome 21 C.<|user|>Thanks<|assistant|><think>"
+ },
+ {
+  "family": "lfm2.5",
+  "template": "LFM2.5-24B-A2B-GGUF",
+  "conversation": "plain",
+  "think": false,
+  "effort": null,
+  "expected": "<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>"
+ },
+ {
+  "family": "lfm2.5",
+  "template": "LFM2.5-24B-A2B-GGUF",
+  "conversation": "system_history",
+  "think": false,
+  "effort": null,
+  "expected": "<|im_start|>system\nBe brief.<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\nHello!<|im_end|>\n<|im_start|>user\nBye<|im_end|>\n<|im_start|>assistant\n<think>"
+ }
+]
