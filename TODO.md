@@ -57,6 +57,26 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Backlog
 
+- [ ] 🩵 **DESK-22** `P2` The image tool takes its settings from the conversation
+      `generate_image` (`images.rs` `image_tool_spec`, `TOOL_INSTRUCTION`) passes only `prompt` and
+      one of three sizes; the server takes more. (1) Tool parameters the chat model fills from the
+      context: `size` as any WIDTHxHEIGHT 256-2048 (multiples of 16; aspect from the words, "phone
+      wallpaper", "banner", or an attached image's shape), `negative_prompt` ("no text"), `n` (up
+      to `limits.max_images_per_request`), `steps` ("quick sketch" / "high quality"; the model's
+      `[models.image]` default otherwise), `seed`. Leave `cfg_scale`, sampler, flow shift and
+      sigmas to the model's defaults (few-step models need CFG 1). (2) Edits: an image attached to
+      the message, or the one generated just before ("make it darker"), goes as a reference to
+      `POST /v1/images/edits` when the image model has `edit = true` (FLUX.2 klein, FLUX.3); else
+      a plain generation and a note. (3) The server returns the seed it used (a Hypnos field on
+      each `data[]` item; `docs/api.md`, mock server, the three SDKs), so "the same, but at night"
+      reuses it. (4) The app keeps every image's settings (prompt, negative prompt, size, seed,
+      steps, model, reference, seconds) with the message, shows them under the image and sends
+      them back to the chat model as the tool result, so a follow-up can change one and keep the
+      rest. (5) Styles (black and white, watercolor, vintage film) go into the prompt: say so in
+      the tool's description. Optional: exact filters after generation (grayscale, sepia, blur,
+      brightness) applied by the app to the finished image, no regeneration. Tests: the tool spec,
+      the prompt-convention fallback (`ToolCall` with the new fields), the seed round trip.
+
 - [ ] ⬛ **BUILD-12** `P1` Cut the Windows CUDA release build (3h10m) to the Linux one's time
       After BUILD-11 Windows CUDA is the release's critical path: 3h10m in run 41273996212 against
       1h31m on Linux, because nvcc does not go through sccache on Windows (CMake's CUDA test compile
