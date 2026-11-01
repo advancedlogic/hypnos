@@ -57,6 +57,88 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Backlog
 
+- [ ] ⬛ **BUILD-14** `P1` CI on pushes and pull requests
+      Nothing runs until a tag, which is how a broken Windows test reached the v0.5.0 release.
+      Run the fast jobs (fmt, clippy, the engine-free crates' tests, the SDK tests against the
+      mock server, the frontend and desktop builds) on every push to main and every pull request,
+      under 15 minutes; the full engine builds on pull requests once BUILD-13's engine cache makes
+      them cheap, and always on tags as now. Document the branch protection to turn on (required
+      checks) in CLAUDE.md.
+- [ ] ⬛ **BUILD-15** `P1` Supply-chain checks: dependency audit, update PRs, pinned actions
+      `cargo-deny` (advisories, licenses, duplicate and banned crates; a `deny.toml` that allows
+      the licenses in use) for the backend, desktop and Rust SDK workspaces, `npm audit
+      --omit=dev` for frontend, desktop and the JavaScript SDK, `pip-audit` for the Python SDK,
+      all in BUILD-14's CI. Dependabot (or Renovate) for cargo, npm, pip and GitHub Actions,
+      grouped weekly. Pin every action to a commit SHA with its version in a comment (today
+      `lukka/get-cmake@latest`, `dtolnay/rust-toolchain@master` and tags float).
+- [ ] ⬛ **BUILD-16** `P2` Release provenance: checksums, SBOM, attestations, a signed image
+      Each release publishes `SHA256SUMS` for every archive and installer, an SBOM per archive
+      (CycloneDX: `cargo cyclonedx` for the Rust side, the vendored engines and model-free
+      contents listed), GitHub artifact attestations (`actions/attest-build-provenance`) for the
+      archives and installers, and a cosign-signed Docker image with its SBOM attached.
+      `docs/signing.md` says how to verify each.
+- [ ] 🩵 **DESK-30** `P1` Auto-update for the desktop app
+      `tauri-plugin-updater` with signed update bundles: release.yml builds them with the updater
+      key (a repository secret) and publishes `latest.json`; the app checks at start and daily,
+      shows the version and its notes, downloads in the background and restarts on the user's
+      OK (Settings: check automatically, on / off). The macOS app updates its bundled server with
+      it. Needs DESK-19's signing for macOS and Windows to accept the new build.
+- [ ] 🟨 **TEST-6** `P1` Tests at real sizes, and fuzzing of the untrusted parsers
+      BUG-8 lived because every upload test used tiny files. Router tests with a 20 MB PDF, a 50
+      MB audio file and several images for edits, a prompt near the context limit, a long chat
+      with tool rounds, the limits' edges (`max_*_bytes` just under and just over). `cargo fuzz`
+      targets for the GGUF header reader (`gguf.rs`), the multipart parsers, the tool-call
+      parsers (`tools.rs` Gemma / Qwen / GLM formats), the config and catalog TOML and the
+      media decoders; a short fuzz run in CI, longer ones by hand.
+- [ ] 🟨 **TEST-7** `P2` Desktop UI smoke tests in CI
+      Turn `desktop/screenshots/` (Chrome against `mock.js`, DOC-7) into tests: the mock server
+      in place of a real one, scripted checks that the chat streams, the tool and thinking
+      panels open, the Models dialog's In use and Catalog tabs list and change models, the
+      settings save, the request log loads; screenshots kept as artifacts on failure. Runs in
+      BUILD-14's CI.
+- [ ] 🟨 **TEST-8** `P2` A soak test: hours of mixed traffic
+      A script (on `bench.sh`) that runs chat, streaming, tool turns, images, transcription and
+      speech against the lineup for 6-12 hours with swaps and cancellations, and records process
+      memory, booked vs held memory, cache use, evictions and p95 latency over time; a run on
+      Metal and one on CUDA, the results in `docs/bench/`. Fails on growth beyond a set margin
+      (leaks) or a stuck lease.
+- [ ] 🟩 **ENG-12** `P2` Survive an engine crash
+      Every engine runs in the server process, so an abort in llama.cpp or sd.cpp (a bad GGUF, a
+      driver fault, out of memory in a kernel) takes the whole server down. Step 1: make the
+      restart path solid and documented (systemd / launchd / Docker restart policies in
+      `docs/operating.md`, the desktop app restarting its local server and telling the user,
+      startup that recovers cleanly), drilled with an injected abort (TEST-5's drill). Step 2,
+      if crashes prove common: run the image and audio engines in a child process with the
+      server proxying to it, so a crash there costs one request.
+- [ ] 🟪 **API-15** `P2` Tracing with OpenTelemetry
+      Spans for each request through admission, the scheduler's placement and eviction, the load
+      phases and the engine's prefill / decode, exported over OTLP when `[server.tracing]` names
+      an endpoint (off by default); the request id as the trace id. `docs/operating.md`: how to
+      view them (Jaeger, Grafana Tempo).
+- [ ] 🟪 **API-16** `P2` Graceful shutdown and upgrades without dropped requests
+      On SIGTERM / Ctrl-C: stop admitting (503 with `Retry-After`, `/ready` false), let running
+      requests and streams finish up to `drain_secs`, park the KV caches when KV parking is on,
+      then exit. Document a rolling upgrade behind a load balancer and the desktop app's restart
+      of its server through the same path.
+- [ ] ⬜ **DOC-8** `P2` Operating in production: alerts, dashboard, runbooks, support matrix
+      Prometheus alert rules (server down, not ready, 5xx rate, queue full / 429s, memory near
+      the budget, evictions per minute, p95 latency) and a Grafana dashboard for `/metrics`;
+      runbooks in `docs/operating.md` for out of memory, a model that will not load, a full queue,
+      a crash loop; a support matrix (GPUs and compute capabilities, CUDA / driver versions, macOS,
+      Windows and Linux versions) and an API stability and deprecation policy in `docs/api.md`.
+- [ ] ⬜ **DOC-9** `P1` SECURITY.md, CHANGELOG.md, CONTRIBUTING.md
+      How to report a vulnerability and what is supported; a changelog per release (from the
+      tags' notes back to v0.1.0, then kept with each release, which release.yml's notes can
+      quote); how to build, test (CLAUDE.md's commands), format and send a change, the card
+      board, the vendor patch rule.
+- [ ] 🩵 **DESK-31** `P2` Show and accept a model's license before it downloads
+      The catalog has models with restrictive licenses (FLUX Kommunity: non-commercial or under
+      US$5M revenue; Gemma's terms; LFM's). Before Add, Replace or the guided setup downloads
+      such a model, show its license summary and a link to the full text and ask to accept;
+      remember the acceptance per model and license version. Permissive licenses (Apache-2.0,
+      MIT) go through without asking. The catalog gains a `license_url` and a
+      `restrictive = true` flag.
+
 - [ ] 🩵 **DESK-25** `P3` A `search_notes` tool over the chats and attached files
       Split from DESK-23. Embed the chats' messages and attachments with the embeddings model
       (chunked, cached by content hash in the app's store), and offer `search_notes(query)`
