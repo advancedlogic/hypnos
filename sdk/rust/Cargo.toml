@@ -25,4 +25,4 @@ rand = "0.8"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
-base64 = "0.22"
+base64 = "0.23"
