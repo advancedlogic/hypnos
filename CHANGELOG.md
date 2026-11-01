@@ -6,7 +6,10 @@ each one is described in full. Releases are on
 [Semantic Versioning](https://semver.org) (before 1.0, a minor version may change the API or the
 config, and its notes say so).
 
-## Unreleased
+## 0.7.1 (2026-11-01)
+
+Includes everything tagged 0.7.0, whose release run stopped at a formatting check and was never
+published.
 
 ### Fixed
 - Multipart uploads above 2 MB were refused (documents, transcription, image edits): the routes
@@ -33,7 +36,7 @@ config, and its notes say so).
   unchanged, so a Rust-only change does not recompile llama.cpp and stable-diffusion.cpp
   (BUILD-13); nvcc goes through sccache on Windows too (BUILD-12).
 
-## 0.7.0 (2026-11-01)
+## 0.7.0 (2026-11-01, tagged, not published)
 
 - A tool registry in the desktop app: the chat model hands work to the other models (web pages,
   reading aloud, entities, describing images), several calls in parallel (DESK-23).

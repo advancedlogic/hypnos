@@ -1876,7 +1876,7 @@ dependencies = [
 
 [[package]]
 name = "hypnos-backends"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1907,7 +1907,7 @@ dependencies = [
 
 [[package]]
 name = "hypnos-core"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1922,7 +1922,7 @@ dependencies = [
 
 [[package]]
 name = "hypnos-memory"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "dashmap",
  "hypnos-core",
@@ -1939,7 +1939,7 @@ dependencies = [
 
 [[package]]
 name = "hypnos-scheduler"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "dashmap",
@@ -1953,7 +1953,7 @@ dependencies = [
 
 [[package]]
 name = "hypnos-server"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "async-trait",
