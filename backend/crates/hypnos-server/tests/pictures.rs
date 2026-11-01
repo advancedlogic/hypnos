@@ -120,3 +120,49 @@ async fn pictures_are_listed_fetched_and_released() {
     assert!(!store.dir().join(&id).exists());
     let _ = std::fs::remove_dir_all(store.dir());
 }
+
+/// Multipart uploads above axum's 2 MB default reach the handlers: the documents, transcription
+/// and image-edit routes rebuild the request to read the form, and the rebuilt request must keep
+/// the router's `DefaultBodyLimit` (`limits.max_body_bytes`). Before the fix all three answered
+/// "Error parsing `multipart/form-data` request" for a 3 MB file.
+#[tokio::test]
+async fn multipart_uploads_above_two_megabytes_are_read() {
+    let state = state();
+    state.ready.store(true, std::sync::atomic::Ordering::SeqCst);
+    let app = build_router(state, &[]);
+    let boundary = "hypnos-boundary";
+    let big = vec![b'x'; 3 << 20];
+    for (path, part) in [
+        ("/v1/documents/convert", "file"),
+        ("/v1/audio/transcriptions", "file"),
+        ("/v1/images/edits", "image"),
+    ] {
+        let mut form = Vec::new();
+        for (name, value) in [("model", "no-such-model"), ("prompt", "x")] {
+            form.extend_from_slice(
+                format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
+                    .as_bytes(),
+            );
+        }
+        form.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{part}\"; filename=\"big.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes(),
+        );
+        form.extend_from_slice(&big);
+        form.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(path)
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(form))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.expect("response");
+        let text = String::from_utf8_lossy(&body(resp).await).to_string();
+        assert!(
+            !text.contains("Error parsing `multipart/form-data` request"),
+            "{path}: {text}"
+        );
+    }
+}

@@ -47,10 +47,11 @@ pub(crate) async fn convert_document(
     State(state): State<AppState>,
     Extension(rid): Extension<RequestId>,
     headers: HeaderMap,
+    extensions: axum::http::Extensions,
     body: Body,
 ) -> Response {
     let mut details = LogDetails::default();
-    match convert_document_inner(&state, &rid.0, &headers, body, &mut details).await {
+    match convert_document_inner(&state, &rid.0, &headers, extensions, body, &mut details).await {
         Ok(resp) => with_log(resp, details),
         Err(e) => {
             let message = e.0.to_string();
@@ -72,9 +73,13 @@ fn parse_bool(field: &str, value: &str) -> Result<bool, HypnosError> {
 }
 
 /// Reads a multipart form or a JSON body into a request with `file_bytes` filled.
+///
+/// `extensions` are the original request's: they carry the router's `DefaultBodyLimit`
+/// (`limits.max_body_bytes`), without which the multipart reader stops at axum's 2 MB default.
 async fn parse_request(
     state: &AppState,
     headers: &HeaderMap,
+    extensions: axum::http::Extensions,
     body: Body,
 ) -> Result<DocumentConversionRequest, HypnosError> {
     let content_type = headers
@@ -83,10 +88,11 @@ async fn parse_request(
         .unwrap_or("");
     let max = state.limits.max_document_bytes;
     let mut req = if content_type.starts_with("multipart/form-data") {
-        let request = axum::http::Request::builder()
+        let mut request = axum::http::Request::builder()
             .header(header::CONTENT_TYPE, content_type)
             .body(body)
             .map_err(bad)?;
+        *request.extensions_mut() = extensions;
         use axum::extract::FromRequest;
         let mut multipart = Multipart::from_request(request, state).await.map_err(bad)?;
         let mut req = DocumentConversionRequest {
@@ -347,10 +353,11 @@ async fn convert_document_inner(
     state: &AppState,
     request_id: &str,
     headers: &HeaderMap,
+    extensions: axum::http::Extensions,
     body: Body,
     details: &mut LogDetails,
 ) -> Result<Response, ApiError> {
-    let req = parse_request(state, headers, body).await?;
+    let req = parse_request(state, headers, extensions, body).await?;
     details.model = Some(req.model.clone());
     details.stream = req.stream;
     if state.request_log.capture_text() {

@@ -143,6 +143,15 @@ _No cards yet._
 
 ## Done
 
+- [x] 🟥 **BUG-8** `P1` Multipart uploads above 2 MB were refused (documents, transcription, image edits)
+      `POST /v1/documents/convert`, `/v1/audio/transcriptions` and `/v1/images/edits` rebuild the
+      request to read the multipart form; the rebuilt request lost the router's
+      `DefaultBodyLimit` (`limits.max_body_bytes`, 256 MiB), so axum's 2 MB default applied and a
+      3 MB file got 400 "Error parsing `multipart/form-data` request" (found converting the 17.8
+      MB architecture PDF for DOC-n's manual). The handlers now take the request's `Extensions`
+      and put them on the rebuilt request; `multipart_uploads_above_two_megabytes_are_read`
+      (tests/pictures.rs) fails without the fix. JSON bodies (base64) were not affected.
+
 - [x] 🩵 **DESK-27** `P2` A collapsible blue tool panel with each call's input and output
       Next to the orange thinking panel: open while a tool runs, folded after ("Used 2 tools:
       fetch_url, extract_entities · 2.8 s"), each call with its tool, label, model, seconds,

@@ -1167,10 +1167,11 @@ async fn embeddings_inner(
 async fn audio_transcriptions(
     State(state): State<AppState>,
     headers: HeaderMap,
+    extensions: axum::http::Extensions,
     body: Body,
 ) -> Response {
     let mut details = LogDetails::default();
-    match audio_transcriptions_inner(&state, &headers, body, &mut details).await {
+    match audio_transcriptions_inner(&state, &headers, extensions, body, &mut details).await {
         Ok(resp) => with_log(resp.into_response(), details),
         Err(e) => {
             let message = e.0.to_string();
@@ -1179,9 +1180,12 @@ async fn audio_transcriptions(
     }
 }
 
+/// `extensions` carry the router's body limit into the rebuilt multipart request (see
+/// `documents::parse_request`).
 async fn audio_transcriptions_inner(
     state: &AppState,
     headers: &HeaderMap,
+    extensions: axum::http::Extensions,
     body: Body,
     details: &mut LogDetails,
 ) -> std::result::Result<Json<hypnos_core::openai::AudioTranscriptionResponse>, ApiError> {
@@ -1193,10 +1197,11 @@ async fn audio_transcriptions_inner(
 
     let req = if content_type.starts_with("multipart/form-data") {
         // Parse OpenAI-style multipart form (`model`, `file`, `language`, `prompt`)
-        let req_reconstruct = axum::http::Request::builder()
+        let mut req_reconstruct = axum::http::Request::builder()
             .header(header::CONTENT_TYPE, content_type)
             .body(body)
             .map_err(|e| HypnosError::InvalidRequest(e.to_string()))?;
+        *req_reconstruct.extensions_mut() = extensions;
         use axum::extract::FromRequest;
         let mut multipart = Multipart::from_request(req_reconstruct, state)
             .await
@@ -1555,10 +1560,15 @@ async fn image_generations(
 /// `image` / `image[]` files, optional `mask`, `n`, `size`, `response_format`) plus the Hypnos
 /// fields of the generation route (`negative_prompt`, `steps`, `seed`, `cfg_scale`). The images
 /// reach the model as references; the rest is the generation route.
-async fn image_edits(State(state): State<AppState>, headers: HeaderMap, body: Body) -> Response {
+async fn image_edits(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    extensions: axum::http::Extensions,
+    body: Body,
+) -> Response {
     let mut details = LogDetails::default();
     let result = async {
-        let req = parse_image_edit(&state, &headers, body).await?;
+        let req = parse_image_edit(&state, &headers, extensions, body).await?;
         details.model = Some(req.model.clone());
         if state.request_log.capture_text() {
             details.input = Some(format!(
@@ -1579,9 +1589,12 @@ async fn image_edits(State(state): State<AppState>, headers: HeaderMap, body: Bo
     }
 }
 
+/// `extensions` carry the router's body limit into the rebuilt multipart request (see
+/// `documents::parse_request`).
 async fn parse_image_edit(
     state: &AppState,
     headers: &HeaderMap,
+    extensions: axum::http::Extensions,
     body: Body,
 ) -> std::result::Result<ImageGenerationRequest, ApiError> {
     let bad = |m: String| ApiError::from(HypnosError::InvalidRequest(m));
@@ -1595,10 +1608,11 @@ async fn parse_image_edit(
         ));
     }
     let max_image = usize::try_from(state.limits.max_image_bytes).unwrap_or(usize::MAX);
-    let request = axum::http::Request::builder()
+    let mut request = axum::http::Request::builder()
         .header(header::CONTENT_TYPE, content_type)
         .body(body)
         .map_err(|e| bad(e.to_string()))?;
+    *request.extensions_mut() = extensions;
     use axum::extract::FromRequest;
     let mut form = Multipart::from_request(request, state)
         .await
