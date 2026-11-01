@@ -253,6 +253,12 @@ models) by the model's roles (merged to the most demanding) and `[limits] max_qu
 `config.profile_notes` lists what it set. The pool (`check_block`) and `apply_overlay` apply it to
 runtime and overlay blocks; `/v1/memory/status` has `profile` with its `objective`.
 
+Workload-aware eviction (MEM-6): `ManagedModelMemory` keeps a decaying request count
+(`requests_per_minute`, 10-minute window) and measured reload times (`record_reload`, warm and
+cold moving averages, size-based estimate before one); `idle_*_eviction_candidates` order by
+priority, then `eviction_cost` (reload time x rate), then LRU. `x-hypnos-next-model` (middleware
+`prestage_next`, innermost) makes `ModelScheduler::prestage` load the next stage in the background.
+
 ### Engines (`hypnos-backends`)
 
 - `llama.rs`: `ggml_llama`. Text, vision, audio-in (via mtmd), embeddings, tool calling (`tools.rs`:

@@ -27,6 +27,57 @@ pub struct ManagedModelMemory {
     pub last_used: Instant,
     pub active_leases: usize,
     pub total_requests_served: u64,
+    /// Requests counted with a 10-minute decay, and when they were last decayed (MEM-6).
+    pub decayed_requests: f64,
+    pub decayed_at: Instant,
+    /// Measured reload times (moving averages, ms): from warm memory (Tier 2) and from disk.
+    pub reload_warm_ms: Option<f64>,
+    pub reload_cold_ms: Option<f64>,
+}
+
+/// Time constant of the request-rate decay.
+const RATE_WINDOW_SECS: f64 = 600.0;
+/// Bandwidth for a reload estimate before one was measured (bytes per ms, ~3 GB/s).
+const ESTIMATE_BYTES_PER_MS: f64 = 3.0e6;
+
+impl ManagedModelMemory {
+    fn decay(&mut self, now: Instant) {
+        let dt = now.duration_since(self.decayed_at).as_secs_f64();
+        self.decayed_requests *= (-dt / RATE_WINDOW_SECS).exp();
+        self.decayed_at = now;
+    }
+
+    fn note_request(&mut self) {
+        let now = Instant::now();
+        self.decay(now);
+        self.decayed_requests += 1.0;
+        self.total_requests_served += 1;
+        self.last_used = now;
+    }
+
+    /// Recent requests per minute (decayed), as of now.
+    pub fn requests_per_minute(&self) -> f64 {
+        let dt = self.decayed_at.elapsed().as_secs_f64();
+        self.decayed_requests * (-dt / RATE_WINDOW_SECS).exp() * 60.0 / RATE_WINDOW_SECS
+    }
+
+    /// Expected milliseconds to bring the model back after an eviction now: from warm memory
+    /// when it would stay there, else from disk; measured when it has been, else from its size.
+    pub fn reload_estimate_ms(&self) -> f64 {
+        let warm = self.config.keep_warm_in_ram;
+        let measured = if warm {
+            self.reload_warm_ms
+        } else {
+            self.reload_cold_ms
+        };
+        measured.unwrap_or(self.config.total_weight_bytes as f64 / ESTIMATE_BYTES_PER_MS)
+    }
+
+    /// What evicting the model costs, in expected milliseconds of waiting per minute: its reload
+    /// time weighted by how often it is asked for (MEM-6). Lower goes first.
+    pub fn eviction_cost(&self) -> f64 {
+        self.reload_estimate_ms() * (self.requests_per_minute() + 0.01)
+    }
 }
 
 /// Real-time snapshot of the 3-tier memory hierarchy for observability (`/v1/memory/status`).
@@ -121,6 +172,10 @@ pub struct ModelTierSnapshot {
     pub active_leases: usize,
     pub idle_seconds: f64,
     pub total_requests_served: u64,
+    /// Recent requests per minute (10-minute decay) and the expected reload time after an
+    /// eviction, the two factors eviction weighs within a priority (MEM-6).
+    pub requests_per_minute: f64,
+    pub reload_estimate_ms: f64,
 }
 
 /// Coordinates memory placement across Tier 1 (GPU VRAM / Wired UMA),
@@ -509,6 +564,10 @@ impl TieredMemoryManager {
             last_used: Instant::now(),
             active_leases: 0,
             total_requests_served: 0,
+            decayed_requests: 0.0,
+            decayed_at: Instant::now(),
+            reload_warm_ms: None,
+            reload_cold_ms: None,
         })
     }
 
@@ -634,8 +693,7 @@ impl TieredMemoryManager {
             return Ok(None);
         }
         entry.active_leases += 1;
-        entry.total_requests_served += 1;
-        entry.last_used = Instant::now();
+        entry.note_request();
         Ok(Some(entry.placement.clone()))
     }
 
@@ -818,8 +876,7 @@ impl TieredMemoryManager {
             .get_mut(model_id)
             .ok_or_else(|| HypnosError::ModelNotFound(model_id.to_string()))?;
         entry.active_leases += 1;
-        entry.total_requests_served += 1;
-        entry.last_used = Instant::now();
+        entry.note_request();
         Ok(())
     }
 
@@ -855,11 +912,13 @@ impl TieredMemoryManager {
 
         // Sort by:
         // 1. Lowest priority first
-        // 2. Oldest `last_used` timestamp first (LRU within priority class)
+        // 2. Within a priority, the cheapest to lose: reload time x recent request rate (MEM-6)
+        // 3. Oldest `last_used` first
         candidates.sort_by(|(_, a), (_, b)| {
             a.config
                 .priority
                 .cmp(&b.config.priority)
+                .then_with(|| a.eviction_cost().total_cmp(&b.eviction_cost()))
                 .then_with(|| a.last_used.cmp(&b.last_used))
         });
 
@@ -884,9 +943,28 @@ impl TieredMemoryManager {
             a.config
                 .priority
                 .cmp(&b.config.priority)
+                .then_with(|| a.eviction_cost().total_cmp(&b.eviction_cost()))
                 .then_with(|| a.last_used.cmp(&b.last_used))
         });
         candidates.into_iter().map(|(id, _)| id.clone()).collect()
+    }
+
+    /// Records how long bringing `model_id` into Tier 1 took from `from` (moving average), so
+    /// eviction can weigh what losing it costs (MEM-6).
+    pub fn record_reload(&self, model_id: &str, from: MemoryTier, ms: f64) {
+        let mut guard = self.models.write();
+        let Some(entry) = guard.get_mut(model_id) else {
+            return;
+        };
+        let slot = match from {
+            MemoryTier::Tier2PinnedRam => &mut entry.reload_warm_ms,
+            MemoryTier::Tier3NvmeSsd => &mut entry.reload_cold_ms,
+            MemoryTier::Tier1GpuVram => return,
+        };
+        *slot = Some(match *slot {
+            Some(avg) => avg * 0.7 + ms * 0.3,
+            None => ms,
+        });
     }
 
     /// Returns a full snapshot of the 3-tier hierarchy.
@@ -914,6 +992,8 @@ impl TieredMemoryManager {
                 active_leases: m.active_leases,
                 idle_seconds: now.duration_since(m.last_used).as_secs_f64(),
                 total_requests_served: m.total_requests_served,
+                requests_per_minute: (m.requests_per_minute() * 100.0).round() / 100.0,
+                reload_estimate_ms: m.reload_estimate_ms().round(),
             })
             .collect();
 

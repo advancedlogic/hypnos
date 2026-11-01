@@ -700,3 +700,31 @@ async fn changing_the_pool_needs_an_admin_key() {
     .await;
     assert_eq!(resp.status(), 200, "{}", text(resp).await);
 }
+
+/// MEM-6: `x-hypnos-next-model` loads the next stage while the current request runs.
+#[tokio::test]
+async fn a_declared_next_model_is_loaded_in_the_background() {
+    let (a, b) = (engine("stt"), engine("chat"));
+    let app = build_router(state_with(vec![a.clone(), b.clone()]), &[]);
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("x-hypnos-next-model", "chat")
+        .body(Body::from(
+            r#"{"model":"stt","messages":[{"role":"user","content":"hi"}],"max_tokens":4}"#,
+        ))
+        .unwrap();
+    assert_eq!(app.clone().oneshot(req).await.unwrap().status(), 200);
+    for _ in 0..50 {
+        if b.resident.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        b.resident.load(Ordering::SeqCst),
+        "the next model was loaded"
+    );
+    assert!(a.resident.load(Ordering::SeqCst), "the current one too");
+}

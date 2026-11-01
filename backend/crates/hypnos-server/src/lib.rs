@@ -286,6 +286,8 @@ pub fn build_router(state: AppState, allowed_origins: &[String]) -> Router {
         .route("/metrics", get(metrics_endpoint))
         // Inside observe_request (rejections get a request id, metrics and a log entry) and inside
         // CORS (preflights are answered before it, and a 401 still carries CORS headers).
+        // Innermost: only requests that passed the key check and the readiness gate.
+        .layer(middleware::from_fn_with_state(state.clone(), prestage_next))
         .layer(middleware::from_fn_with_state(state.clone(), require_ready))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -331,6 +333,33 @@ fn open_while_staging(method: &axum::http::Method, route: &str) -> bool {
         || route == "/v1/advisor"
         // Stored pictures are served from disk, no model involved.
         || (route.starts_with("/v1/documents/") && route != "/v1/documents/convert")
+}
+
+/// `x-hypnos-next-model: <id>` (MEM-6): the request names the model its client calls next (a
+/// voice turn: the chat model after the transcription, the speech model after the answer), and
+/// that model is loaded in the background while this request runs. Unknown ids are ignored.
+async fn prestage_next(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    let next_model = req
+        .headers()
+        .get("x-hypnos-next-model")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    if let Some(id) = next_model {
+        if state.scheduler.backend(&id).is_some() {
+            let scheduler = state.scheduler.clone();
+            tokio::spawn(async move {
+                match scheduler.prestage(&id).await {
+                    Ok(true) => info!(model = %id, "Pre-staged the declared next model"),
+                    Ok(false) => {}
+                    Err(e) => {
+                        warn!(model = %id, error = %e, "Pre-staging the declared next model failed")
+                    }
+                }
+            });
+        }
+    }
+    next.run(req).await
 }
 
 /// Answers 503 `model_not_available` on inference and placement routes until the startup tier

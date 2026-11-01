@@ -507,6 +507,9 @@ impl ModelScheduler {
         }
 
         let switch_ms = switch_start.elapsed().as_secs_f64() * 1000.0;
+        // What a reload from this tier costs, for weighing evictions (MEM-6).
+        self.memory
+            .record_reload(model_id, previous_tier, switch_ms);
         self.stats.promotions.fetch_add(1, Ordering::Relaxed);
         self.stats
             .tier_switch_ms_total
@@ -733,6 +736,24 @@ impl ModelScheduler {
                 Ok(plan)
             }
         }
+    }
+
+    /// Loads `model_id` ahead of its first request, as a request would (evicting idle models of
+    /// lower priority), and releases it at once so it stays resident (MEM-6: the next stage of a
+    /// declared pipeline). Returns whether it loaded anything; resident, disabled or unknown
+    /// models are left alone.
+    pub async fn prestage(&self, model_id: &str) -> Result<bool> {
+        if !self.memory.is_enabled(model_id)? {
+            return Ok(false);
+        }
+        if self.backend(model_id).is_some_and(|b| b.is_resident()) {
+            return Ok(false);
+        }
+        let ctx = RequestContext::unbounded();
+        let lease = self.acquire_model(model_id, None, 1, &ctx).await?;
+        let loaded = lease.tier_switch_latency_ms > 0.0;
+        drop(lease);
+        Ok(loaded)
     }
 
     /// Adds a model at runtime (API-11): registered cold in Tier 3, loaded by its first request.

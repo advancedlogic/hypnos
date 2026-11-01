@@ -826,3 +826,55 @@ async fn a_replacement_serves_waiting_requests_with_the_new_engine() {
     assert!(!mocks[0].is_resident(), "the old engine was unloaded");
     assert!(new.is_resident());
 }
+
+// ---- workload-aware scheduling (MEM-6) -----------------------------------------------------
+
+#[tokio::test]
+async fn eviction_keeps_the_model_that_is_asked_for_more_often() {
+    let (sched, mocks) = build(
+        12,
+        vec![
+            model("busy", 4, ModelPriority::Normal, MemoryTier::Tier3NvmeSsd),
+            model("rare", 4, ModelPriority::Normal, MemoryTier::Tier3NvmeSsd),
+            model("new", 6, ModelPriority::Normal, MemoryTier::Tier3NvmeSsd),
+        ],
+        4,
+    );
+    let ctx = RequestContext::unbounded();
+    for _ in 0..5 {
+        drop(sched.acquire_model("busy", None, 1, &ctx).await.unwrap());
+    }
+    // `rare` is used last: least-recently-used alone would evict `busy`.
+    drop(sched.acquire_model("rare", None, 1, &ctx).await.unwrap());
+    let lease = sched.acquire_model("new", None, 1, &ctx).await.unwrap();
+    assert_eq!(lease.evicted_models, vec!["rare".to_string()]);
+    assert!(mocks[0].is_resident(), "the busy model stays");
+    let status = sched.status();
+    let busy = status.models.iter().find(|m| m.id == "busy").unwrap();
+    assert!(busy.requests_per_minute > 0.0 && busy.reload_estimate_ms > 0.0);
+}
+
+#[tokio::test]
+async fn a_declared_next_stage_is_loaded_ahead() {
+    let (sched, mocks) = build(
+        12,
+        vec![model(
+            "next",
+            2,
+            ModelPriority::Normal,
+            MemoryTier::Tier3NvmeSsd,
+        )],
+        4,
+    );
+    assert!(sched.prestage("next").await.unwrap());
+    assert!(mocks[0].is_resident());
+    assert_eq!(sched.memory().active_leases("next"), 0, "released at once");
+    assert!(!sched.prestage("next").await.unwrap(), "already resident");
+    let ctx = RequestContext::unbounded();
+    let lease = sched.acquire_model("next", None, 1, &ctx).await.unwrap();
+    assert_eq!(
+        lease.tier_switch_latency_ms, 0.0,
+        "the request takes the fast path"
+    );
+    assert!(sched.prestage("unknown").await.is_err());
+}

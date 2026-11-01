@@ -52,6 +52,11 @@ also accept `multipart/form-data`. Speech answers with audio bytes, streaming ro
 **Request id.** Every response carries `x-request-id: req-<32 hex>`. Quote it when reporting a
 problem; the request log (section 15) is keyed by it.
 
+**Next stage.** A request may carry `x-hypnos-next-model: <id>` (**Hypnos extension**): the model
+the client will call next, loaded in the background while this request runs, so the next call does
+not wait for it. A voice turn sends it on the transcription (naming the chat model) and on the chat
+(naming the speech model). Unknown ids are ignored; the header never changes the response.
+
 **CORS.** Browsers may call the API from any loopback origin by default; the operator can list
 other origins (`server.allowed_origins`, `http://host:*` wildcards). The methods are GET, POST
 and OPTIONS (DELETE is not in the CORS allow-list, so release stored pictures from a non-browser
@@ -935,7 +940,8 @@ Open during startup staging. The full snapshot of the three tiers (bytes unless 
       "total_weight_bytes": 15814641056, "priority": "high",
       "current_tier": "tier1_gpu_vram", "placement": { "…": "appendix" },
       "moe_offload": "off", "expert_bytes": 12846382080,
-      "active_leases": 1, "idle_seconds": 0.0, "total_requests_served": 812 } ],
+      "active_leases": 1, "idle_seconds": 0.0, "total_requests_served": 812,
+      "requests_per_minute": 2.4, "reload_estimate_ms": 4600 } ],
   "recent_evictions": [ { "model": "moss-image", "for_model": "gemma4:26b-q4", "reason": "…",
                           "to_tier": "tier3_nvme_ssd", "unix_ms": 1793481500000 } ]
 }
@@ -946,6 +952,9 @@ device reports; `tier1_vram_unaccounted_bytes` is the difference the planner sub
 hands out; `tier1_vram_effective_free_bytes` is what a new promotion can use right now.
 `kv_park` is the state of KV parking (`/v1/memory/kv-park` below): `{"enabled", "max_bytes", "used_bytes", "models":
 [{"model", "slots", "tokens", "bytes", "parked_secs_ago"}]}`.
+`requests_per_minute` (decayed over about 10 minutes) and `reload_estimate_ms` (measured reload time
+from where an eviction would leave the model, else estimated from its size) are what eviction
+weighs within a priority: the model whose loss costs least (reload time x rate) goes first.
 `recent_evictions` lists the last automatic evictions with their `reason` (`memory_budget`,
 `full_gpu_placement`, `process_memory_cap`, `device_out_of_memory`). `gpu` is
 present on NVIDIA devices with `nvidia-smi` available and is sampled at most every few seconds.
