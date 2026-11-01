@@ -112,11 +112,6 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       runbooks in `docs/operating.md` for out of memory, a model that will not load, a full queue,
       a crash loop; a support matrix (GPUs and compute capabilities, CUDA / driver versions, macOS,
       Windows and Linux versions) and an API stability and deprecation policy in `docs/api.md`.
-- [ ] ⬜ **DOC-9** `P1` SECURITY.md, CHANGELOG.md, CONTRIBUTING.md
-      How to report a vulnerability and what is supported; a changelog per release (from the
-      tags' notes back to v0.1.0, then kept with each release, which release.yml's notes can
-      quote); how to build, test (CLAUDE.md's commands), format and send a change, the card
-      board, the vendor patch rule.
 - [ ] 🩵 **DESK-31** `P2` Show and accept a model's license before it downloads
       The catalog has models with restrictive licenses (FLUX Kommunity: non-commercial or under
       US$5M revenue; Gemma's terms; LFM's). Before Add, Replace or the guided setup downloads
@@ -230,6 +225,16 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       cache, the second shows the time.
 
 ## Done
+
+- [x] ⬜ **DOC-9** `P1` SECURITY.md, CHANGELOG.md, CONTRIBUTING.md
+      How to report a vulnerability and what is supported; a changelog per release (from the
+      tags' notes back to v0.1.0, then kept with each release, which release.yml's notes can
+      quote); how to build, test (CLAUDE.md's commands), format and send a change, the card
+      board, the vendor patch rule.
+      Done: CHANGELOG.md from the tags' notes (0.5.0 to 0.7.0) and the commits (0.1.0 to 0.4.0),
+      with an Unreleased section; SECURITY.md (supported versions, private reporting through
+      GitHub, scope, response targets, running safely); CONTRIBUTING.md (build, test, checks,
+      the change sets, the card board, commits, licensing). Linked from the README.
 
 - [x] ⬛ **BUILD-15** `P1` Supply-chain checks: dependency audit, update PRs, pinned actions
       `cargo-deny` (advisories, licenses, duplicate and banned crates; a `deny.toml` that allows

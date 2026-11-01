@@ -836,6 +836,12 @@ hypnos/
 
 ---
 
+## Contributing, security and changes
+
+[CONTRIBUTING.md](CONTRIBUTING.md) says how to build, test and send a change;
+[SECURITY.md](SECURITY.md) how to report a vulnerability privately and which versions get fixes;
+[CHANGELOG.md](CHANGELOG.md) what changed in each release.
+
 ## License
 
 Hypnos's source code is licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
