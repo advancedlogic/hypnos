@@ -13,6 +13,7 @@ REM    run.bat                  -> start all (never compiles)
 REM    run.bat restart backend  -> stop + start the already-built backend binary
 REM    run.bat stop             -> stop backend and frontend
 REM    run.bat build desktop    -> npm install + tauri build of the desktop app (not part of `all`)
+REM    run.bat build all        -> everything: backend, playground (npm run build) and desktop app
 REM
 REM  Build and start are separate steps: `start` launches the compiled executable
 REM  backend\target\<profile>\hypnos.exe and refuses to run when it is missing, so a
@@ -63,6 +64,10 @@ if exist "%USERPROFILE%\.cargo\bin\rustup.exe" set "CARGO_CMD="%USERPROFILE%\.ca
 
 set "ACTION=%~1"
 set "TARGET=%~2"
+REM `build all` written out also builds the desktop app and the playground bundle (BUILD-10); a
+REM plain `build` (target defaulted) stays backend + playground dependencies.
+set "EXPLICIT_ALL=0"
+if /i "%~2"=="all" set "EXPLICIT_ALL=1"
 if "%ACTION%"=="" set "ACTION=start"
 if "%TARGET%"=="" set "TARGET=all"
 if /i "%ACTION%"=="help" goto :usage
@@ -103,6 +108,7 @@ goto :end_rc
 
 :do_build
 set "RC=0"
+if "%EXPLICIT_ALL%"=="1" goto :do_build_all
 if /i not "%TARGET%"=="frontend" call :build_backend
 if errorlevel 1 set "RC=1"
 if /i not "%TARGET%"=="backend"  call :build_frontend
@@ -194,6 +200,38 @@ REM vcvars itself shells out to vswhere.exe by bare name; make sure it can find 
 if exist "%VSWHERE%" set "PATH=%PATH%;%ProgramFiles(x86)%\Microsoft Visual Studio\Installer"
 call "%VCVARS%" >nul
 where rc.exe >nul 2>&1 || echo [Hypnos] WARNING: rc.exe still not on PATH after vcvars64.bat; the Windows SDK may be missing from that Visual Studio install.
+exit /b 0
+
+REM build all, in dependency order: the desktop app bundles the server and the playground.
+:do_build_all
+call :build_backend
+if errorlevel 1 set "RC=1"
+call :build_playground
+if errorlevel 1 set "RC=1"
+if "%RC%"=="0" (
+    call :build_desktop
+    if errorlevel 1 set "RC=1"
+) else (
+    echo [Hypnos] desktop app not built: fix the build above first ^(it bundles the server^).
+)
+if "%RC%"=="0" echo [Hypnos] all built: backend, playground and desktop app.
+goto :end_rc
+
+REM build_playground: dependencies plus the production bundle (frontend\dist), served by the
+REM server at / and bundled by the desktop app.
+:build_playground
+call :build_frontend
+if errorlevel 1 exit /b 1
+echo [Hypnos] Building the playground bundle ^(npm run build^) -^> frontend\dist
+pushd "%ROOT%\frontend"
+call npm run build
+set "BUILD_RC=!errorlevel!"
+popd
+if not "!BUILD_RC!"=="0" (
+    echo [Hypnos] playground build FAILED ^(npm exit code !BUILD_RC!^).
+    exit /b 1
+)
+echo [Hypnos] playground built: frontend\dist
 exit /b 0
 
 REM build_frontend: install/refresh node dependencies. The Vite dev server bundles on the fly.
@@ -436,6 +474,7 @@ echo     run.bat stop               stop both
 echo     run.bat status             show what is running and whether the backend is built
 echo     run.bat models [model id]  download the model files ^(about 31 GB for all^) into backend\models\
 echo     run.bat build desktop      npm install + tauri build the desktop app ^(no installers^)
+echo     run.bat build all          backend, playground ^(npm run build: frontend\dist^) and desktop app
 echo     run.bat start desktop      open the built desktop app ^("all" leaves it out^)
 echo.
 echo   start/restart never compile; run `run.bat build` after changing Rust code.

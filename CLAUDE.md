@@ -25,6 +25,7 @@ powershell -ExecutionPolicy Bypass -File backend\scripts\setup-build-env.ps1   #
 
 # Build + run (process manager; build and start are deliberately separate, start never compiles)
 ./run.sh build [backend|frontend]      # cargo build --release --bin hypnos + npm install
+./run.sh build all                     # everything: backend, playground (npm run build) and desktop app
 ./run.sh [start|stop|restart|status|logs] [backend|frontend|all]
 HYPNOS_PROFILE=debug ./run.sh build backend   # dev profile instead of release
 run.bat <same actions>                 # Windows; auto-loads vcvars64 when rc.exe is missing

@@ -181,6 +181,7 @@ git clone https://github.com/advancedlogic/hypnos.git && cd hypnos
 ./backend/scripts/vendor.sh            # fetch the pinned engine sources into backend/vendor/
 ./run.sh models                        # the default lineup, ~31 GB into backend/models/
 ./run.sh build                         # backend + playground (Metal is picked automatically on Apple Silicon)
+./run.sh build all                     # ... plus the playground bundle and the desktop app (run.bat build all on Windows)
 ./run.sh start                         # API on http://localhost:9999, playground on http://localhost:5173
 ```
 

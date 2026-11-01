@@ -11,6 +11,7 @@
 #    ./run.sh logs             -> follow both logs
 #    ./run.sh models [id]      -> download model files into backend/models/ (backend/models.manifest)
 #    ./run.sh build desktop    -> npm install + tauri build of the desktop app (not part of `all`)
+#    ./run.sh build all        -> everything: backend, playground (npm run build) and desktop app
 #
 #  Build and start are separate steps: `start` launches the compiled binary
 #  backend/target/<profile>/hypnos (hypnos.exe on Windows) and refuses to run when it is
@@ -37,6 +38,10 @@ BACKEND_CONFIG="${HYPNOS_CONFIG:-hypnos.example.toml}"
 
 ACTION="${1:-start}"
 TARGET="${2:-all}"
+# `build all` written out builds the desktop app and the playground bundle too (BUILD-10); a plain
+# `build` (target defaulted) stays backend + playground dependencies.
+EXPLICIT_ALL=0
+[ "${2:-}" = all ] && EXPLICIT_ALL=1
 
 case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;;
@@ -105,6 +110,7 @@ usage() {
     ./run.sh logs [target]      tail the log file(s) in .run/
     ./run.sh models [model id]  download the model files (about 31 GB for all) into backend/models/
     ./run.sh build desktop      npm install + tauri build the desktop app (no installers)
+    ./run.sh build all          backend, playground (npm run build: frontend/dist) and desktop app
     ./run.sh start desktop      open the built desktop app ("all" leaves it out)
 
   start/restart never compile; run ./run.sh build after changing Rust code.
@@ -298,6 +304,15 @@ build_frontend() {
     echo "[Hypnos] frontend dependencies ready."
 }
 
+# build_playground: dependencies plus the production bundle (frontend/dist), which the server
+# serves at / and the macOS app bundles.
+build_playground() {
+    build_frontend || return 1
+    echo "[Hypnos] Building the playground bundle (npm run build) -> frontend/dist"
+    (cd "$ROOT_DIR/frontend" && npm run build) || { echo "[Hypnos] playground build FAILED."; return 1; }
+    echo "[Hypnos] playground built: frontend/dist"
+}
+
 # build_desktop: npm install + `tauri build --no-bundle` (the app binary; `--bundles app` on macOS; the installers are
 # made by release.yml). Tauri compiles the Rust side with the cargo first on PATH (rustup's).
 # On Apple Silicon with a release server build, the app bundles that server (DESK-16): staged by
@@ -466,9 +481,21 @@ want() {
 RC=0
 case "$ACTION" in
     build)
-        want backend  && { build_backend  || RC=1; }
-        want frontend && { build_frontend || RC=1; }
-        want desktop  && { build_desktop  || RC=1; }
+        if [ "$EXPLICIT_ALL" = 1 ]; then
+            # In dependency order: the app bundles the server and the playground.
+            build_backend || RC=1
+            build_playground || RC=1
+            if [ "$RC" = 0 ]; then
+                build_desktop || RC=1
+            else
+                echo "[Hypnos] desktop app not built: fix the build above first (it bundles the server)."
+            fi
+            [ "$RC" = 0 ] && echo "[Hypnos] all built: backend, playground and desktop app."
+        else
+            want backend  && { build_backend  || RC=1; }
+            want frontend && { build_frontend || RC=1; }
+            want desktop  && { build_desktop  || RC=1; }
+        fi
         ;;
     start)
         want backend  && { start_backend  || RC=1; }

@@ -221,7 +221,8 @@ npx tauri dev              # Vite on port 1420, the app window opens on it
 npx tauri build            # installers for this OS under src-tauri/target/release/bundle/
 ```
 
-`run.bat build desktop` / `run.bat start desktop` do the same on Windows. The `desktop` target is
+`./run.sh build all` (`run.bat build all`) builds the server, the playground bundle and then the
+app in one go. `run.bat build desktop` / `run.bat start desktop` do the same on Windows. The `desktop` target is
 never part of `all`. `HYPNOS_PROFILE=debug` builds and starts the debug binary.
 
 To bundle the server by hand (Apple Silicon): build it (`./run.sh build backend`) and the
