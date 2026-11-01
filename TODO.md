@@ -57,6 +57,27 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## Backlog
 
+- [ ] 🩵 **DESK-23** `P2` A tool registry: the chat model orchestrates the specialist models
+      Generalize `images.rs` into a registry of tools, each offered only when a running model does
+      its job (as the image tool is now): `generate_image` / `edit_image` (DESK-22),
+      `read_document` and `fetch_url` (docling, `web.rs`), `transcribe`, `speak`,
+      `extract_entities` (GLiNER), `describe_image` (a vision model when the chat model cannot
+      see), `search_notes` (embeddings over chats and files). Several calls per turn, independent
+      ones in parallel; each call shown in the chat as a step (tool, model, seconds, result);
+      `x-hypnos-next-model` pre-stages the model a call will need and `x-hypnos-workflow` names
+      the turn. Native tool formats where the model has one, the prompt convention otherwise.
+- [ ] 🩵 **DESK-24** `P3` Sub-agents as tools: research and documents first
+      After DESK-23. A sub-agent is a tool with its own loop: system prompt, a subset of the
+      registry's tools, a model (or a job routed as now) and a step limit, returning a summary to
+      the main chat so its context stays small. Defined in a config file (id, description,
+      model / job, tools, max steps). First two: research (fetch several URLs, read, a summary
+      with sources) and documents (convert a long PDF, tables and entities, answer from them).
+      Its steps stream into the chat under the call; cancelling the turn cancels them.
+- [ ] 🟪 **API-14** `P3` The agent loop on the server
+      Only if DESK-23 / DESK-24 prove useful: move the loop into `hypnos-server` (for example
+      `POST /v1/agents/{id}/runs` with streamed steps) so the SDKs and the playground get it, the
+      tools running against the server's own models. `docs/api.md`, mock server, the three SDKs.
+
 - [ ] 🩵 **DESK-22** `P2` The image tool takes its settings from the conversation
       `generate_image` (`images.rs` `image_tool_spec`, `TOOL_INSTRUCTION`) passes only `prompt` and
       one of three sizes; the server takes more. (1) Tool parameters the chat model fills from the
