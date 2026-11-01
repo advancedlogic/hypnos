@@ -1,0 +1,153 @@
+{
+ "dolomites": {
+  "question": "I am planning a three-day hike in the Dolomites in late September. What should I pack? Keep it to a short, grouped list.",
+  "reasoning": "*   *Location:* Dolomites, Italy.\n*   *Time:* Late September (transition from summer to autumn).\n*   *Duration:* Three-day hike (likely multi-day hut-to-hut or camping, but usually Dolomites = Refugios/Huts).\n*   *Goal:* Packing list.\n*   *Constraints:* Short, grouped list.\n\n    *   *Weather:* Unpredictable. Can be sunny/warm during the day, but temperatures drop significantly at night. Potential for frost, wind, and sudden rain/snow. High UV still present.\n    *   *Terrain:* Rocky, steep, high altitude.\n    *   *Accommodation (Assumption):* Most people do *rifugios* (mountain huts). I should provide a list that works for huts but mention the distinction.\n\n    *   *Layering is key:* Base, Mid, Outer.\n    *   *Footwear:* Sturdy boots are non-negotiable.\n    *   *Gear:* Backpack, sleeping bag liner (for huts), water, trekking poles.\n    *   *Essentials:* Navigation, First Aid, Headlamp.\n    *   *Personal:* Sunscreen, lip balm, meds.\n\n    *   **Group 1: Clothing (The Layering System)**\n        *   Base layers (wicking/merino).\n        *   Mid-layer (fleece/down jacket).\n        *   Shell (waterproof/windproof).\n        *   Pants (hiking pants + maybe one spare).\n        *   Extra socks/underwear (merino is best).\n        *   Gloves/beanie (essential for September).\n\n    *   **Group 2: Footwear**\n        *   Hiking boots (broken in).\n        *   Camp shoes (lightweight sandals or Crocs).\n        *   Hiking socks (merino).\n\n    *   **Group 3: Gear & Equipment**\n        *   Backpack (30-40L for huts).\n        *   Rain cover (for pack).\n        *   Trekking poles (helps on steep descents).\n        *   Headlamp (essential).\n        *   Water bladder/bottles (at least 2L capacity).\n        *   Sleeping bag liner (standard for *rifugios*).\n\n    *   **Group 4: Personal Care & Safety**\n        ",
+  "answer": "Since you are hiking in late September, the weather in the Dolomites can shift rapidly from warm sun to freezing rain or even early snow. This list assumes you are staying in **rifugios** (mountain huts); if you are camping, you will need to add a tent, stove, and sleeping bag.\n\n### **Clothing (The Layering System)**\n*   **Base Layers:** Moisture-wicking T-shirts and underwear (merino wool is best for odor control).\n*   **Mid-Layers:** A lightweight fleece or \"active\" insulation layer.\n*   **Insulation:** A lightweight down or synthetic puffy jacket (essential for evenings).\n*   **Outer Shell:** High-quality waterproof/windproof jacket (Gore-Tex or similar).\n*   **Bottoms:** Hiking trousers (quick-dry) and one spare pair of lightweight leggings/pants.\n*   **Accessories:** Lightweight gloves, a warm beanie, and a buff/neck gaiter.\n\n### **Footwear**\n*   **Hiking Boots:** Sturdy, waterproof, and well broken-in.\n*   **Camp Shoes:** Lightweight sandals or Crocs (to let your feet breathe at the hut).\n*   **Socks:** 3 pairs of high-quality merino wool hiking socks.\n\n### **Gear & Essentials**\n*   **Pack:** 30\u201340L daypack with a rain cover.\n*   **Hydration:** 2L water capacity (bladder or bottles) and a reusable bottle.\n*   **Navigation:** Physical map of the area and a compass (don't rely solely on phone GPS).\n*   **Lighting:** Headlamp with extra batteries.\n*   **Trekking Poles:** Highly recommended for steep Dolomite descents.\n*   **Sleeping Bag Liner:** A silk or cotton liner (required by most *rifugios* for hygiene).\n\n### **Health & Personal Care**\n*   **Sun Protection:** Sunglasses (Category 3 or 4), SPF 30+ sunscreen, and lip balm with SPF.\n*   **First Aid:** Blister kits (Compeed), ibuprofen, bandages, and any personal medications.\n*   **Hygiene:** Small microfiber towel, biodegradable soap, hand sanitizer, and travel-sized toiletries.\n*   **Power:** Portable power bank and charging cables.\n\n### **Quick Tip for September:**\nThe sun sets earlier in late September. Always aim to reach your hut/destination by mid-afternoon to avoid hiking in the dark as the temperature drops.",
+  "telemetry": {
+   "previous_tier": "tier2_pinned_ram",
+   "placement": {
+    "primary_tier": "tier1_gpu_vram",
+    "gpu_layers": 30,
+    "pinned_ram_layers": 0,
+    "ssd_layers": 0,
+    "vram_weight_bytes": 15814641056,
+    "vram_kv_and_workspace_bytes": 3465281536,
+    "pinned_ram_bytes": 0,
+    "allocated_context_len": 16384,
+    "cpu_expert_layers": 0
+   },
+   "tier_switch_latency_ms": 1041.2485,
+   "inference_latency_ms": 9467.425333,
+   "evicted_models": [],
+   "engine": {
+    "queue_ms": 0.01675,
+    "context_ms": 0.0,
+    "prefill_ms": 63.90075000000001,
+    "decode_ms": 9398.414833,
+    "ttft_ms": 98.28595800000001,
+    "prefill_tokens_per_s": 704.2170866539125,
+    "decode_tokens_per_s": 111.18896309309142,
+    "cached_tokens": 0,
+    "concurrent_slots": 1
+   },
+   "tier_switch_phases": {
+    "load_mode": "mmap",
+    "weights_ms": 660.7743750000001,
+    "projector_ms": 279.35329199999995,
+    "context_ms": 100.908541,
+    "total_ms": 1041.0556660000002
+   }
+  },
+  "usage": {
+   "prompt_tokens": 45,
+   "completion_tokens": 1046,
+   "total_tokens": 1091
+  }
+ },
+ "document": {
+  "question": "Summarize this document in five bullet points for a new team member.",
+  "name": "Hypnos_System_Architecture.pdf",
+  "size": 17785326,
+  "pages": 14,
+  "text": "## HYPNOS ARCHITECTURE: MULTI-MODAL INFERENCE &amp; TIERED MEMORY ORCHESTRATION\n\nCPU\n\nNVMe\n\n## The In-Process Paradigm: Eradicating Network Hops\n\n<!-- image -->\n\n<!-- image -->\n\nNo external runtimes.\n\n<!-- image -->\n\nNo network serialization overhead between modalities.\n\nZero-copy memory sharing across inference engines.\n\n<!-- image -->\n\n<!-- image -->\n\n<!-- image -->\n\n<!-- image -->\n\n<!-- image -->\n\n<!-- image -->\n\n<!-- image -->\n\n## Multi-Modal Prefix Caching &amp; Sequence Matching\n\n<!-- image -->\n\n## The Eviction Constraint: Context Destruction\n\n<!-- image -->\n\n<!-- image -->\n\n## Warning\n\nDemotion traditionally destroys the worker thread, the context, and the KV cache.\n\n<!-- image -->\n\n## Warning\n\nThe Cost: The next chat turn pays a massive re-prefill penalty (e.g., 2.6 seconds of pure compute just to recover state).\n\nNETRORK TELEHETRY\n\nVRAM\\_EVICT: CONPLETE STATE\\_LOST: 8192 TOKENS COMPUTE\\_PENALTY:HIGH\n\n## Architectural Breakthrough: Paginated KV State Parking\n\n<!-- image -->\n\nPreserving active conversational contexts across hardware tier switches.\n\nExtraction footprint: ~360MB for an 8k context.\n\n## Thawing the Cache: Near-Instant State Restoration\n\n<!-- image -->\n\n## Synthesis: The Request Lifecycle\n\nStep 1: Admission &amp; Tier Orchestration. Request routed, fast path checked, tier assigned.\n\n29ms API Router SSE Stream\n\nStep 3: State Restoration &amp; Prefix Caching. Parked KV states near-instantly restored, prefixes cached.\n\nStep 4: Continuous Batch Execution. Parallel execution streams, dynamic scaling, real-time output.\n\nDALON\n\nN\n\nParked KV States Step 2: Layer &amp; Expert Placement. Model layers and MoE experts allocated across tiers and CPU offload.\n\nMoE CPU Offload Nodes Sms latency\n\n## The Mechanical Truth of Hypnos\n\n<!-- image -->\n\nDefeating the Memory Wall: Total hardware utilization across 3 tiers.\n\nTrue Multi-Modal Density: In-process engine fusion with zero network overhead.\n\n<!-- image -->\n\n<!-- image -->\n\nEradicating Recompute: Persistent, parked execution contexts.",
+  "answer": "Welcome to the team! Here is a high-level summary of the **Hypnos Architecture** to get you up to speed:\n\n*   **In-Process Paradigm:** Unlike traditional systems that use external runtimes, Hypnos runs everything in-process. This eliminates network serialization overhead and uses zero-copy memory sharing to achieve high-speed, multi-modal inference.\n*   **Tiered Memory Orchestration:** The system utilizes a three-tier hardware approach (CPU, NVMe, and VRAM) to maximize total hardware utilization and overcome the \"memory wall.\"\n*   **\"State Parking\" (KV Cache Preservation):** Traditional memory eviction destroys the conversational context, forcing a massive \"re-prefill\" compute penalty when a user returns. Hypnos introduces \"Paginated KV State Parking,\" which allows the system to move context to slower memory tiers without losing the state.\n*   **Rapid State Restoration:** By \"parking\" the KV states rather than destroying them, Hypnos can \"thaw\" the cache near-instantly, allowing for near-instantaneous restoration of conversational context without the heavy compute penalty of re-processing tokens.\n*   **Streamlined Request Lifecycle:** The system follows a highly orchestrated path: from initial routing and tier assignment to expert/layer placement, state restoration, and finally continuous, parallel batch execution.",
+  "telemetry": {
+   "previous_tier": "tier3_nvme_ssd",
+   "placement": {
+    "primary_tier": "tier1_gpu_vram",
+    "gpu_layers": 30,
+    "pinned_ram_layers": 0,
+    "ssd_layers": 0,
+    "vram_weight_bytes": 15814641056,
+    "vram_kv_and_workspace_bytes": 3465281536,
+    "pinned_ram_bytes": 0,
+    "allocated_context_len": 16384,
+    "cpu_expert_layers": 0
+   },
+   "tier_switch_latency_ms": 1040.326209,
+   "inference_latency_ms": 2587.240708,
+   "evicted_models": [],
+   "engine": {
+    "queue_ms": 0.010583,
+    "context_ms": 0.0,
+    "prefill_ms": 158.93875,
+    "decode_ms": 2423.901625,
+    "ttft_ms": 166.846666,
+    "prefill_tokens_per_s": 3410.118677792546,
+    "decode_tokens_per_s": 113.04089125316709,
+    "cached_tokens": 0,
+    "concurrent_slots": 1
+   },
+   "tier_switch_phases": {
+    "load_mode": "mmap",
+    "weights_ms": 671.127959,
+    "projector_ms": 277.08070899999996,
+    "context_ms": 91.96233299999999,
+    "total_ms": 1040.1865830000002
+   }
+  },
+  "usage": {
+   "prompt_tokens": 542,
+   "completion_tokens": 275,
+   "total_tokens": 817
+  }
+ },
+ "tools": {
+  "question": "Two things. First, read https://example.com and tell me in one sentence what that page is for. Second, list the organizations and places in this sentence: \"Apple and Microsoft met the European Commission in Brussels before flying to Tokyo.\"",
+  "steps": [
+   {
+    "id": "call_1",
+    "tool": "fetch_url",
+    "label": "Reading https://example.com",
+    "status": "done",
+    "model": null,
+    "seconds": 0.44,
+    "summary": "Example Domain (1 k characters)",
+    "input": {
+     "url": "https://example.com"
+    },
+    "output": "<page title=\"Example Domain\" url=\"https://example.com/\">\nThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\n</page>"
+   },
+   {
+    "id": "call_2",
+    "tool": "extract_entities",
+    "label": "Finding organization, place",
+    "status": "done",
+    "model": "gliner2.5-multi",
+    "seconds": 2.35,
+    "summary": "5 found",
+    "input": {
+     "labels": [
+      "organization",
+      "place"
+     ],
+     "text": "Apple and Microsoft met the European Commission in Brussels before flying to Tokyo."
+    },
+    "output": "Entities found (label: text (score)):\norganization: Apple (0.98)\norganization: Microsoft (0.98)\norganization: European Commission (0.94)\nplace: Brussels (1.00)\nplace: Tokyo (1.00)"
+   }
+  ],
+  "answer": "1. This page is a placeholder domain used for documentation examples and is not a functional service.\n\n2. Here are the entities from your sentence:\n* **Organizations:** Apple, Microsoft, European Commission\n* **Places:** Brussels, Tokyo"
+ },
+ "image": {
+  "question": "Make a photo of a weathered wooden sign in an alpine meadow at golden hour that says \"HYPNOS 0.6\".",
+  "first": {
+   "prompt": "A weathered wooden sign standing in a sunlit alpine meadow at golden hour, the sign is hand-painted in bold white letters reading \"HYPNOS 0.6\", wildflowers in the foreground, snow-capped peaks and soft clouds in the background, shallow depth of field, photographic detail",
+   "size": "1024x1024",
+   "seed": 3540207799,
+   "model": "flux3-image-klein",
+   "seconds": 64.3,
+   "reference": "none",
+   "comment": "Here is your photo of the weathered wooden sign reading \"HYPNOS 0.6\" in an alpine meadow at golden hour."
+  },
+  "followup": "Now the same sign at night with a starry sky and a lantern on the post, and make it say \"FLUX 3 ON HYPNOS\".",
+  "second": {
+   "prompt": "Change the text on the sign to \"FLUX 3 ON HYPNOS\" and make it night with a starry sky, the sign lit by a warm lantern hanging from its post; keep the meadow, the mountains and the sign as they are",
+   "size": "1024x1024",
+   "seed": 3832290956,
+   "model": "flux3-image-klein",
+   "seconds": 203.5,
+   "reference": "previous",
+   "comment": "Here is the same sign at night, now reading \"FLUX 3 ON HYPNOS\", lit by a lantern under the stars."
+  }
+ }
+}

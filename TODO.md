@@ -143,12 +143,24 @@ _No cards yet._
 
 ## Done
 
+- [x] ⬜ **DOC-7** `P2` A user manual for the desktop app, with screenshots
+      `docs/desktop-manual.md`, for people using the app: installing, the first start and the
+      guided setup, the window, chatting, thinking, attachments and links, voice, images, tools
+      and the tool panel, the Models dialog (Lineup, Catalog, defaults, thinking, Hugging Face
+      token), settings, the local server, the server panel (the tiers explained), the request
+      log, the menu bar, shortcuts, troubleshooting and where data is kept. 14 screenshots in
+      `docs/images/desktop/`, reproducible: `desktop/screenshots/capture.mjs` drives Chrome
+      (playwright-core) on the web UI with `screenshots/mock.js` in place of the Rust side; the
+      memory, models, catalog and request log come from a real server, the chats are recorded
+      answers (`fixtures.json`) and the guided setup a real `hypnos advise` for a 32 GB Mac.
+      Making it found BUG-8.
+
 - [x] 🟥 **BUG-8** `P1` Multipart uploads above 2 MB were refused (documents, transcription, image edits)
       `POST /v1/documents/convert`, `/v1/audio/transcriptions` and `/v1/images/edits` rebuild the
       request to read the multipart form; the rebuilt request lost the router's
       `DefaultBodyLimit` (`limits.max_body_bytes`, 256 MiB), so axum's 2 MB default applied and a
       3 MB file got 400 "Error parsing `multipart/form-data` request" (found converting the 17.8
-      MB architecture PDF for DOC-n's manual). The handlers now take the request's `Extensions`
+      MB architecture PDF for DOC-7's manual). The handlers now take the request's `Extensions`
       and put them on the rebuilt request; `multipart_uploads_above_two_megabytes_are_read`
       (tests/pictures.rs) fails without the fix. JSON bodies (base64) were not affected.
 

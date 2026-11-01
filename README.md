@@ -582,8 +582,12 @@ npm run dev
 
 ### Desktop app
 
+The [user manual](docs/desktop-manual.md) walks through every part of it, with screenshots.
+
 `desktop/` is a Tauri 2 app, in the spirit of the Ollama app: a chat with streaming answers, a
-model picker, a thinking level (Off to High, the thoughts in a collapsible panel), attachments
+default chat model and a thinking level per model (Off to High, the thoughts in a collapsible
+panel), tools the chat model hands to the other models (images, web pages, entities, reading
+aloud; each call in a collapsible panel with its input and output), attachments
 (images, documents, audio, video, web pages), voice in and out, and a collapsible right panel with
 the server's live state (memory tiers, the models in each, the last answer's timings, evictions).
 On first run its guided setup asks what you want to do, recommends a lineup for the machine,

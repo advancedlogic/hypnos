@@ -447,7 +447,9 @@ a comment). Every request of a turn carries `x-hypnos-workflow: chat-turn/<id>`,
 the OS keychain (`keyring`), keyed by origin; chats and the server URL live in `tauri-plugin-store`. `ChatStore`
 (`src/lib/chats.svelte.js`) owns chats and streaming; `StatsPanel.svelte` polls
 `/v1/memory/status` only while open. A change to `/v1/memory/status`, telemetry or errors in
-`docs/api.md` may need a change here too. `desktop/README.md` is its guide.
+`docs/api.md` may need a change here too. `desktop/README.md` is its guide; `docs/desktop-manual.md` is the user manual (screenshots in
+`docs/images/desktop/`, made by `desktop/screenshots/capture.mjs` against `screenshots/mock.js`):
+keep it in step with UI changes and retake the screenshots they touch.
 
 ### Frontend
 

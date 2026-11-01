@@ -16,6 +16,13 @@ app's commands.
 
 ## Using it
 
+[docs/desktop-manual.md](../docs/desktop-manual.md) is the user manual, with screenshots; the
+list below is the reference for each part. The screenshots are made by `screenshots/capture.mjs`
+(the web UI in Chrome against `screenshots/mock.js` in place of the Rust side, with the
+server data from a real Hypnos): after a UI change, start a server with the lineup on port 9988
+and `npx vite --port 1430`, then `npm i --no-save playwright-core && node
+screenshots/capture.mjs` (`--only <scene>` for one).
+
 - **Chat.** Every chat answers with the default chat model, chosen in Models with "Make
   default for… → Chat"; the header shows it with its current tier. Enter sends, Shift+Enter adds a line. Stop cuts an answer short (the server
   stops at the next token); the refresh icon under any request or answer asks that request again and drops the turns after it (with a confirmation when later turns go). Each chat keeps its own
