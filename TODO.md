@@ -120,15 +120,20 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 ## In Progress
 
-- [ ] 🟩 **ENG-11** `P1` FLUX.3 Image Klein in the catalog
+_No cards yet._
+
+## Done
+
+- [x] 🟩 **ENG-11** `P1` FLUX.3 Image Klein in the catalog
       sd.cpp master-1024 runs it (FLUX.3 DiT + Qwen3-VL 4B encoder + the FLUX.2 VAE; 16 steps,
       CFG 1, euler; edits with up to 10 reference images). Variants: Q4_K (default) and Q8_0 from
       `leejet/flux-3-image-klein-GGUF` (public), BF16 from `black-forest-labs/flux-3-image-klein`
       (gated, DESK-21). License FLUX Kommunity 1.0: non-commercial, or commercial output for
       Qualifying Users (under US$5M revenue) with content filters; say so in the catalog summary,
       the README and the website. Generate, edit and measure the memory on the M5 Max (TEST-3).
-
-## Done
+      Done: Q4_K 1024x1024 in 64 s at 16 steps, an edit with one reference in 204 s (+0.8 GB);
+      peaks 12.4 GB (Q4_K) and 19.1 GB (BF16, downloaded through the gated repository with a
+      token); working memory 6.75 GiB (the edit's peak + 0.25 GiB).
 
 - [x] 🩵 **DESK-21** `P1` A Hugging Face token for model downloads (gated repositories)
       Gated repositories (Black Forest Labs' FLUX originals) answer 401 without a token from an

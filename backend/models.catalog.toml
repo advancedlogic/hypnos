@@ -1400,6 +1400,59 @@ files = [
   { role = "aux", repo = "Comfy-Org/MOSS-Image", remote = "vae/flux2-vae.safetensors", local = "flux2-vae.safetensors", size = 336211292 },
 ]
 
+
+[[models]]
+id = "flux3-image-klein"
+name = "FLUX.3 Image Klein"
+publisher = "Black Forest Labs"
+license = "flux-kommunity-1.0"
+architecture = "flux3-klein"
+modality = "image_generation"
+engine = "ggml_diffusion"
+summary = "Black Forest Labs' newest (Oct 2026): sharp detail and text in images, edits with up to 10 reference images; 16 steps. Write full scene descriptions, not short prompts. FLUX Kommunity license: non-commercial, or commercial output for those under US$5M revenue who filter content."
+
+[models.config]
+min_gpu_layer_ratio = 0.25
+initial_tier = "tier3_nvme_ssd"
+keep_warm_in_ram = false
+priority = "low"
+image = { steps = 16, cfg_scale = 1.0, sample_method = "euler", edit = true }
+
+[models.config.arch]
+num_layers = 30
+head_dim = 128
+default_context_len = 512
+max_context_len = 1024
+kv_dtype = "f16"
+non_layer_overhead_bytes = 3221225472
+activation_workspace_bytes = 7247757312 # measured peak minus weights, + 0.25 GiB, with one reference image (TEST-3, docs/bench/memory-2026-11-01.md)
+
+[[models.variants]]
+quant = "Q4_K"
+default = true
+files = [
+  { role = "weights", repo = "leejet/flux-3-image-klein-GGUF", remote = "flux3-image-klein-Q4_K.gguf", local = "flux3-image-klein-Q4_K.gguf", size = 3514023104 },
+  { role = "text_encoder", repo = "Qwen/Qwen3-VL-4B-Instruct-GGUF", remote = "Qwen3VL-4B-Instruct-Q4_K_M.gguf", local = "Qwen3VL-4B-Instruct-Q4_K_M.gguf", size = 2497281664 },
+  { role = "aux", repo = "Comfy-Org/MOSS-Image", remote = "vae/flux2-vae.safetensors", local = "flux2-vae.safetensors", size = 336211292 },
+]
+
+[[models.variants]]
+quant = "Q8_0"
+note = "closer to the original, 2.6 GB more"
+files = [
+  { role = "weights", repo = "leejet/flux-3-image-klein-GGUF", remote = "flux3-image-klein-Q8_0.gguf", local = "flux3-image-klein-Q8_0.gguf", size = 6151716032 },
+  { role = "text_encoder", repo = "Qwen/Qwen3-VL-4B-Instruct-GGUF", remote = "Qwen3VL-4B-Instruct-Q4_K_M.gguf", local = "Qwen3VL-4B-Instruct-Q4_K_M.gguf", size = 2497281664 },
+  { role = "aux", repo = "Comfy-Org/MOSS-Image", remote = "vae/flux2-vae.safetensors", local = "flux2-vae.safetensors", size = 336211292 },
+]
+
+[[models.variants]]
+quant = "BF16"
+note = "Black Forest Labs' original weights; gated: needs a Hugging Face token whose account accepted the license"
+files = [
+  { role = "weights", repo = "black-forest-labs/flux-3-image-klein", remote = "model.safetensors", local = "flux3-image-klein-bf16.safetensors", size = 11097404512, gated = true },
+  { role = "text_encoder", repo = "Qwen/Qwen3-VL-4B-Instruct-GGUF", remote = "Qwen3VL-4B-Instruct-Q4_K_M.gguf", local = "Qwen3VL-4B-Instruct-Q4_K_M.gguf", size = 2497281664 },
+  { role = "aux", repo = "Comfy-Org/MOSS-Image", remote = "vae/flux2-vae.safetensors", local = "flux2-vae.safetensors", size = 336211292 },
+]
 [[models]]
 id = "ernie-image-turbo"
 name = "ERNIE-Image-Turbo"

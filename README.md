@@ -444,11 +444,18 @@ Every chat model above with vision also answers image questions; these are small
 
 | Model | Files | Memory | License | Good for |
 | :--- | ---: | ---: | :--- | :--- |
-| `flux2-klein:4b` | 5.3 GB | 10.7 GB | Apache-2.0 | The quickest (4 steps), and the one that edits images (`/v1/images/edits`) |
+| `flux2-klein:4b` | 5.3 GB | 10.7 GB | Apache-2.0 | The quickest (4 steps), and it edits images (`/v1/images/edits`) |
+| `flux3-image-klein` | 6.3 GB | 12.4 GB | FLUX Kommunity¹ | The best detail and text in images; edits with up to 10 reference images (16 steps; write full scene descriptions) |
 | `iris-3b-turbo` | 8.5 GB | 9.8 GB | Apache-2.0 | Seconds per image (4 steps, pixel space, no VAE) |
 | `z-image-turbo` | 6.7 GB | 12.5 GB | Apache-2.0 | Photorealism and legible text in images (8 steps) |
 | `ernie-image-turbo` | 7.5 GB | 13.2 GB | Apache-2.0 | Distilled 8-step generation, strong prompt following |
 | **`moss-image`** | 9.4 GB | 14.2 GB | Apache-2.0 | The lineup's: 20 steps, a Qwen3.5 9B prompt encoder |
+
+¹ Non-commercial use, or commercial output for those with under US$5M annual revenue who filter
+content; read the [license](https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/main/LICENSE.md).
+The default Q4_K files are public; the BF16 variant comes from Black Forest Labs' gated repository
+and needs a Hugging Face token (`HF_TOKEN`, or Settings in the desktop app) from an account that
+accepted the license (13.9 GB of files, 19.1 GB of memory).
 
 ### Retrieval, documents and entities
 
