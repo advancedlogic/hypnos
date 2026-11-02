@@ -259,13 +259,13 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       `bin/x64`), `tauri build --no-bundle` with the Windows config put `hypnos.exe`, the DLLs,
       the data and `server/` beside the app; the app from `target/release` detected the bundled
       server, wrote `%APPDATA%\Hypnos\hypnos.toml`, disabled the seven models without files
-      and started it, which served the playground. That local server binary is an older build
-      (0.4.0; the vendored llama-cpp-rs tree on this machine is behind its patches, so the
-      backend did not rebuild), so the catalog lookup through `HYPNOS_RESOURCE_DIR` is covered
-      by hypnos-core's unit test only; the desktop crate's tests do not run on this machine
-      (its test binary fails to load, STATUS_ENTRYPOINT_NOT_FOUND, and HEAD's did not compile
-      on Windows), CI runs them on Linux. The installers and the Linux layout run in the next
-      release build.
+      and started it, which served the playground. The rebuilt 0.7.1 server (the vendored
+      llama-cpp-rs and diffusion-rs trees had older, partial copies of their patches; put in
+      sync by hand) run with `HYPNOS_RESOURCE_DIR` pointing at that folder found the catalog in
+      its `server/` and the playground in its `frontend/` (both routes 200). The desktop
+      crate's tests do not run on this machine (its test binary fails to load,
+      STATUS_ENTRYPOINT_NOT_FOUND, and HEAD's did not compile on Windows); CI runs them on
+      Linux. The installers and the Linux layout run in the next release build.
 
 - [x] 🟥 **BUG-9** `P0` A crafted GGUF header crashed the server (stack overflow)
       `gguf.rs` skipped arrays of arrays recursively, one level per 12 bytes of header and no
