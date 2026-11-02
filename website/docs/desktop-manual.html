@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hypnos Desktop manual · Hypnos</title>
+  <meta name="description" content="The user manual of the Hypnos desktop app: installing, the guided setup, chatting, attachments, voice, images, tools, models, settings, the local server and troubleshooting.">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0d0f43">
+  <meta property="og:title" content="Hypnos Desktop manual · Hypnos">
+  <meta property="og:description" content="The user manual of the Hypnos desktop app: installing, the guided setup, chatting, attachments, voice, images, tools, models, settings, the local server and troubleshooting.">
+  <meta property="og:image" content="../assets/logo-256.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/favicon.png">
+  <link rel="apple-touch-icon" href="../assets/logo-256.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="../docs.css">
+  <script>
+    // Apply the stored theme before the first paint to avoid a flash.
+    try {
+      var t = localStorage.getItem('hypnos-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  </script>
+</head>
+<body class="docs-page">
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container header-row">
+      <a class="brand" href="../index.html" aria-label="Hypnos home">
+        <img src="../assets/logo-256.png" alt="" width="36" height="36">
+        <span>Hypnos</span>
+      </a>
+      <nav class="nav" id="nav" aria-label="Documentation">
+        <a href="index.html">Docs</a>
+        <a href="desktop-manual.html" aria-current="page">Desktop manual</a>
+        <a href="api.html">API reference</a>
+        <a href="operating.html">Operating guide</a>
+        <a href="https://github.com/advancedlogic/hypnos" rel="noopener">GitHub</a>
+      </nav>
+      <div class="header-actions">
+        <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+          <svg class="sun" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg class="moon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="icon-btn menu-btn" id="menu-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="nav">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="container">
+      <p class="crumbs"><a href="../index.html">Hypnos</a> › <a href="index.html">Docs</a> › <span>Desktop manual</span></p>
+      <div class="docs-layout">
+      <details class="docs-toc" open>
+        <summary>On this page</summary>
+        <ol>
+          <li class="l2"><a href="#1-installing">1. Installing</a></li>
+          <li class="l2"><a href="#2-the-first-start">2. The first start</a></li>
+          <li class="l3"><a href="#the-guided-setup">The guided setup</a></li>
+          <li class="l3"><a href="#with-another-server">With another server</a></li>
+          <li class="l3"><a href="#the-status">The status</a></li>
+          <li class="l2"><a href="#3-a-tour-of-the-window">3. A tour of the window</a></li>
+          <li class="l2"><a href="#4-chatting">4. Chatting</a></li>
+          <li class="l2"><a href="#5-thinking">5. Thinking</a></li>
+          <li class="l2"><a href="#6-files-links-and-attachments">6. Files, links and attachments</a></li>
+          <li class="l3"><a href="#links">Links</a></li>
+          <li class="l2"><a href="#7-voice-speaking-and-listening">7. Voice: speaking and listening</a></li>
+          <li class="l3"><a href="#talking-to-hypnos">Talking to Hypnos</a></li>
+          <li class="l3"><a href="#hearing-the-answers">Hearing the answers</a></li>
+          <li class="l2"><a href="#8-images">8. Images</a></li>
+          <li class="l2"><a href="#9-tools-the-chat-models-helpers">9. Tools: the chat model&#39;s helpers</a></li>
+          <li class="l2"><a href="#10-choosing-models">10. Choosing models</a></li>
+          <li class="l3"><a href="#in-use-what-the-server-runs">In use: what the server runs</a></li>
+          <li class="l3"><a href="#catalog-models-to-add">Catalog: models to add</a></li>
+          <li class="l2"><a href="#11-settings">11. Settings</a></li>
+          <li class="l2"><a href="#12-the-local-server">12. The local server</a></li>
+          <li class="l2"><a href="#13-the-server-panel">13. The server panel</a></li>
+          <li class="l2"><a href="#14-the-request-log">14. The request log</a></li>
+          <li class="l2"><a href="#15-the-menu-bar-and-notifications">15. The menu bar and notifications</a></li>
+          <li class="l2"><a href="#16-keyboard-shortcuts">16. Keyboard shortcuts</a></li>
+          <li class="l2"><a href="#17-troubleshooting">17. Troubleshooting</a></li>
+          <li class="l2"><a href="#18-where-your-data-is-kept">18. Where your data is kept</a></li>
+        </ol>
+      </details>
+        <article class="prose">
+          <h1>Hypnos Desktop: user manual</h1>
+          <p class="docs-source">Rendered from <a href="https://github.com/advancedlogic/hypnos/blob/main/docs/desktop-manual.md" rel="noopener"><code>docs/desktop-manual.md</code></a>; edits go there.</p>
+<p>Hypnos Desktop is a chat app for your own AI models. You talk to a chat model as you would to
+any assistant, and it can hand work to the other models on the same computer: it makes and
+edits images, reads documents and web pages, listens to your voice and answers aloud, and finds
+names, places and dates in a text. Everything runs on your machine, or on a Hypnos server you
+choose; nothing goes to a cloud service.</p>
+<p>This manual covers version 0.7. The screenshots show a Mac with the default lineup of models.</p>
+<figure class="shot"><img src="images/desktop/main-window.png" alt="The main window: chats on the left, the conversation in the middle, the server panel on the right" loading="lazy"><figcaption>The main window: chats on the left, the conversation in the middle, the server panel on the right</figcaption></figure>
+<h2 id="1-installing">1. Installing<a class="anchor" href="#1-installing" aria-label="Link to this section">#</a></h2>
+<p>Download the installer for your system from the
+<a href="https://github.com/advancedlogic/hypnos/releases">GitHub releases</a>:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th align="left">System</th>
+<th align="left">File</th>
+<th align="left">Server</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left">macOS (Apple Silicon)</td>
+<td align="left"><code>hypnos-desktop-&lt;version&gt;-macos-arm64.dmg</code></td>
+<td align="left">included: the app starts it for you</td>
+</tr>
+<tr>
+<td align="left">Windows</td>
+<td align="left"><code>-windows-x64.msi</code> or <code>-windows-x64.setup.exe</code></td>
+<td align="left">included, with the CUDA runtime; needs an NVIDIA GPU (RTX 20 or newer) with driver 570 or newer, and the Microsoft Visual C++ 2015-2022 redistributable (x64)</td>
+</tr>
+<tr>
+<td align="left">Linux</td>
+<td align="left"><code>-linux-x64.deb</code> or <code>-linux-x64.AppImage</code></td>
+<td align="left">included; needs the same GPU and driver, the CUDA 12 runtime libraries (<code>libcudart.so.12</code>, <code>libcublas.so.12</code>) and <code>libgomp1</code> installed, and glibc 2.39 or newer (Ubuntu 24.04+)</td>
+</tr>
+</tbody></table></div>
+<p>On a Mac, open the <code>.dmg</code> and drag Hypnos to Applications. On Windows, run the installer. On
+Linux, install the <code>.deb</code> (<code>sudo apt install ./hypnos-desktop-*.deb</code>) or make the AppImage
+executable and run it. The app carries its own server, so there is nothing else to install
+(on Linux, the CUDA runtime from NVIDIA&#39;s repository: <code>apt install cuda-cudart-12-8 libcublas-12-8</code>).</p>
+<p>The app can also talk to a Hypnos server elsewhere: one you run on the same computer (the
+server release archive, or the Docker image) or one on another machine. Section 12 shows the
+local server dialog, section 11 the connection settings.</p>
+<p>The release notes say whether the installers are signed. If they are not:</p>
+<ul>
+<li><strong>macOS</strong> refuses the first open. Open System Settings &gt; Privacy &amp; Security and click
+<strong>Open Anyway</strong> next to the message about Hypnos.</li>
+<li><strong>Windows</strong> shows &quot;Windows protected your PC&quot;. Click <strong>More info</strong>, then <strong>Run anyway</strong>.</li>
+</ul>
+<h2 id="2-the-first-start">2. The first start<a class="anchor" href="#2-the-first-start" aria-label="Link to this section">#</a></h2>
+<h3 id="the-guided-setup">The guided setup<a class="anchor" href="#the-guided-setup" aria-label="Link to this section">#</a></h3>
+<p>The first time you open the app it has no models yet, so it opens the <strong>guided setup</strong>. It
+recommends models that fit your computer and downloads them for you.</p>
+<figure class="shot"><img src="images/desktop/guided-setup.png" alt="The guided setup on a 32 GB Mac: what you want to use Hypnos for, this computer's memory, and the recommended models" loading="lazy"><figcaption>The guided setup on a 32 GB Mac: what you want to use Hypnos for, this computer's memory, and the recommended models</figcaption></figure>
+<ol>
+<li><p><strong>Tick what you want Hypnos for</strong>: Chat, Vision (showing it images), Voice (talking to it
+and hearing the answers), Documents, Image generation, Search and Entities. Chat, Vision and
+Voice are ticked to start with. Each extra use can add a model and a download.</p>
+</li>
+<li><p><strong>Read the recommendation.</strong> &quot;This computer&quot; says how much memory the Mac has and how much of
+it can hold models. &quot;Recommended for you&quot; lists each model with what it does for you, its
+download size, and a note on how it runs:</p>
+<ul>
+<li><em>Kept in GPU memory</em>: always loaded, so it answers at once.</li>
+<li><em>Loads when needed</em>: loaded from disk the first time you use it (a few seconds).</li>
+<li><em>Runs on the processor</em>: small helpers that need no graphics memory.</li>
+<li><em>Partly in GPU memory: slower</em>: it fits only in part; answers come more slowly.</li>
+<li><em>Smaller, faster version</em>: a lighter variant chosen so everything fits.</li>
+</ul>
+<p>The green line under the list says whether the models you talk to stay loaded together, so
+that switching between them is instant.</p>
+</li>
+<li><p><strong>Click &quot;Download … and set up&quot;.</strong> The app downloads the files (you can stop and resume),
+sets up the server with the new models and restarts it.</p>
+</li>
+<li><p><strong>Try it.</strong> Once the server is ready, the setup runs a short check with your new models: a
+chat answer, the Hypnos logo described by the vision model, and a spoken sentence heard back
+by the speech-to-text model. Each step shows how long it took.</p>
+</li>
+</ol>
+<p>&quot;Choose models myself&quot; opens the Models dialog instead (section 10). &quot;Not now&quot; closes the setup;
+open it again later from <strong>Models &gt; Guided setup…</strong>.</p>
+<h3 id="with-another-server">With another server<a class="anchor" href="#with-another-server" aria-label="Link to this section">#</a></h3>
+<p>Click the status in the top right (it says <em>Unreachable</em> until a server answers) to open the
+<strong>Connection</strong> settings, enter the server&#39;s address (for example <code>http://localhost:9999</code>, or
+<code>http://192.168.1.20:9999</code> for another computer) and, if the server asks for one, its API key.
+Click <strong>Test connection</strong>, then <strong>Save</strong>. See section 11.</p>
+<h3 id="the-status">The status<a class="anchor" href="#the-status" aria-label="Link to this section">#</a></h3>
+<p>The status in the header tells you where the server is:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th align="left">Status</th>
+<th align="left">Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left"><strong>Connecting</strong></td>
+<td align="left">the app is reaching the server</td>
+</tr>
+<tr>
+<td align="left"><strong>Warming up</strong></td>
+<td align="left">the server is up and still loading its first models; chats wait until it is ready</td>
+</tr>
+<tr>
+<td align="left"><strong>Ready</strong> (green)</td>
+<td align="left">everything works; the server&#39;s version is shown next to it</td>
+</tr>
+<tr>
+<td align="left"><strong>Unreachable</strong> (red)</td>
+<td align="left">no server answers at that address</td>
+</tr>
+<tr>
+<td align="left"><strong>API key refused</strong> (red)</td>
+<td align="left">the server asks for a key and yours is missing or wrong</td>
+</tr>
+</tbody></table></div>
+<p>The app keeps trying on its own: when the server comes back, the status turns green again.</p>
+<h2 id="3-a-tour-of-the-window">3. A tour of the window<a class="anchor" href="#3-a-tour-of-the-window" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Header</strong> (top): the Hypnos logo; on the right, the <strong>status</strong> (click it for the Connection
+settings), the <strong>request log</strong> button (☰), <strong>Models</strong>, the <strong>local server</strong> button (a green
+dot when the app&#39;s server runs) and the button that shows or hides the <strong>server panel</strong>.</li>
+<li><strong>Sidebar</strong> (left): <strong>New chat</strong> and your chats, newest first. Click one to open it; hover
+it and click × to delete it.</li>
+<li><strong>Chat</strong> (middle): the conversation. Its header shows the chat model and where it is loaded
+(Tier 1 is the graphics memory, section 13), &quot;thinking low/medium/high&quot; when thinking is on,
+the speaker button and <strong>System prompt</strong>. At the bottom is the composer, where you type.</li>
+<li><strong>Server panel</strong> (right): what the server is doing: memory, the models and where each one
+is, and the cost of the last answer (section 13). Hide it with the panel button or Cmd/Ctrl+.</li>
+</ul>
+<h2 id="4-chatting">4. Chatting<a class="anchor" href="#4-chatting" aria-label="Link to this section">#</a></h2>
+<p>Type in the composer and press <strong>Enter</strong> to send; <strong>Shift+Enter</strong> starts a new line. The answer
+streams in as the model writes it. Click <strong>Stop</strong> (the square that replaces the send arrow) to
+cut it short.</p>
+<p>Under each answer you find:</p>
+<ul>
+<li>a line with the answer&#39;s speed: tokens per second, the time to the first word, the number
+of tokens, and where the model was loaded from when it had to load first (for example
+&quot;loaded from Tier 2 in 1.0 s&quot;);</li>
+<li><strong>Copy</strong> (the answer as text), <strong>Read aloud</strong> and <strong>Log</strong> (this answer&#39;s record in the
+request log, section 14);</li>
+<li>the <strong>regenerate</strong> arrow, which asks the same question again. Under one of your earlier
+messages it asks that one again and removes what came after it; the app asks before it
+removes anything.</li>
+</ul>
+<p>Every chat answers with the <strong>default chat model</strong>. Change it in Models with &quot;Make default
+for… → Chat&quot; (section 10); the chat header shows which one it is.</p>
+<p><strong>System prompt</strong> (top right of the chat) gives the model standing instructions for this chat
+only, such as &quot;Answer in Italian&quot; or &quot;You are a careful copy editor&quot;. A dot after the button
+means the chat has one.</p>
+<p>Chats are saved on this computer as you go (section 18). <strong>New chat</strong> (Cmd/Ctrl+N) starts an
+empty one.</p>
+<h2 id="5-thinking">5. Thinking<a class="anchor" href="#5-thinking" aria-label="Link to this section">#</a></h2>
+<p>Some models can <strong>think</strong> before they answer: they reason step by step first, which helps with
+plans, comparisons, maths and tricky questions, and costs some time. The models that can do it
+show a <strong>Thinking</strong> menu on their row in Models (section 10): Off, Low, Medium or High. Each
+model keeps its own level, and the chat header shows &quot;thinking low&quot; (or medium, high) while it
+is on.</p>
+<p>While the model thinks, its thoughts stream into an <strong>orange panel</strong> above the answer
+(&quot;Thinking…&quot;). When the answer starts, the panel folds to &quot;Thought for N s&quot;; click it to read
+the thoughts again.</p>
+<figure class="shot"><img src="images/desktop/thinking-panel.png" alt="The orange thinking panel, opened, above the answer" loading="lazy"><figcaption>The orange thinking panel, opened, above the answer</figcaption></figure>
+<p>The thoughts are kept with the chat but never sent back to the model. Low, Medium and High give
+it about 500, 2,000 and 6,000 words&#39; worth of thinking (tokens) before it must answer.</p>
+<h2 id="6-files-links-and-attachments">6. Files, links and attachments<a class="anchor" href="#6-files-links-and-attachments" aria-label="Link to this section">#</a></h2>
+<p>Add files with the <strong>paperclip</strong>, by dragging them onto the chat, or by pasting. Each file
+shows as a chip above the composer while the app prepares it; click a chip to see what was
+read from it.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th align="left">File</th>
+<th align="left">What the model gets</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left">Images (PNG, JPEG, WebP, GIF, BMP, TIFF)</td>
+<td align="left">the picture, scaled to 1024 pixels. If the chat model cannot see, a model that can answers instead, and the answer says so</td>
+</tr>
+<tr>
+<td align="left">PDF, Word, PowerPoint, Excel, HTML</td>
+<td align="left">the text as Markdown, with tables, converted by the document model</td>
+</tr>
+<tr>
+<td align="left">Text and code files</td>
+<td align="left">the text as it is</td>
+</tr>
+<tr>
+<td align="left">Audio (WAV, MP3, M4A, FLAC, Ogg)</td>
+<td align="left">a transcript, made by the speech-to-text model</td>
+</tr>
+<tr>
+<td align="left">Video (MP4, MOV, MKV, WebM)</td>
+<td align="left">six frames from the video plus a transcript of its sound</td>
+</tr>
+</tbody></table></div>
+<p>Documents and text are cut at about 60,000 characters (the chip says so). Attachments are saved
+with the chat.</p>
+<figure class="shot"><img src="images/desktop/document-attachment.png" alt="A PDF attached to a question, and the model's summary" loading="lazy"><figcaption>A PDF attached to a question, and the model's summary</figcaption></figure>
+<h3 id="links">Links<a class="anchor" href="#links" aria-label="Link to this section">#</a></h3>
+<p>Type or paste a web address in the composer and a <strong>Read</strong> chip appears above it. Click it and
+the app fetches the page or file (web pages, PDFs, office files, up to 50 MB) and adds its text
+to your message with its title. Open the chip to copy the text, download it as a <code>.md</code> file,
+or download the original file.</p>
+<figure class="shot"><img src="images/desktop/composer-link.png" alt="A link in the composer and its Read chip" loading="lazy"><figcaption>A link in the composer and its Read chip</figcaption></figure>
+<p>You can also just ask the chat model about a page (&quot;what does example.com say about…&quot;): with
+tools on, it reads the page itself (section 9).</p>
+<h2 id="7-voice-speaking-and-listening">7. Voice: speaking and listening<a class="anchor" href="#7-voice-speaking-and-listening" aria-label="Link to this section">#</a></h2>
+<h3 id="talking-to-hypnos">Talking to Hypnos<a class="anchor" href="#talking-to-hypnos" aria-label="Link to this section">#</a></h3>
+<p>Click the <strong>microphone</strong> next to the send button to start recording and click it again (or
+<strong>Done</strong>) to stop, or hold it down while you speak and let go. A strip shows the time and your
+voice level; <strong>Esc</strong> or <strong>Cancel</strong> throws the recording away. The speech-to-text model turns
+what you said into text in the composer, so you can check it before you send. Tick <strong>send when
+done</strong> to send it straight away (the app remembers the choice). A recording stops by itself
+after 5 minutes.</p>
+<p>The first time, macOS asks to let Hypnos use the microphone. If you refused, allow it in System
+Settings &gt; Privacy &amp; Security &gt; Microphone.</p>
+<h3 id="hearing-the-answers">Hearing the answers<a class="anchor" href="#hearing-the-answers" aria-label="Link to this section">#</a></h3>
+<p>Click the <strong>speaker</strong> in the chat header to have every new answer read aloud as it arrives,
+sentence by sentence; click it again to stop. <strong>Read aloud</strong> under an answer reads that one.
+Code blocks are announced (&quot;Code block.&quot;) instead of read, and links are read as their text.
+Sending a message, switching chats or <strong>Stop reading</strong> stops the voice. Choose the voice and the
+speed in Settings (section 11).</p>
+<h2 id="8-images">8. Images<a class="anchor" href="#8-images" aria-label="Link to this section">#</a></h2>
+<p>Ask the chat model for a picture in your own words (&quot;draw a lighthouse at dawn&quot;, &quot;make me a
+phone wallpaper of the Dolomites at night&quot;) and it asks the image model for it. The image
+appears in the answer, followed by a short comment.</p>
+<figure class="shot"><img src="images/desktop/image-answer.png" alt="An image made by FLUX.3, then edited: the same sign at night with new text" loading="lazy"><figcaption>An image made by FLUX.3, then edited: the same sign at night with new text</figcaption></figure>
+<p>The chat model takes the details from what you write:</p>
+<ul>
+<li><strong>The shape</strong>: &quot;a phone wallpaper&quot; becomes tall, &quot;a banner&quot; wide, or name the size
+(&quot;1920x1080&quot;).</li>
+<li><strong>What to leave out</strong>: &quot;no text&quot;, &quot;without people&quot;.</li>
+<li><strong>How many</strong>: &quot;give me three options&quot; makes several, shown side by side.</li>
+<li><strong>Quick or detailed</strong>: &quot;a quick sketch&quot; uses fewer steps, &quot;the most detail&quot; more.</li>
+<li><strong>Changes to an image</strong>: &quot;make it darker&quot;, &quot;the same at night&quot;, &quot;add a hat&quot; edit the image
+made just before, or one you attached to your message. Editing needs an image model that can
+edit (FLUX.2 klein, FLUX.3); with another one you get a new image and a note saying so.
+Describe the change and what should stay (&quot;keep the lighthouse and the framing&quot;).</li>
+<li><strong>Styles</strong> such as black and white, watercolor, vintage film or pixel art go into the picture&#39;s
+description.</li>
+</ul>
+<p>Under each image you see its description, the model and the time it took, and <strong>Save</strong>,
+<strong>Copy</strong> and <strong>Regenerate</strong> (the same settings with a new random start, so a different take).
+Below that is a line with the settings it was made with: size, seed (the random start that
+makes an image reproducible), steps, what was left out, and what it was edited from. The chat
+model knows these settings too, so &quot;the same but wider&quot; keeps the rest.</p>
+<p>The <strong>image button</strong> in the composer (or typing <code>/image</code> followed by a description) sends the
+text straight to the image model, without the chat model.</p>
+<p>An image takes from tens of seconds to a few minutes, longer the first time, when the image
+model has to load (which can push the chat model out of memory for a while). The answer shows
+the time so far and where the model is loading from. Settings can stop the chat model from
+making images (section 11).</p>
+<h2 id="9-tools-the-chat-models-helpers">9. Tools: the chat model&#39;s helpers<a class="anchor" href="#9-tools-the-chat-models-helpers" aria-label="Link to this section">#</a></h2>
+<p>Besides images, the chat model can hand work to the other models:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th align="left">Tool</th>
+<th align="left">What it does</th>
+<th align="left">Done by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left"><code>fetch_url</code></td>
+<td align="left">reads a web page or an online file you mention</td>
+<td align="left">the document model</td>
+</tr>
+<tr>
+<td align="left"><code>speak</code></td>
+<td align="left">reads a text aloud (&quot;say it out loud&quot;, &quot;how do you pronounce…&quot;)</td>
+<td align="left">the speech model</td>
+</tr>
+<tr>
+<td align="left"><code>extract_entities</code></td>
+<td align="left">lists names, organizations, places, dates or any kind of thing you ask for</td>
+<td align="left">the entity model</td>
+</tr>
+<tr>
+<td align="left"><code>describe_image</code></td>
+<td align="left">looks at an image for a chat model that cannot see</td>
+<td align="left">a vision model</td>
+</tr>
+<tr>
+<td align="left"><code>generate_image</code></td>
+<td align="left">makes or edits an image (section 8)</td>
+<td align="left">the image model</td>
+</tr>
+</tbody></table></div>
+<p>A tool is offered only when a model that does its job is running. The chat model can use
+several at once, and they run at the same time.</p>
+<p>Tool calls show in a <strong>blue panel</strong> above the answer. While a tool works the panel is open and
+says &quot;Using fetch_url…&quot;; afterwards it folds to a summary such as &quot;Used 2 tools: fetch_url,
+extract_entities · 2.8 s&quot;. Click it to see each call: what the tool was asked (<strong>Input</strong>), what
+it gave back to the chat model (<strong>Output</strong>), which model did it and how long it took.</p>
+<figure class="shot"><img src="images/desktop/tool-panel.png" alt="The blue tool panel, opened: a web page read and entities found, each with its input and output" loading="lazy"><figcaption>The blue tool panel, opened: a web page read and entities found, each with its input and output</figcaption></figure>
+<p>Settings can turn these tools off (section 11); the image tool has its own switch. Chat models
+that do not support tool calls can still make images, but do not get the other tools.</p>
+<h2 id="10-choosing-models">10. Choosing models<a class="anchor" href="#10-choosing-models" aria-label="Link to this section">#</a></h2>
+<p>Click <strong>Models</strong> in the header. The dialog shows the folder your models are in (with the free
+space) and two tabs: <strong>In use</strong>, what the server runs, and <strong>Catalog</strong>, models you can add.</p>
+<h3 id="in-use-what-the-server-runs">In use: what the server runs<a class="anchor" href="#in-use-what-the-server-runs" aria-label="Link to this section">#</a></h3>
+<figure class="shot"><img src="images/desktop/models-in-use.png" alt="The In use tab: the server's models by job, each with its tier, size and variant, its thinking level, &quot;Make default for…&quot;, Disable and Remove" loading="lazy"><figcaption>The In use tab: the server's models by job, each with its tier, size and variant, its thinking level, &quot;Make default for…&quot;, Disable and Remove</figcaption></figure>
+<p>The models are grouped by their main job (Chat, Speech to text, Text to speech, Embeddings,
+Image generation, Documents, Entities). Each row shows:</p>
+<ul>
+<li>a dot and a line for where the model is: <strong>Tier 1 · loaded</strong> (green), <strong>Tier 2 · warm</strong>
+(amber) or <strong>Tier 3 · on disk</strong> (grey), see section 13. Or why it does not run: <strong>Disabled</strong>,
+<strong>Files missing</strong>, or <strong>Not on the server</strong> (it is in the configuration, but the server you
+are connected to does not run it);</li>
+<li>its size, the variant it runs (Q4_0, Q8_0, …) and green badges for the jobs it is the
+default for. The × on a badge gives the job back to the automatic choice (the chat model when
+it can do the job, else a model that is already loaded).</li>
+</ul>
+<p>On the right:</p>
+<ul>
+<li><strong>Thinking</strong> (on models that can think) sets how much the model reasons before it answers
+(section 5).</li>
+<li><strong>Make default for…</strong> chooses this model for a job it can do: <strong>Chat</strong> (the model every chat
+answers with), images in messages, speech to text, text to speech, image generation, or
+documents and links. The change applies to the next request; no restart.</li>
+<li><strong>Disable</strong> takes the model out of memory and refuses its requests until you <strong>Enable</strong> it
+again; it stays in the configuration.</li>
+<li>For models from the catalog: a <strong>variant</strong> menu with <strong>Replace</strong> (switch to another variant,
+downloading it if needed) and <strong>Remove</strong> (take it out of the server; its files stay on disk).</li>
+</ul>
+<p>A model whose files are missing has a <strong>Download</strong> box: tick the ones you want and click
+<strong>Download</strong> at the bottom. Files resume where they stopped if you click <strong>Stop</strong> or lose the
+connection, and each file is checked when it arrives. The app then restarts its server so the
+models are used.</p>
+<p><strong>Change…</strong> moves your models to another folder (an external drive, for example); tick &quot;Move
+the files to the new folder&quot; to take the downloaded files along.</p>
+<h3 id="catalog-models-to-add">Catalog: models to add<a class="anchor" href="#catalog-models-to-add" aria-label="Link to this section">#</a></h3>
+<figure class="shot"><img src="images/desktop/models-catalog.png" alt="The Catalog tab: tested models grouped by job, with a variant and Add" loading="lazy"><figcaption>The Catalog tab: tested models grouped by job, with a variant and Add</figcaption></figure>
+<p>The catalog lists the tested models the server does not have yet, grouped by their main job:
+Chat, Vision, Speech to text, Text to speech, Embeddings, Image generation, Documents, Entities.
+The buttons above the list (All, Chat 15, Vision 2, …) show one group alone.</p>
+<p>Each model shows its name, maker, license, what it does (Chat, Vision, Speech to text, …),
+<strong>Thinking</strong> and <strong>Tools</strong> when it supports them, and a short description. Pick a <strong>variant</strong> (a
+smaller one is faster and uses less memory, a larger one is a little better) and click <strong>Add</strong>:
+the app downloads it if needed and adds it to the running server, with no restart. It then
+appears under In use.</p>
+<p>Some models come from repositories that need you to accept a license first, such as Black
+Forest Labs&#39; FLUX originals. Their variants say <strong>needs a Hugging Face token</strong>: accept the
+license on the model&#39;s Hugging Face page, then save a read token in Settings (section 11).</p>
+<p><strong>Guided setup…</strong> at the top opens the guided setup again (section 2).</p>
+<h2 id="11-settings">11. Settings<a class="anchor" href="#11-settings" aria-label="Link to this section">#</a></h2>
+<p>Open them by clicking the status in the header, or with Cmd/Ctrl+, (comma).</p>
+<figure class="shot"><img src="images/desktop/settings.png" alt="The Connection settings" loading="lazy"><figcaption>The Connection settings</figcaption></figure>
+<ul>
+<li><strong>Server URL</strong>: the address of the Hypnos server, such as <code>http://localhost:9999</code>.</li>
+<li><strong>API key</strong>: only needed when the server asks for one. It is kept in your system&#39;s keychain
+(macOS Keychain, Windows Credential Manager, Secret Service on Linux), one key per server.</li>
+<li><strong>Models for each job</strong>: the same choices as &quot;Make default for…&quot; in Models, for images in
+messages, speech to text, text to speech, image generation, and documents and links.
+Automatic uses the chat model when it can do the job, else a model that is already loaded.</li>
+<li><strong>Let the chat model create images</strong>, and <strong>Let the chat model use the other models</strong>: the
+switches for the image tool and the other tools (section 9).</li>
+<li><strong>Hugging Face token</strong>: for models from gated repositories. Paste a read token from
+huggingface.co/settings/tokens and click <strong>Check and save</strong>: the app asks Hugging Face whose
+token it is and keeps it in the keychain. It is only ever sent to huggingface.co. <strong>Forget</strong>
+removes it.</li>
+<li><strong>App</strong>: keep Hypnos running in the menu bar (tray) when you close the window; hide the Dock
+icon (macOS); get a notification when an answer or image finishes while you are elsewhere.</li>
+<li><strong>Reading aloud</strong>: the voice and the speed for answers read aloud.</li>
+</ul>
+<p><strong>Test connection</strong> tries the address and key before you save.</p>
+<h2 id="12-the-local-server">12. The local server<a class="anchor" href="#12-the-local-server" aria-label="Link to this section">#</a></h2>
+<p>The <strong>server button</strong> in the header (two stacked boxes) opens the Local server dialog. It runs a
+Hypnos server on this computer and connects the app to it.</p>
+<figure class="shot"><img src="images/desktop/local-server.png" alt="The Local server dialog: the server binary, its configuration, the port, and its live output" loading="lazy"><figcaption>The Local server dialog: the server binary, its configuration, the port, and its live output</figcaption></figure>
+<ul>
+<li><strong>Binary</strong>: the server program, the one inside the app. <strong>Detect</strong> finds it again (or an
+installed <code>hypnos</code> for an app built without one), or enter a path.</li>
+<li><strong>Config</strong>: the server&#39;s configuration file. The app keeps its own in its data folder
+(<code>~/Library/Application Support/Hypnos/hypnos.toml</code> on a Mac, <code>%APPDATA%\Hypnos\hypnos.toml</code>
+on Windows, <code>~/.local/share/Hypnos/hypnos.toml</code> on Linux). <strong>Models…</strong> and <strong>Set up…</strong> open
+the Models dialog and the guided setup for it.</li>
+<li><strong>Port</strong>: where the server listens (9999 unless you change it).</li>
+<li><strong>Start with the app</strong>: starts the server when Hypnos opens, unless one already answers on
+that port, in which case the app simply connects to it.</li>
+<li><strong>Start</strong> / <strong>Stop</strong>, and below them the server&#39;s output as it runs, which helps when it does
+not start.</li>
+</ul>
+<p>When you quit, the app stops the server it started; it never stops a server it did not start.
+In the app&#39;s own config, models whose files are missing are switched off before each start (the
+server would refuse to start otherwise) and switched on again once their files are there.</p>
+<h2 id="13-the-server-panel">13. The server panel<a class="anchor" href="#13-the-server-panel" aria-label="Link to this section">#</a></h2>
+<p>The panel on the right shows what the server is doing. It refreshes every second and a half
+while it is open.</p>
+<figure class="shot"><img src="images/desktop/stats-panel.png" alt="The server panel: the server, its memory, KV parking, the models by tier, the last response and the latest evictions" loading="lazy"><figcaption>The server panel: the server, its memory, KV parking, the models by tier, the last response and the latest evictions</figcaption></figure>
+<p>Hypnos keeps models in three places, called <strong>tiers</strong>:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th align="left">Tier</th>
+<th align="left">Where</th>
+<th align="left">Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left"><strong>Tier 1</strong></td>
+<td align="left">the graphics memory (GPU)</td>
+<td align="left">loaded and ready: answers start at once</td>
+</tr>
+<tr>
+<td align="left"><strong>Tier 2</strong></td>
+<td align="left">reserved (&quot;pinned&quot;) system memory</td>
+<td align="left">kept warm: moves to Tier 1 in about a second</td>
+</tr>
+<tr>
+<td align="left"><strong>Tier 3</strong></td>
+<td align="left">the disk</td>
+<td align="left">not loaded: the first request loads it, which takes a few seconds</td>
+</tr>
+</tbody></table></div>
+<p>Hypnos moves models between the tiers by itself: it loads the one you need and sets aside the
+ones you have not used for a while.</p>
+<ul>
+<li><strong>Server</strong>: its status, version, how long it has been running, and the device.</li>
+<li><strong>Memory</strong>: on a Mac, one bar for the memory the graphics and the processor share (green:
+models in Tier 1, amber: models kept warm); on a PC, one bar for the graphics card and one for
+the reserved memory. Then how much is mapped from disk, and how much memory Hypnos uses in all.</li>
+<li><strong>KV parking</strong>: when on, a conversation&#39;s working memory is kept when its model is set aside,
+so coming back to a long chat does not mean reading it all again. <strong>Cap</strong> limits how much
+memory it may use.</li>
+<li><strong>Models</strong>: each model, grouped by tier, with its size, its job, &quot;on CPU&quot; for those that run
+on the processor, how many requests it has served and how long it has been idle. For
+Mixture-of-Experts models, <strong>MoE</strong> <code>off</code> / <code>auto</code> / <code>on</code> keeps part of the model in system
+memory (less graphics memory, slower answers).</li>
+<li><strong>Last response</strong>: what the latest answer cost: the time to the first word, the speed, the
+tokens, where the model was and how long loading it took, step by step.</li>
+<li><strong>Recent evictions</strong>: which models were set aside, for which other model, and why.</li>
+</ul>
+<h2 id="14-the-request-log">14. The request log<a class="anchor" href="#14-the-request-log" aria-label="Link to this section">#</a></h2>
+<p>The <strong>☰</strong> button in the header (or Cmd/Ctrl+L) replaces the chat with the server&#39;s request log:
+every request with its time, route, model, status, duration, tokens, speed and tier.</p>
+<figure class="shot"><img src="images/desktop/request-log.png" alt="The request log" loading="lazy"><figcaption>The request log</figcaption></figure>
+<p>Filter by model, route or status; <strong>pause</strong> stops the refresh. Click a row to see the whole
+record, and <strong>Copy JSON</strong> to copy it.</p>
+<figure class="shot"><img src="images/desktop/request-record.png" alt="A request's record" loading="lazy"><figcaption>A request's record</figcaption></figure>
+<p>The <strong>level</strong> menu sets what the server records from now on: <code>info</code> keeps the numbers;
+<code>debug</code> also keeps the text that went in and came out; <code>trace</code> keeps the full requests.
+<strong>Clear</strong> empties the log for everyone using this server. <strong>Log</strong> under an answer opens that
+answer&#39;s record directly.</p>
+<h2 id="15-the-menu-bar-and-notifications">15. The menu bar and notifications<a class="anchor" href="#15-the-menu-bar-and-notifications" aria-label="Link to this section">#</a></h2>
+<p>Hypnos puts its logo in the menu bar (macOS) or the system tray (Windows, Linux), with a dot for
+the server&#39;s state: green ready, amber loading, red unreachable or key refused, grey connecting.
+Click it to show or hide the window. Its menu has:</p>
+<ul>
+<li>the status and version, and <strong>Open Hypnos</strong>;</li>
+<li><strong>Stop the server</strong> / <strong>Start the server</strong>, for a server running on this computer (also one
+you started yourself);</li>
+<li><strong>Connection settings…</strong> and <strong>Quit</strong>.</li>
+</ul>
+<p>Closing the window keeps Hypnos running in the menu bar, unless you turned that off in
+Settings. When an answer or an image finishes while the window is hidden or in the background,
+a notification tells you.</p>
+<h2 id="16-keyboard-shortcuts">16. Keyboard shortcuts<a class="anchor" href="#16-keyboard-shortcuts" aria-label="Link to this section">#</a></h2>
+<p>On Windows and Linux use Ctrl where the Mac uses Cmd.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th align="left">Shortcut</th>
+<th align="left">Action</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left">Enter</td>
+<td align="left">send the message</td>
+</tr>
+<tr>
+<td align="left">Shift+Enter</td>
+<td align="left">new line in the message</td>
+</tr>
+<tr>
+<td align="left">Esc</td>
+<td align="left">cancel a recording</td>
+</tr>
+<tr>
+<td align="left">Cmd+N</td>
+<td align="left">new chat</td>
+</tr>
+<tr>
+<td align="left">Cmd+.</td>
+<td align="left">show or hide the server panel</td>
+</tr>
+<tr>
+<td align="left">Cmd+,</td>
+<td align="left">settings</td>
+</tr>
+<tr>
+<td align="left">Cmd+L</td>
+<td align="left">request log</td>
+</tr>
+</tbody></table></div>
+<h2 id="17-troubleshooting">17. Troubleshooting<a class="anchor" href="#17-troubleshooting" aria-label="Link to this section">#</a></h2>
+<p><strong>The status says Unreachable.</strong> The server is not running or the address is wrong. On a Mac,
+open the Local server dialog and click <strong>Start</strong>; its output shows why it stops, if it does.
+Otherwise check the address in Settings and that the server is running.</p>
+<p><strong>API key refused.</strong> The server asks for a key. Enter it in Settings; it is saved per server.</p>
+<p><strong>Warming up for a long time.</strong> The server is loading its first models; large models take
+longer the first time after a restart. The server panel shows them arriving in Tier 1.</p>
+<p><strong>The first answer of the day is slow.</strong> Its model was on disk (Tier 3) and had to load: the
+line under the answer says &quot;loaded from Tier 3 in …&quot;. Later answers are fast.</p>
+<p><strong>&quot;Not enough memory to load this model right now.&quot;</strong> Other models are busy and cannot be set
+aside. Wait for them to finish, or use smaller models (the guided setup and the catalog&#39;s
+variants help with that).</p>
+<p><strong>An image takes minutes.</strong> Image models are large, and loading one can push the chat model
+out of memory; the answer shows where the model is loading from. Smaller image models (FLUX.2
+klein, Iris) and fewer steps (&quot;a quick sketch&quot;) are faster.</p>
+<p><strong>The microphone does nothing.</strong> Allow Hypnos in System Settings &gt; Privacy &amp; Security &gt;
+Microphone (macOS), and check under Models &gt; In use that a speech-to-text model runs.</p>
+<p><strong>A download says the repository is gated.</strong> Accept the model&#39;s license on its Hugging Face page
+with your account, then save a read token in Settings.</p>
+<p><strong>The app cannot read a file.</strong> Very large files, or formats the document model does not know,
+are refused with a message on the chip. Documents over about 60,000 characters are cut, and
+the chip says so.</p>
+<p><strong>Something else.</strong> Open the request log, find the request (status 4xx or 5xx), open it and
+use <strong>Copy JSON</strong>: the record says what went wrong. Its id (<code>req-…</code>) identifies it in the
+server&#39;s own log.</p>
+<h2 id="18-where-your-data-is-kept">18. Where your data is kept<a class="anchor" href="#18-where-your-data-is-kept" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th align="left">What</th>
+<th align="left">Where</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left">Chats, the server address, your model choices</td>
+<td align="left">the app&#39;s data folder: <code>~/Library/Application Support/dev.hypnos.desktop/</code> (macOS), <code>%APPDATA%\dev.hypnos.desktop\</code> (Windows), <code>~/.local/share/dev.hypnos.desktop/</code> (Linux)</td>
+</tr>
+<tr>
+<td align="left">API keys, the Hugging Face token</td>
+<td align="left">the system keychain</td>
+</tr>
+<tr>
+<td align="left">The bundled server&#39;s configuration and models</td>
+<td align="left"><code>~/Library/Application Support/Hypnos/</code> (macOS), <code>%APPDATA%\Hypnos\</code> (Windows), <code>~/.local/share/Hypnos/</code> (Linux): <code>hypnos.toml</code>, <code>models/</code>, unless you moved the models</td>
+</tr>
+<tr>
+<td align="left">What the server records about requests</td>
+<td align="left">the server&#39;s memory only (the request log), until it restarts or is cleared</td>
+</tr>
+</tbody></table></div>
+<p>Your chats never leave your computer except as requests to the Hypnos server you connected to.
+To start over, delete the chats in the sidebar. You can also delete <code>hypnos.toml</code> in the Hypnos
+folder above: the app writes a fresh one from its template at the next start.</p>
+
+        </article>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <div class="footer-brand">
+        <img src="../assets/logo-256.png" alt="" width="40" height="40">
+        <div>
+          <strong>Hypnos</strong>
+          <p>OpenAI-compatible multi-modal inference server with a 3-tier memory scheduler.</p>
+        </div>
+      </div>
+      <nav class="footer-links" aria-label="Project links">
+        <a href="https://github.com/advancedlogic/hypnos" rel="noopener">Source</a>
+        <a href="https://github.com/advancedlogic/hypnos/releases" rel="noopener">Releases</a>
+        <a href="index.html">Docs</a>
+        <a href="https://github.com/advancedlogic/hypnos/blob/main/README.md" rel="noopener">README</a>
+        <a href="https://github.com/advancedlogic/hypnos/blob/main/backend/hypnos.example.toml" rel="noopener">Example config</a>
+      </nav>
+      <p class="footer-license">Source code under Apache-2.0 or MIT, at your option. Binaries built with the default engines link espeak-ng and are distributed under GPL-3.0-or-later. Model weights carry their own licenses.</p>
+    </div>
+  </footer>
+
+  <script src="../script.js" defer></script>
+</body>
+</html>

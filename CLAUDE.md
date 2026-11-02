@@ -497,6 +497,16 @@ Single-file app: `frontend/src/App.svelte` (Svelte 5 runes) renders the live 3-t
 `/v1/memory/status` and a tabbed playground for each modality. The Vite dev server proxies `/v1`
 and `/health` to the backend, so the UI uses relative URLs.
 
+### Website (`website/`)
+
+A static page (`index.html`, `styles.css`, `script.js`, no build) plus the documentation under
+`website/docs/`, generated from `docs/desktop-manual.md`, `docs/api.md` and `docs/operating.md`
+by `website/scripts/build-docs.mjs` (marked; `cd website && npm install && npm run build:docs`):
+one page per document with a sidebar from its headings, GitHub-style heading anchors, the
+manual's screenshots copied to `website/docs/images/`, links to other `.md` files turned into
+page or GitHub links, plus `docs/index.html`. The generated pages are committed: after a change
+to one of those three documents, run the build and commit the result with it.
+
 ## Task tracking
 
 `TODO.md` is a card board with prefixed IDs (`UI-n`, `API-n`, `ENG-n`, `MEM-n`, `PERF-n`, `BUG-n`,

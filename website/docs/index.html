@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Documentation · Hypnos</title>
+  <meta name="description" content="The Hypnos documentation: the desktop app manual, the HTTP API reference and the operating guide.">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0d0f43">
+  <meta property="og:title" content="Documentation · Hypnos">
+  <meta property="og:description" content="The Hypnos documentation: the desktop app manual, the HTTP API reference and the operating guide.">
+  <meta property="og:image" content="../assets/logo-256.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/favicon.png">
+  <link rel="apple-touch-icon" href="../assets/logo-256.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="../docs.css">
+  <script>
+    // Apply the stored theme before the first paint to avoid a flash.
+    try {
+      var t = localStorage.getItem('hypnos-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  </script>
+</head>
+<body class="docs-page">
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container header-row">
+      <a class="brand" href="../index.html" aria-label="Hypnos home">
+        <img src="../assets/logo-256.png" alt="" width="36" height="36">
+        <span>Hypnos</span>
+      </a>
+      <nav class="nav" id="nav" aria-label="Documentation">
+        <a href="index.html" aria-current="page">Docs</a>
+        <a href="desktop-manual.html">Desktop manual</a>
+        <a href="api.html">API reference</a>
+        <a href="operating.html">Operating guide</a>
+        <a href="https://github.com/advancedlogic/hypnos" rel="noopener">GitHub</a>
+      </nav>
+      <div class="header-actions">
+        <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+          <svg class="sun" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg class="moon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="icon-btn menu-btn" id="menu-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="nav">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="container">
+      <p class="crumbs"><a href="../index.html">Hypnos</a> › <a href="index.html">Docs</a></p>
+      <div class="section-head docs-head">
+        <p class="eyebrow">Documentation</p>
+        <h1>Hypnos documentation</h1>
+        <p class="section-lede">Three guides, one per reader: the person using the desktop app, the one writing a client, and the one running a server. The README on GitHub is the introduction; <code>backend/hypnos.example.toml</code> documents every option.</p>
+      </div>
+      <div class="feature-grid doc-grid">
+          <a class="card doc-card" href="desktop-manual.html">
+            <h3>Desktop manual</h3>
+            <p>How to install the app, let it set itself up, chat with attachments, voice and images, choose models, and what every panel shows.</p>
+            <p class="doc-audience">For everyone who uses the app.</p>
+          </a>
+          <a class="card doc-card" href="api.html">
+            <h3>API reference</h3>
+            <p>Every route with its request and response fields, the streaming formats, the error shape and the telemetry on each response.</p>
+            <p class="doc-audience">For client and SDK authors.</p>
+          </a>
+          <a class="card doc-card" href="operating.html">
+            <h3>Operating guide</h3>
+            <p>Sizing a machine, which knob to turn for which symptom, reading the telemetry and the errors, logs, exposure, upgrades, running it as a service.</p>
+            <p class="doc-audience">For whoever runs a server.</p>
+          </a>
+      </div>
+      <div class="docs-more">
+        <h2>More on GitHub</h2>
+        <ul>
+          <li><a href="https://github.com/advancedlogic/hypnos/blob/main/README.md" rel="noopener">README</a>: what Hypnos is, the model lineup, the endpoint table and the quickstart.</li>
+          <li><a href="https://github.com/advancedlogic/hypnos/blob/main/backend/hypnos.example.toml" rel="noopener">hypnos.example.toml</a>: the reference config, every option with a comment.</li>
+          <li><a href="https://github.com/advancedlogic/hypnos/blob/main/desktop/README.md" rel="noopener">desktop/README.md</a>: the desktop app for developers: building it, how it reaches the server, the bundled server.</li>
+          <li><a href="https://github.com/advancedlogic/hypnos/blob/main/docs/apple-silicon.md" rel="noopener">docs/apple-silicon.md</a>: unified memory, Metal's working set, the design record for the Mac.</li>
+          <li><a href="https://github.com/advancedlogic/hypnos/blob/main/docs/signing.md" rel="noopener">docs/signing.md</a>: signing and notarizing the macOS and Windows builds.</li>
+          <li><a href="https://github.com/advancedlogic/hypnos/tree/main/docs/bench" rel="noopener">docs/bench</a>: the measured runs on CUDA and Apple Silicon.</li>
+          <li><a href="https://github.com/advancedlogic/hypnos/tree/main/sdk" rel="noopener">sdk/</a>: the Python, JavaScript and Rust clients.</li>
+          <li><a href="https://github.com/advancedlogic/hypnos/blob/main/CHANGELOG.md" rel="noopener">CHANGELOG.md</a>: what each release changed.</li>
+        </ul>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <div class="footer-brand">
+        <img src="../assets/logo-256.png" alt="" width="40" height="40">
+        <div>
+          <strong>Hypnos</strong>
+          <p>OpenAI-compatible multi-modal inference server with a 3-tier memory scheduler.</p>
+        </div>
+      </div>
+      <nav class="footer-links" aria-label="Project links">
+        <a href="https://github.com/advancedlogic/hypnos" rel="noopener">Source</a>
+        <a href="https://github.com/advancedlogic/hypnos/releases" rel="noopener">Releases</a>
+        <a href="index.html">Docs</a>
+        <a href="https://github.com/advancedlogic/hypnos/blob/main/README.md" rel="noopener">README</a>
+        <a href="https://github.com/advancedlogic/hypnos/blob/main/backend/hypnos.example.toml" rel="noopener">Example config</a>
+      </nav>
+      <p class="footer-license">Source code under Apache-2.0 or MIT, at your option. Binaries built with the default engines link espeak-ng and are distributed under GPL-3.0-or-later. Model weights carry their own licenses.</p>
+    </div>
+  </footer>
+
+  <script src="../script.js" defer></script>
+</body>
+</html>

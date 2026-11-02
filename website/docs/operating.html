@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Operating Hypnos · Hypnos</title>
+  <meta name="description" content="Sizing a machine for a lineup, which knob to turn for which symptom, reading the telemetry, what each error means, logs, exposure, upgrades and running Hypnos as a service.">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0d0f43">
+  <meta property="og:title" content="Operating Hypnos · Hypnos">
+  <meta property="og:description" content="Sizing a machine for a lineup, which knob to turn for which symptom, reading the telemetry, what each error means, logs, exposure, upgrades and running Hypnos as a service.">
+  <meta property="og:image" content="../assets/logo-256.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/favicon.png">
+  <link rel="apple-touch-icon" href="../assets/logo-256.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="../docs.css">
+  <script>
+    // Apply the stored theme before the first paint to avoid a flash.
+    try {
+      var t = localStorage.getItem('hypnos-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  </script>
+</head>
+<body class="docs-page">
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container header-row">
+      <a class="brand" href="../index.html" aria-label="Hypnos home">
+        <img src="../assets/logo-256.png" alt="" width="36" height="36">
+        <span>Hypnos</span>
+      </a>
+      <nav class="nav" id="nav" aria-label="Documentation">
+        <a href="index.html">Docs</a>
+        <a href="desktop-manual.html">Desktop manual</a>
+        <a href="api.html">API reference</a>
+        <a href="operating.html" aria-current="page">Operating guide</a>
+        <a href="https://github.com/advancedlogic/hypnos" rel="noopener">GitHub</a>
+      </nav>
+      <div class="header-actions">
+        <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+          <svg class="sun" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg class="moon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="icon-btn menu-btn" id="menu-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="nav">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="container">
+      <p class="crumbs"><a href="../index.html">Hypnos</a> › <a href="index.html">Docs</a> › <span>Operating guide</span></p>
+      <div class="docs-layout">
+      <details class="docs-toc" open>
+        <summary>On this page</summary>
+        <ol>
+          <li class="l2"><a href="#1-sizing-a-machine">1. Sizing a machine</a></li>
+          <li class="l2"><a href="#2-which-knob-for-which-symptom">2. Which knob for which symptom</a></li>
+          <li class="l2"><a href="#3-reading-the-telemetry">3. Reading the telemetry</a></li>
+          <li class="l2"><a href="#4-errors">4. Errors</a></li>
+          <li class="l2"><a href="#5-logs-levels-and-redaction">5. Logs, levels and redaction</a></li>
+          <li class="l2"><a href="#6-exposure">6. Exposure</a></li>
+          <li class="l2"><a href="#7-upgrading-and-rolling-back">7. Upgrading and rolling back</a></li>
+          <li class="l2"><a href="#8-running-as-a-service">8. Running as a service</a></li>
+          <li class="l2"><a href="#9-before-going-live">9. Before going live</a></li>
+        </ol>
+      </details>
+        <article class="prose">
+          <h1>Operating Hypnos</h1>
+          <p class="docs-source">Rendered from <a href="https://github.com/advancedlogic/hypnos/blob/main/docs/operating.md" rel="noopener"><code>docs/operating.md</code></a>; edits go there.</p>
+<p>For the person who runs Hypnos rather than builds it: how to size a machine for a lineup, which
+knob to turn for which symptom, how to read what the server tells you, what each error means, and
+how to keep it running. The README covers installation and the API; <code>backend/hypnos.example.toml</code>
+documents every option.</p>
+<h2 id="1-sizing-a-machine">1. Sizing a machine<a class="anchor" href="#1-sizing-a-machine" aria-label="Link to this section">#</a></h2>
+<p>Hypnos books memory before it loads anything, so the question is whether the lineup&#39;s bookings fit
+the budgets, not whether the machine &quot;feels&quot; big enough.</p>
+<p><strong>Tier 1 (VRAM)</strong> holds, per resident model, its weights plus the KV cache and compute workspace:</p>
+<figure class="code"><figcaption>text</figcaption><pre><code>vram(model) = total_weight_bytes
+            + slots x KV(default_context_len)      # chat models; KV per token from [models.arch]
+            + arch.activation_workspace_bytes</code></pre><button class="copy" type="button" aria-label="Copy">Copy</button></figure>
+<p><code>POST /v1/memory/status</code> reports the booking of every resident model (<code>placement</code>), what the
+device really has free (<code>tier1_vram_real_free_bytes</code>) and what the planner did not book
+(<code>tier1_vram_unaccounted_bytes</code>: driver, display, other processes). As a rule of thumb for the
+default lineup on a 24 GB GPU: the 26B chat model is 13.6 GiB of weights plus about 0.9 GiB of KV
+per slot at 16k context, so <code>slots = 4</code> fills the card and leaves the embedder (0.3 GiB) and Kokoro
+(0.2 GiB) pinned; MOSS-Image (9.3 GiB) and the 26B cannot be resident together and evict each other.</p>
+<p><strong>Tier 2 (pinned RAM)</strong> holds the weight files of models staged there (<code>initial_tier = &quot;tier2_pinned_ram&quot;</code>, or evicted with <code>keep_warm_in_ram = true</code>). Since PERF-6 the lock covers
+every file of the model (weights, projector, text encoder), so <code>pinned_ram_budget_bytes</code> must
+cover the sum of <code>total_weight_bytes</code> of the models you want warm at once, and that memory is
+gone for the OS and for the Hypnos process itself (CUDA staging buffers, docling, GLiNER). Keep
+the budget under half of physical RAM; the server warns at startup when it is not. On a 64 GB
+machine with the default lineup, 24 GiB for the two chat models (with projectors) is comfortable;
+32 GiB with the image model kept warm as well was not (<code>docs/bench/swap-cuda-2026-10-30.md</code>).</p>
+<p><strong>Tier 3 (NVMe)</strong> is the file. Promotion from Tier 3 reads it through the OS page cache: 4.6 s for
+the 26B on this laptop when the cache is warm, disk speed when it is not.</p>
+<p>The bookings are estimates, not limits the OS enforces. <code>hypnos measure-memory hypnos.toml [--models a,b] --out report.md</code> loads each model alone, runs one request of its kind and reports
+booked against real memory per model (<code>docs/bench/memory-2026-11-01.md</code>, Apple Silicon); run it on
+a new machine or after adding a model, and raise <code>activation_workspace_bytes</code> where real is above
+booked. At runtime <code>/metrics</code> has <code>hypnos_memory_bytes{kind=&quot;booked&quot;|&quot;footprint&quot;|&quot;held&quot;}</code>: alert
+when held stays well above booked.</p>
+<p>Three startup sanity checks: <code>hypnos --check-config hypnos.toml</code> validates the file without
+starting; the first lines of the log print the detected device, the budgets and every model&#39;s
+booking; <code>/v1/memory/status</code> right after <code>/ready</code> shows the pre-staged models in their tiers.</p>
+<p><strong>Choosing a lineup</strong>: <code>hypnos advise --needs chat,voice,documents</code> (this machine; or
+<code>--vram 24G --ram 64G</code>, <code>--unified --ram 32G</code>) recommends catalog models, variants, context, slots,
+tiers and priorities that fit, says what stays resident together and what will swap, and
+<code>--config</code> prints a config file for it (<code>POST /v1/advisor</code> from a client). It sizes with the same
+planner as the scheduler, so its numbers are bookings, not measurements.</p>
+<p><strong>Adding a model</strong> from the catalog (<code>backend/models.catalog.toml</code>, <code>GET /v1/models/catalog</code>):
+<code>./run.sh models &lt;id&gt;[:&lt;quant&gt;]</code> downloads a variant&#39;s files into the models folder, then
+<code>POST /v1/models {&quot;catalog&quot;: &quot;&lt;id&gt;[:&lt;quant&gt;]&quot;}</code> adds it to the running server (no restart; its
+first request loads it), <code>PUT /v1/models/{id}</code> swaps a model for another variant or another model
+under the same name (requests wait for the swap, running ones finish first) and <code>DELETE</code> takes
+one out. These changes are kept in <code>&lt;config name&gt;.models.toml</code> next to the config and applied at
+the next start; delete that file to go back to the config alone. With API keys set they need an
+admin key. Size the pool with the formula above (a block&#39;s <code>total_weight_bytes</code> is the variant&#39;s
+files); <code>hypnos --catalog-block &lt;id&gt;[:&lt;quant&gt;]</code> prints a block for the config file instead. The catalog only lists architectures Hypnos has been tested with: a GGUF that
+merely loads in llama.cpp can still get its prompt format, media markers or memory handling
+wrong. The route reports <code>outdated</code> for a file whose size differs from the catalog (an upload
+replaced upstream) and <code>problem</code> when downloaded weights report another architecture.</p>
+<p><strong>Workload profiles.</strong> <code>[server] profile</code> sets the knobs for an outcome instead of one by one. It
+fills in only what the config leaves out (a <code>[[models]]</code> block&#39;s <code>priority</code>, <code>initial_tier</code>,
+<code>keep_warm_in_ram</code>, <code>slots</code>, <code>[models.arch] default_context_len</code>, and <code>[limits] max_queue_per_model</code>), so explicit keys always win and a block that should follow the profile
+leaves them out; <code>hypnos --check-config</code> logs what the profile set. Models added at runtime get the
+same presets.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th align="left">Role</th>
+<th align="left"><code>interactive_chat</code></th>
+<th align="left"><code>voice_assistant</code></th>
+<th align="left"><code>document_pipeline</code></th>
+<th align="left"><code>batch_processing</code></th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left">chat / vision</td>
+<td align="left">high, loaded at start, 2 slots</td>
+<td align="left">high, loaded at start, 1 slot, 8k context</td>
+<td align="left">normal, on demand, 2 slots</td>
+<td align="left">normal, on demand, 4 slots</td>
+</tr>
+<tr>
+<td align="left">speech-to-text, text-to-speech</td>
+<td align="left">normal, on demand</td>
+<td align="left">never evicted, loaded at start</td>
+<td align="left">low</td>
+<td align="left">normal</td>
+</tr>
+<tr>
+<td align="left">embeddings</td>
+<td align="left">never evicted, loaded at start</td>
+<td align="left">normal</td>
+<td align="left">high, loaded at start</td>
+<td align="left">high, loaded at start</td>
+</tr>
+<tr>
+<td align="left">documents, entities</td>
+<td align="left">normal, on demand</td>
+<td align="left">low</td>
+<td align="left">high, loaded at start</td>
+<td align="left">high, loaded at start</td>
+</tr>
+<tr>
+<td align="left">images</td>
+<td align="left">low</td>
+<td align="left">low</td>
+<td align="left">low</td>
+<td align="left">normal</td>
+</tr>
+<tr>
+<td align="left"><code>max_queue_per_model</code></td>
+<td align="left">8</td>
+<td align="left">4</td>
+<td align="left">32</td>
+<td align="left">64</td>
+</tr>
+<tr>
+<td align="left">objective</td>
+<td align="left">first token within 1 s</td>
+<td align="left">first audio within 1.5 s</td>
+<td align="left">throughput</td>
+<td align="left">throughput</td>
+</tr>
+</tbody></table></div>
+<p>A model with several roles takes the most demanding one (the E4B speech model under
+<code>voice_assistant</code> is never evicted and gets one chat slot). <code>/v1/memory/status</code> reports the
+profile and its objective.</p>
+<h2 id="2-which-knob-for-which-symptom">2. Which knob for which symptom<a class="anchor" href="#2-which-knob-for-which-symptom" aria-label="Link to this section">#</a></h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th align="left">Symptom</th>
+<th align="left">Where to look</th>
+<th align="left">What to change</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left">429 <code>model_busy</code></td>
+<td align="left"><code>/metrics</code> <code>hypnos_scheduler_admissions_rejected_total</code>; request log</td>
+<td align="left">More <code>slots</code> for that model (chat), or raise <code>limits.max_queue_per_model</code>; clients should back off on 429</td>
+</tr>
+<tr>
+<td align="left">429 <code>rate_limit_error</code></td>
+<td align="left">log line &quot;API request rejected: key limit&quot;, <code>hypnos_api_key_rejections_total{key,reason}</code></td>
+<td align="left">The key&#39;s <code>requests_per_minute</code> / <code>max_concurrent</code> / <code>tokens_per_day</code> (<code>[[server.keys]]</code>) or the defaults</td>
+</tr>
+<tr>
+<td align="left">Models evict each other on every request</td>
+<td align="left"><code>recent_evictions</code> in <code>/v1/memory/status</code>, <code>hypnos_scheduler_evictions_total</code></td>
+<td align="left">They do not fit Tier 1 together: lower <code>slots</code> or <code>default_context_len</code> on the big one, drop a model&#39;s priority to <code>low</code>, or move one to another machine</td>
+</tr>
+<tr>
+<td align="left">First token slow after idle</td>
+<td align="left"><code>hypnos_telemetry.tier_switch_latency_ms</code> and <code>tier_switch_phases</code></td>
+<td align="left">The model was evicted: <code>priority = &quot;realtime_pinned&quot;</code> keeps it in VRAM, <code>keep_warm_in_ram = true</code> + Tier 2 budget makes the return 4 s instead of a disk read; check <code>use_mmap</code> is unset on CUDA</td>
+</tr>
+<tr>
+<td align="left">First token slow on the turn after a swap, worse the longer the conversation</td>
+<td align="left"><code>prefill_ms</code> and <code>cached_tokens: 0</code> on that turn; <code>tier_switch_phases.kv_restored_tokens</code> absent</td>
+<td align="left">The eviction dropped the conversation&#39;s KV cache: <code>hardware.kv_park = true</code> (or <code>POST /v1/memory/kv-park</code>) keeps it in host memory up to <code>kv_park_bytes</code>, and the turn prefills only its new tokens (<code>docs/bench/mem4-baseline-2026-10-30.md</code>). It only helps when the model comes back with the same <code>allocated_context_len</code> and <code>slots</code>; <code>kv_park</code> in <code>/v1/memory/status</code> shows what is held</td>
+</tr>
+<tr>
+<td align="left">A Mixture-of-Experts model (the 26B) splits layers onto the CPU, or evicts other models, on a 16-24 GB GPU</td>
+<td align="left"><code>placement.gpu_layers</code> below the layer count, <code>recent_evictions</code>; <code>expert_bytes</code> &gt; 0 in <code>/v1/memory/status</code></td>
+<td align="left"><code>moe_offload = &quot;auto&quot;</code> (or <code>POST /v1/models/{id}/moe-offload</code>) moves only expert tensors to host memory first: the 26B then needs ~2.8 GiB of weights instead of 14.7. It costs speed, prefill most (measured on Apple Silicon with <code>on</code>: decode 47 vs 105 tok/s, prefill 300 vs 4,100 tok/s; on CUDA llama.cpp&#39;s op offload should recover part of the prefill, unmeasured). <code>placement.cpu_expert_layers</code> shows how many layers&#39; experts moved. Never useful on Apple Silicon</td>
+</tr>
+<tr>
+<td align="left">507 <code>insufficient_vram_or_ram</code></td>
+<td align="left">the log line names required and available bytes</td>
+<td align="left">The booking cannot fit even after evicting idle models: smaller context, fewer slots, lower <code>vram_safety_margin_bytes</code> if it is large, or a smaller quantisation</td>
+</tr>
+<tr>
+<td align="left">507 <code>process_memory_cap</code></td>
+<td align="left"><code>process_footprint_bytes</code>, <code>process_memory_cap_bytes</code></td>
+<td align="left">Raise <code>hardware.max_process_memory_bytes</code>, or accept it as the guard it is</td>
+</tr>
+<tr>
+<td align="left">507 <code>device_out_of_memory</code></td>
+<td align="left">log line &quot;Retrying after the engine ran out of device memory&quot; or &quot;no idle model holds VRAM&quot;; <code>recent_evictions</code> with reason <code>device_out_of_memory</code>; <code>tier1_vram_unaccounted_bytes</code></td>
+<td align="left">A placed model&#39;s engine found the device full mid-request (runtime buffers beyond the booking). Idle models were evicted and the request retried once; a 507 means nothing was left to evict. Raise that model&#39;s <code>activation_workspace_bytes</code> so the booking covers its real peak, or <code>vram_safety_margin_bytes</code></td>
+</tr>
+<tr>
+<td align="left">Machine paging, everything slow</td>
+<td align="left"><code>free RAM</code> on the host; <code>tier2_pinned_ram_used_bytes</code> close to the budget</td>
+<td align="left">Lower <code>pinned_ram_budget_bytes</code>, <code>keep_warm_in_ram = false</code> on models that reload fast (the image model), fewer pre-staged models</td>
+</tr>
+<tr>
+<td align="left">Images burnt, noisy or slow to come</td>
+<td align="left">the model&#39;s card (turbo models want a few steps at CFG 1, base models 20+ at CFG 3-5)</td>
+<td align="left"><code>[models.image] steps</code>, <code>cfg_scale</code> (and <code>sample_method</code>, <code>flow_shift</code>, a distilled model&#39;s <code>sigmas</code>) on that model; a request&#39;s <code>steps</code> / <code>cfg_scale</code> still win</td>
+</tr>
+<tr>
+<td align="left">Startup refused: <code>models_dir not found: … (an unplugged drive or a moved folder?)</code></td>
+<td align="left">the one config error, listing the enabled models with files there</td>
+<td align="left">The folder in <code>server.models_dir</code> (or <code>HYPNOS_MODELS_DIR</code>) is missing: connect the drive, point the key at the folder, or disable those models. A missing folder is reported once instead of one &quot;not found&quot; per file</td>
+</tr>
+<tr>
+<td align="left">503 <code>model_not_available</code> right after start</td>
+<td align="left"><code>/ready</code> says 503</td>
+<td align="left">Startup pre-staging is running (minutes with a large model); wait for <code>/ready</code></td>
+</tr>
+<tr>
+<td align="left">GPU hot or throttling</td>
+<td align="left"><code>gpu.throttled</code>, <code>hypnos_gpu_temperature_celsius</code>, <code>hypnos_gpu_throttled</code></td>
+<td align="left">Cooling, power limits; Hypnos only reports it</td>
+</tr>
+<tr>
+<td align="left">Document conversion slow</td>
+<td align="left"><code>hypnos_document_ms_per_page</code></td>
+<td align="left">Table-heavy pages are CPU-bound (TableFormer); <code>device = &quot;gpu&quot;</code> helps layout- and OCR-heavy documents only (<code>docs/bench/docling-cuda-2026-10-30.md</code>)</td>
+</tr>
+<tr>
+<td align="left">Answers start late or run into <code>finish_reason: &quot;length&quot;</code> with thinking on</td>
+<td align="left"><code>completion_tokens</code> far above the answer&#39;s length; <code>reasoning_content</code> in the response</td>
+<td align="left">Thinking spends tokens before the answer: a lower <code>reasoning_effort</code> (low 512, medium 2048, high 6144 thinking tokens) or <code>none</code>, and a <code>max_tokens</code> that leaves room for the answer on top of the budget (thoughts count in it)</td>
+</tr>
+<tr>
+<td align="left">The second stage of a voice turn (or any fixed sequence) pays a model load</td>
+<td align="left"><code>tier_switch_latency_ms</code> on that stage&#39;s request</td>
+<td align="left">Have the client send <code>x-hypnos-next-model: &lt;id&gt;</code> on the previous request: the next model loads while the current one runs (measured: 157 ms -&gt; 0 for LFM3 1.7B after a transcription). Within a priority, eviction already keeps the models asked for most often (<code>requests_per_minute</code>, <code>reload_estimate_ms</code> in <code>/v1/memory/status</code>)</td>
+</tr>
+<tr>
+<td align="left">Requests succeed but take far longer than users accept under load</td>
+<td align="left"><code>latency</code> in <code>/v1/memory/status</code> (p95 / p99 per route and workflow), <code>estimated_wait_ms</code> per model, <code>hypnos_request_e2e_ms</code></td>
+<td align="left">Predictable beats fast-on-average: clients send <code>x-hypnos-deadline-ms</code> and get an immediate 503 <code>deadline_unmeetable</code> with <code>Retry-After</code> instead of a long wait, or set <code>limits.overload = &quot;shed&quot;</code> to apply the profile&#39;s objective to every request; more <code>slots</code> or a second model raise capacity. Mark multi-step tasks with <code>x-hypnos-workflow</code> to see their end-to-end p95</td>
+</tr>
+<tr>
+<td align="left">A model added at runtime is slow on its first request</td>
+<td align="left"><code>tier_switch_latency_ms</code> on that request</td>
+<td align="left">Added and replacing models start cold (their <code>initial_tier</code> applies at startup only): <code>POST /v1/memory/tier</code> stages one ahead, or keep it in the config file to have it pre-staged</td>
+</tr>
+<tr>
+<td align="left"><code>POST /v1/models</code> answers 400</td>
+<td align="left">the message lists the failed checks</td>
+<td align="left">Files missing (download them first: <code>./run.sh models &lt;id&gt;:&lt;quant&gt;</code>), a path outside <code>models_dir</code>, a GGUF of an untested architecture, or an id already in the pool (<code>PUT</code> replaces)</td>
+</tr>
+<tr>
+<td align="left">A second chat turn on an LFM3 (or other hybrid) model prefills from scratch</td>
+<td align="left"><code>cached_tokens</code> low on the turn after a reply</td>
+<td align="left">Their convolution layers keep a recurrent state that cannot be trimmed back, so a turn reuses the cache only up to the end of the previous prompt (the same checkpoint as Gemma&#39;s sliding window); keep <code>prefix_cache = true</code></td>
+</tr>
+<tr>
+<td align="left">Prompts repeat the same prefix but prefill is paid every time</td>
+<td align="left"><code>hypnos_prefix_cache_misses_total</code>, <code>cached_tokens</code> in the telemetry</td>
+<td align="left"><code>prefix_cache = true</code> and enough <code>slots</code> that the conversation&#39;s slot is not reused by another client between turns</td>
+</tr>
+</tbody></table></div>
+<p>The limits in <code>[limits]</code> (<code>request_timeout_secs</code>, <code>max_body_bytes</code>, <code>max_prompt_chars</code>,
+<code>max_tokens_cap</code>, <code>max_images_per_request</code>, <code>allow_remote_image_urls</code>) are safety rails, not
+tuning: raise them when a legitimate request hits one, and keep <code>allow_remote_image_urls = false</code>
+on a server that faces the internet (it makes the server fetch URLs that clients send).</p>
+<h2 id="3-reading-the-telemetry">3. Reading the telemetry<a class="anchor" href="#3-reading-the-telemetry" aria-label="Link to this section">#</a></h2>
+<p>Every response carries <code>hypnos_telemetry</code>:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th align="left">Field</th>
+<th align="left">Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left"><code>previous_tier</code></td>
+<td align="left">Where the model was when the request arrived (<code>tier1_gpu_vram</code>: no load happened)</td>
+</tr>
+<tr>
+<td align="left"><code>placement</code></td>
+<td align="left">The booking the model runs with: GPU / RAM / SSD layers, VRAM bytes, <code>allocated_context_len</code></td>
+</tr>
+<tr>
+<td align="left"><code>tier_switch_latency_ms</code></td>
+<td align="left">Time spent promoting (or expanding the context) before inference; 0 on the fast path</td>
+</tr>
+<tr>
+<td align="left"><code>tier_switch_phases</code></td>
+<td align="left">When this request loaded the model: <code>load_mode</code>, <code>weights_ms</code>, <code>projector_ms</code>, <code>context_ms</code>, <code>total_ms</code></td>
+</tr>
+<tr>
+<td align="left"><code>evicted_models</code></td>
+<td align="left">What was evicted to make room</td>
+</tr>
+<tr>
+<td align="left"><code>inference_latency_ms</code></td>
+<td align="left">Lease granted to response finished</td>
+</tr>
+<tr>
+<td align="left"><code>engine.queue_ms</code></td>
+<td align="left">Waiting for an execution slot</td>
+</tr>
+<tr>
+<td align="left"><code>engine.prefill_ms</code>, <code>engine.decode_ms</code>, <code>engine.ttft_ms</code></td>
+<td align="left">Prompt evaluation, generation, time to first token</td>
+</tr>
+<tr>
+<td align="left"><code>engine.prefill_tokens_per_s</code>, <code>engine.decode_tokens_per_s</code></td>
+<td align="left">Throughput of this request</td>
+</tr>
+<tr>
+<td align="left"><code>engine.cached_tokens</code></td>
+<td align="left">Prompt positions served from the slot&#39;s KV cache</td>
+</tr>
+<tr>
+<td align="left"><code>engine.concurrent_slots</code></td>
+<td align="left">How many slots decoded together while this request ran</td>
+</tr>
+<tr>
+<td align="left"><code>engine.audio_secs</code>, <code>engine.rtf</code>, <code>engine.ttfa_ms</code></td>
+<td align="left">Speech: audio length, real-time factor, time to first audio chunk</td>
+</tr>
+<tr>
+<td align="left"><code>engine.pages</code>, <code>engine.ms_per_page</code></td>
+<td align="left">Document conversion</td>
+</tr>
+</tbody></table></div>
+<p><code>/metrics</code> (Prometheus text) has the same per model as histograms (<code>hypnos_chat_ttft_ms</code>,
+<code>hypnos_chat_queue_ms</code>, <code>hypnos_chat_context_ms</code>, <code>hypnos_chat_prefill_tokens_per_s</code>,
+<code>hypnos_chat_decode_tokens_per_s</code>, <code>hypnos_tts_rtf</code>, <code>hypnos_tts_ttfa_ms</code>, <code>hypnos_stt_rtf</code>,
+<code>hypnos_image_jct_s</code>, <code>hypnos_document_ms_per_page</code>, each with a <code>_last</code> gauge), the scheduler
+counters (<code>hypnos_scheduler_promotions_total</code>, <code>_evictions_total</code>, <code>_load_failures_total</code>,
+<code>_admissions_rejected_total</code>), the memory gauges (<code>hypnos_vram_bytes{kind}</code>,
+<code>hypnos_pinned_ram_bytes{kind}</code>, <code>hypnos_model_tier</code>, <code>hypnos_model_gpu_layers</code>,
+<code>hypnos_model_active_leases</code>), per-route HTTP counters and latency, the GPU health gauges
+(<code>hypnos_gpu_utilization_percent</code>, <code>_temperature_celsius</code>, <code>_power_watts</code>, <code>_sm_clock_mhz</code>,
+<code>_throttled</code>), the prefix-cache counters and the per-key counters.</p>
+<p>Alerts worth having: <code>hypnos_model_load_failures_total{model}</code> increasing (an engine refused its
+weights: file gone or changed, CUDA out of memory; the per-model series says which),
+<code>changes(hypnos_process_start_time_seconds[1h]) &gt; 0</code> (the process restarted: an engine abort took
+it down and the supervisor brought it back), <code>hypnos_gpu_throttled == 1</code> for minutes, <code>/ready</code> not
+200 for longer than your pre-staging takes, <code>hypnos_http_requests_total{class=&quot;5xx&quot;}</code> rate.</p>
+<p>The request log (<code>GET /v1/logs</code>, the playground&#39;s &quot;Request Logs&quot; tab) keeps the last
+<code>server.request_log_capacity</code> calls with route, status, model, key, tokens, tier switch and
+timings; <code>?key=</code>, <code>?model=</code>, <code>?route=</code>, <code>?status=error</code> filter it.</p>
+<h2 id="4-errors">4. Errors<a class="anchor" href="#4-errors" aria-label="Link to this section">#</a></h2>
+<p>All errors come in the OpenAI shape, <code>{&quot;error&quot;: {&quot;message&quot;, &quot;type&quot;, ...}}</code>, so OpenAI SDKs raise
+their usual exceptions.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th align="left">Status</th>
+<th align="left"><code>type</code></th>
+<th align="left">Meaning</th>
+<th align="left">Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left">400</td>
+<td align="left"><code>invalid_request_error</code></td>
+<td align="left">Bad parameter, empty messages, unsupported modality for the model, oversized input</td>
+<td align="left">Fix the request; the message names the field</td>
+</tr>
+<tr>
+<td align="left">401</td>
+<td align="left"><code>invalid_request_error</code> / code <code>invalid_api_key</code></td>
+<td align="left">Missing, malformed or wrong bearer key</td>
+<td align="left">Send <code>Authorization: Bearer &lt;key&gt;</code></td>
+</tr>
+<tr>
+<td align="left">403</td>
+<td align="left"><code>permission_denied</code></td>
+<td align="left">Changing the model pool (<code>POST /v1/models</code>, <code>PUT</code> / <code>DELETE /v1/models/{id}</code>) with a key that is not an admin key</td>
+<td align="left">A plain <code>server.api_keys</code> entry, or <code>admin = true</code> on the <code>[[server.keys]]</code> entry</td>
+</tr>
+<tr>
+<td align="left">404</td>
+<td align="left"><code>model_not_found</code></td>
+<td align="left">No such model id in the pool (the config plus runtime changes)</td>
+<td align="left"><code>GET /v1/models</code> lists the ids</td>
+</tr>
+<tr>
+<td align="left">404</td>
+<td align="left"><code>model_disabled</code></td>
+<td align="left">The model is configured but switched off</td>
+<td align="left"><code>POST /v1/models/{id}/enable</code>, or <code>enabled = true</code></td>
+</tr>
+<tr>
+<td align="left">404</td>
+<td align="left"><code>not_found</code></td>
+<td align="left">A stored document or log entry is gone</td>
+<td align="left">Pictures expire after <code>document_pictures_ttl_secs</code></td>
+</tr>
+<tr>
+<td align="left">429</td>
+<td align="left"><code>model_busy</code></td>
+<td align="left"><code>limits.max_queue_per_model</code> requests already queued or running for the model; or a pool change whose running requests outlasted <code>drain_secs</code></td>
+<td align="left">Back off and retry; more slots or a higher limit; for a pool change, a longer <code>drain_secs</code> (nothing changed)</td>
+</tr>
+<tr>
+<td align="left">429</td>
+<td align="left"><code>rate_limit_error</code> (<code>requests_per_minute</code>, <code>max_concurrent</code>, <code>tokens_per_day</code>)</td>
+<td align="left">The key&#39;s limit</td>
+<td align="left"><code>Retry-After</code> says when</td>
+</tr>
+<tr>
+<td align="left">499</td>
+<td align="left"><code>cancelled</code></td>
+<td align="left">The client went away</td>
+<td align="left">Nothing</td>
+</tr>
+<tr>
+<td align="left">503</td>
+<td align="left"><code>model_not_available</code></td>
+<td align="left">Startup pre-staging still running, or a config-level refusal</td>
+<td align="left">Wait for <code>/ready</code></td>
+</tr>
+<tr>
+<td align="left">504</td>
+<td align="left"><code>timeout</code></td>
+<td align="left"><code>limits.request_timeout_secs</code> passed</td>
+<td align="left">Longer timeout, smaller request</td>
+</tr>
+<tr>
+<td align="left">507</td>
+<td align="left"><code>insufficient_vram_or_ram</code></td>
+<td align="left">The booking does not fit even after evicting idle models</td>
+<td align="left">See sizing</td>
+</tr>
+<tr>
+<td align="left">507</td>
+<td align="left"><code>process_memory_cap</code></td>
+<td align="left">Loading would cross <code>hardware.max_process_memory_bytes</code></td>
+<td align="left">Raise the cap or free RAM</td>
+</tr>
+<tr>
+<td align="left">507</td>
+<td align="left"><code>device_out_of_memory</code></td>
+<td align="left">The engine ran out of device memory while running, and evicting idle models freed nothing (or the retry failed too)</td>
+<td align="left">Retry later; see the symptom table</td>
+</tr>
+<tr>
+<td align="left">500</td>
+<td align="left"><code>server_error</code></td>
+<td align="left">An engine failed (the log line has the engine&#39;s message)</td>
+<td align="left">Check the log; a load failure rolls the booking back</td>
+</tr>
+</tbody></table></div>
+<h2 id="5-logs-levels-and-redaction">5. Logs, levels and redaction<a class="anchor" href="#5-logs-levels-and-redaction" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><code>server.log_format = &quot;json&quot;</code> (or <code>HYPNOS_LOG_FORMAT=json</code>) for log shippers; <code>pretty</code> for a
+terminal. Startup prints every config warning and error, the device and the budgets.</li>
+<li>The port is <code>server.port</code> (9999 by default), overridden by <code>HYPNOS_PORT</code> and, above that, by
+<code>--port N</code> on the command line, so one config file can serve several instances.</li>
+<li>Model files: relative <code>weights_path</code>, <code>aux_weights_path</code>, <code>text_encoder_path</code>,
+<code>tokenizer_path</code> and <code>voices_path</code> resolve against <code>server.models_dir</code> (itself relative to the
+working directory; the example configs set <code>&quot;models&quot;</code> with bare file names, the layout of
+<code>models.manifest</code>), overridden by <code>HYPNOS_MODELS_DIR</code>, e.g. to keep 31 GB on another drive.
+Without the key they resolve against the working directory, as configs written before it do.
+Startup logs the folder in use (<code>Model files models_dir=…</code>).</li>
+<li>Data folders (<code>espeak-ng-data</code>, <code>frontend</code>, <code>models.catalog.toml</code>) are looked for beside the
+binary, then in <code>../Resources</code> of a macOS app bundle, then in <code>HYPNOS_RESOURCE_DIR</code> (the
+catalog in its <code>server/</code> subfolder), which the desktop app sets for the server it carries on
+Windows and Linux; <code>server.frontend_dir</code> names the playground folder outright.</li>
+<li><code>server.request_log_level</code>: <code>info</code> keeps metadata only and is the right level for anything
+exposed beyond a trusted group; <code>debug</code> stores prompts and completions; <code>trace</code> stores payloads
+with media replaced by placeholders. <code>POST /v1/logs/level</code> changes it at runtime.</li>
+<li><code>server.request_log_redact</code>: regular expressions whose matches become <code>[redacted]</code> in stored
+text, or <code>[&quot;all&quot;]</code> to keep no text at any level.</li>
+<li>Rejections are logged with route, reason and the key&#39;s label, never the key.</li>
+</ul>
+<h2 id="6-exposure">6. Exposure<a class="anchor" href="#6-exposure" aria-label="Link to this section">#</a></h2>
+<p>Bind <code>127.0.0.1</code> unless keys and TLS (or a terminating proxy) are in place. With keys, every
+<code>/v1/*</code> route needs a bearer key; <code>/health</code> and <code>/ready</code> stay open, <code>/metrics</code> too unless
+<code>server.metrics_require_auth = true</code>. Per-key limits are the only multi-tenancy Hypnos has: for
+quotas per user or organisation, billing, or finer rules put an API gateway in front.</p>
+<p>Remote image and document URLs (<code>allow_remote_image_urls</code>) never reach loopback, private,
+link-local or other non-public addresses, redirects included, unless <code>limits.allow_private_urls = true</code>: a client cannot make the server read the LAN or a cloud metadata endpoint. A server bound
+beyond loopback without API keys logs a warning at startup (anyone who reaches it can also change
+the model pool). See <code>docs/security-review-2026-11-01.md</code>.</p>
+<h2 id="7-upgrading-and-rolling-back">7. Upgrading and rolling back<a class="anchor" href="#7-upgrading-and-rolling-back" aria-label="Link to this section">#</a></h2>
+<ul>
+<li>Release archives and the Docker image are versioned; <code>hypnos --version</code> prints the build.</li>
+<li><code>hypnos.toml</code> carries <code>config_version</code>. A newer Hypnos migrates an older file in memory and
+logs each step; a file written for a newer Hypnos is refused with both versions named, so a
+rollback to an older binary needs the older config (keep the previous <code>hypnos.toml</code> next to the
+previous archive). Unknown keys are reported as warnings, not ignored.</li>
+<li><code>backend/models.manifest</code> carries <code>manifest-version</code>; the fetch scripts refuse a newer layout.</li>
+<li>Run <code>hypnos --check-config hypnos.toml</code> with the new binary before switching traffic.</li>
+<li>Model files are addressed by path in the config: a new release that changes the lineup needs
+<code>scripts/fetch-models</code> for the new files; old files can stay.</li>
+<li><code>backend/crates/hypnos-core/tests/compat.rs</code> loads every released example config (fixtures in
+<code>tests/fixtures/</code>, add the new release&#39;s when tagging) and checks that files written for a newer
+Hypnos are refused, not misread.</li>
+<li><code>models.catalog.toml</code> carries <code>catalog_version</code> (the server ignores a newer one and its catalog
+route answers 404). The runtime overlay <code>&lt;config name&gt;.models.toml</code> is applied over the config
+at startup and checked with it by <code>--check-config</code>; when rolling back, or to return to the
+config alone, move it away. Back it up with the config: it holds the models added at runtime.</li>
+</ul>
+<h2 id="8-running-as-a-service">8. Running as a service<a class="anchor" href="#8-running-as-a-service" aria-label="Link to this section">#</a></h2>
+<p><strong>Docker</strong> (CUDA):</p>
+<figure class="code"><figcaption>bash</figcaption><pre><code>docker run --gpus all -p 9999:9999 -v ./models:/opt/hypnos/models \
+  -e HYPNOS_API_KEYS=... --restart unless-stopped ghcr.io/advancedlogic/hypnos:0.7.2</code></pre><button class="copy" type="button" aria-label="Copy">Copy</button></figure>
+<p>Mount your own <code>hypnos.toml</code> over <code>/opt/hypnos/hypnos.toml</code> or point <code>HYPNOS_CONFIG</code> at a
+mounted file. The models volume is <code>/opt/hypnos/models</code> (<code>models_dir = &quot;models&quot;</code> from the working
+directory); mount it elsewhere and set <code>HYPNOS_MODELS_DIR</code> to match. The image has a <code>HEALTHCHECK</code> on <code>/health</code> with a 10-minute start period for the
+pre-staging. <code>--build-arg DOCLING_CUDA=1</code> adds the CUDA 13 runtime for docling on the GPU.</p>
+<p><strong>systemd</strong> (Linux archive unpacked in <code>/opt/hypnos</code>):</p>
+<figure class="code"><figcaption>ini</figcaption><pre><code>[Unit]
+Description=Hypnos inference server
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/hypnos
+ExecStart=/opt/hypnos/hypnos /opt/hypnos/hypnos.toml
+Environment=HYPNOS_API_KEYS=...
+Environment=HYPNOS_LOG_FORMAT=json
+Restart=on-failure
+RestartSec=5
+LimitMEMLOCK=infinity
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target</code></pre><button class="copy" type="button" aria-label="Copy">Copy</button></figure>
+<p><code>LimitMEMLOCK</code> matters: Tier 2 uses <code>mlock</code>, and the default limit is small (64 KiB to 8 MiB
+depending on the distribution). SIGTERM triggers the
+graceful shutdown (in-flight requests finish, engines are released).</p>
+<p><strong>Windows</strong>: the archive runs from its folder (<code>hypnos.exe</code> reads <code>hypnos.toml</code>); to run it as a
+service use a wrapper such as NSSM (<code>nssm install hypnos C:\hypnos\hypnos.exe hypnos.toml</code>, set
+the startup directory to the archive folder and <code>HYPNOS_API_KEYS</code> in its environment) or a Task
+Scheduler task that starts at boot. The process raises its own working-set limit for Tier 2.</p>
+<p><strong>Supervision</strong>: an engine abort inside llama.cpp or stable-diffusion.cpp (a C++ <code>abort</code>) takes
+the process down; the restart policy above is what brings it back, and <code>/ready</code> tells the load
+balancer when it is serving again. A load failure that the engine reports as an error (missing
+file, CUDA out of memory) does not: the booking is rolled back and the request answers 500.</p>
+<h2 id="9-before-going-live">9. Before going live<a class="anchor" href="#9-before-going-live" aria-label="Link to this section">#</a></h2>
+<ol>
+<li><code>hypnos --check-config</code> is clean, and the startup log shows the budgets you expect.</li>
+<li><code>backend/scripts/smoke_test.sh http://host:9999</code> passes once per modality.</li>
+<li><code>backend/scripts/bench.sh</code> against the box gives the numbers you will compare against later
+(<code>docs/bench/</code> holds the reference runs).</li>
+<li>Keys set, bound beyond loopback only behind TLS, request log at <code>info</code>, redaction on if the
+level is ever raised.</li>
+<li>Alerts on <code>/ready</code>, load failures, 5xx rate and GPU throttling.</li>
+</ol>
+
+        </article>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <div class="footer-brand">
+        <img src="../assets/logo-256.png" alt="" width="40" height="40">
+        <div>
+          <strong>Hypnos</strong>
+          <p>OpenAI-compatible multi-modal inference server with a 3-tier memory scheduler.</p>
+        </div>
+      </div>
+      <nav class="footer-links" aria-label="Project links">
+        <a href="https://github.com/advancedlogic/hypnos" rel="noopener">Source</a>
+        <a href="https://github.com/advancedlogic/hypnos/releases" rel="noopener">Releases</a>
+        <a href="index.html">Docs</a>
+        <a href="https://github.com/advancedlogic/hypnos/blob/main/README.md" rel="noopener">README</a>
+        <a href="https://github.com/advancedlogic/hypnos/blob/main/backend/hypnos.example.toml" rel="noopener">Example config</a>
+      </nav>
+      <p class="footer-license">Source code under Apache-2.0 or MIT, at your option. Binaries built with the default engines link espeak-ng and are distributed under GPL-3.0-or-later. Model weights carry their own licenses.</p>
+    </div>
+  </footer>
+
+  <script src="../script.js" defer></script>
+</body>
+</html>

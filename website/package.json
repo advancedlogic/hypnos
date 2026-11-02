@@ -1,0 +1,12 @@
+{
+  "name": "hypnos-website",
+  "private": true,
+  "description": "The Hypnos website: a static page plus the documentation rendered from docs/ by scripts/build-docs.mjs",
+  "type": "module",
+  "scripts": {
+    "build:docs": "node scripts/build-docs.mjs"
+  },
+  "devDependencies": {
+    "marked": "^18.1.2"
+  }
+}
