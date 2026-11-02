@@ -172,7 +172,9 @@ REM Windows resource compiler), on PATH. A plain terminal does not have it; a "D
 REM Prompt" does. When rc.exe is missing, load vcvars64.bat from the newest Visual Studio with the
 REM C++ workload so `run.bat build` works from any console.
 :ensure_msvc_env
-where rc.exe >nul 2>&1 && exit /b 0
+REM Already inside a Visual Studio developer prompt (vcvars sets VSCMD_VER) with the resource
+REM compiler: nothing to do. An rc.exe on PATH from elsewhere is not enough for tauri-build.
+if defined VSCMD_VER where rc.exe >nul 2>&1 && exit /b 0
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 set "VCVARS="
 set "VCVARS_LATEST="
