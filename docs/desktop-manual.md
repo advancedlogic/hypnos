@@ -40,13 +40,14 @@ Download the installer for your system from the
 | :--- | :--- | :--- |
 | macOS (Apple Silicon) | `hypnos-desktop-<version>-macos-arm64.dmg` | included: the app starts it for you |
 | Windows | `-windows-x64.msi` or `-windows-x64.setup.exe` | included, with the CUDA runtime; needs an NVIDIA GPU (RTX 20 or newer) with driver 570 or newer, and the Microsoft Visual C++ 2015-2022 redistributable (x64) |
-| Linux | `-linux-x64.deb` or `-linux-x64.AppImage` | included; needs the same GPU and driver, the CUDA 12 runtime libraries (`libcudart.so.12`, `libcublas.so.12`) and `libgomp1` installed, and glibc 2.39 or newer (Ubuntu 24.04+) |
+| Linux | `-linux-x64.deb` | included; needs the same GPU and driver, the CUDA 12 runtime libraries (`libcudart.so.12`, `libcublas.so.12`) and `libgomp1` installed, and glibc 2.39 or newer (Ubuntu 24.04+) |
+| Linux | `-linux-x64.AppImage` | not included: the app connects to a server you run (the archive or the Docker image), or starts an installed `hypnos` |
 
 On a Mac, open the `.dmg` and drag Hypnos to Applications. On Windows, run the installer. On
-Linux, install the `.deb` (`sudo apt install ./hypnos-desktop-*.deb`) or make the AppImage
+Linux, install the `.deb` (`sudo apt install ./hypnos-desktop-*.deb`), or make the AppImage
 executable and run it. The app carries its own server, so there is nothing else to install
 (on Linux, the CUDA runtime from NVIDIA's repository: `apt install cuda-cudart-12-8
-libcublas-12-8`).
+libcublas-12-8`); the AppImage is the exception and needs a server to talk to.
 
 The app can also talk to a Hypnos server elsewhere: one you run on the same computer (the
 server release archive, or the Docker image) or one on another machine. Section 12 shows the

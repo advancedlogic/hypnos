@@ -6,7 +6,8 @@ sits in which memory tier, how much of each tier is used, what the last answer c
 
 The installers carry the server and the app starts it with itself, as the Ollama app does:
 the Metal build on macOS (Apple Silicon), the CUDA build on Windows (with the CUDA 12 runtime)
-and Linux (the CUDA 12 runtime libraries installed as for the archive). Its config and models
+and in the Linux `.deb` (the CUDA 12 runtime libraries installed as for the archive; the
+AppImage has no server inside yet, DESK-33). Its config and models
 live in the app's data folder (`~/Library/Application Support/Hypnos/`, `%APPDATA%\Hypnos\`,
 `~/.local/share/Hypnos/`). An app built without the server (`tauri build` alone) can point at a
 running Hypnos (`./run.sh start backend`, a release archive, the Docker image, another machine)

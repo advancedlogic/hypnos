@@ -159,9 +159,9 @@ The binaries link espeak-ng statically, so the archives are distributed under th
 later (see [License](#license)); each one includes the license texts and links its source tag.
 
 Releases after v0.2.0 also carry installers for the [desktop app](#desktop-app)
-(`hypnos-desktop-*.dmg`, `.msi` / `.setup.exe`, `.deb` / `.AppImage`), each with the
-platform's server inside (the Windows app packs the CUDA runtime as well; the Linux one needs
-it installed as the archive does).
+(`hypnos-desktop-*.dmg`, `.msi` / `.setup.exe`, `.deb` / `.AppImage`), with the platform's
+server inside except for the AppImage (the Windows app packs the CUDA runtime as well; the
+Linux `.deb` needs it installed as the archive does).
 
 ### Docker (CUDA)
 

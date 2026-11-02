@@ -51,11 +51,25 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 3  | 13  | 5   | 8   | 11   | 8   | 11    | 7   | 6    | 33   |
+| 3  | 13  | 5   | 8   | 11   | 8   | 11    | 7   | 6    | 34   |
 
 ---
 
 ## Backlog
+
+- [ ] 🩵 **DESK-33** `P2` The Linux AppImage with the server inside
+      DESK-32 put the server in the `.deb`; the AppImage of v0.7.2 failed to build with it:
+      Tauri's linuxdeploy copies the shared-library dependencies of every ELF file in the image
+      and stops at the server's CUDA runtime (`libcudart.so.12`, `libcublas.so.12`,
+      `libcublasLt.so.12`), absent on the runner, and at the ONNX CUDA provider's CUDA 13 and
+      cuDNN libraries. release.yml builds the AppImage without the server config for now. To
+      bundle it: install the CUDA 12 runtime on the desktop Linux runner (NVIDIA's apt
+      repository, as build-server.yml does) so linuxdeploy packs it (a self-contained AppImage,
+      about 500 MB more), leave `libonnxruntime_providers_cuda.so` out of the Linux staging
+      (docling on the GPU is optional), check that the driver library `libcuda.so.1` is on
+      linuxdeploy's exclude list or exclude it, and run `tauri build --verbose` once to see
+      linuxdeploy's own message. Then the manual's table, desktop/README.md, the README and the
+      release notes say the AppImage includes the server too.
 
 - [ ] ⬛ **BUILD-17** `P2` Major dependency upgrades, done on purpose
       Dependabot's first run opened these as PRs (#1-#12, closed: Dependabot now proposes minor
@@ -237,8 +251,8 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 ## Done
 
 - [x] 🩵 **DESK-32** `P1` Bundle the server inside the Windows and Linux apps too
-      As DESK-16 did on macOS: the `.msi` / `.setup.exe` and the `.deb` / `.AppImage` carry the
-      CUDA server of the same release, the app starts it with itself, writes its config into the
+      As DESK-16 did on macOS: the `.msi` / `.setup.exe` and the `.deb` carry the CUDA server
+      of the same release (the AppImage is DESK-33), the app starts it with itself, writes its config into the
       app data folder (`%APPDATA%\Hypnos\`, `~/.local/share/Hypnos/`) and runs the guided setup
       on first launch. Tauri's layout differs from the macOS bundle: the sidecar lands beside the
       app's binary (the install folder, `/usr/bin`), the resources in the install folder /

@@ -218,7 +218,15 @@ jobs:
               '.bundle.windows.certificateThumbprint = $t | .bundle.windows.digestAlgorithm = "sha256" | .bundle.windows.timestampUrl = "http://timestamp.digicert.com"' <<<"$config")
           fi
           echo "tauri config overrides: $(jq -c 'if .bundle.windows then .bundle.windows.certificateThumbprint = "***" else . end' <<<"$config")"
-          npx tauri build --bundles ${{ matrix.bundles }} --config src-tauri/${{ matrix.config }} --config "$config"
+          if [ "$RUNNER_OS" = Linux ]; then
+            # The .deb carries the server; the AppImage does not yet (DESK-33): linuxdeploy
+            # bundles the shared-library dependencies of every ELF file in the image and stops
+            # at the server's CUDA runtime libraries, which the runner does not have.
+            npx tauri build --bundles deb --config src-tauri/${{ matrix.config }} --config "$config"
+            npx tauri build --bundles appimage --config "$config"
+          else
+            npx tauri build --bundles ${{ matrix.bundles }} --config src-tauri/${{ matrix.config }} --config "$config"
+          fi
       # Tauri notarizes and staples the app inside the .dmg, not the .dmg: a downloaded, quarantined
       # image would assess as "Unnotarized Developer ID". Notarize and staple the image as well.
       - name: Notarize the disk image (macOS)
@@ -354,7 +362,8 @@ jobs:
 
           Desktop app (a chat client with live server stats, with the server above inside: it
           starts it for you and downloads models on first run; the Windows app carries the CUDA
-          runtime, the Linux one needs it installed as the archive does):
+          runtime, the Linux \`.deb\` needs it installed as the archive does; the \`.AppImage\`
+          has no server inside yet and connects to one you run):
           \`hypnos-desktop-*-macos-arm64.dmg\`, \`-windows-x64.msi\` / \`.setup.exe\`,
           \`-linux-x64.deb\` / \`.AppImage\`. ${SIGNING_NOTE}
 

@@ -121,14 +121,19 @@ choose; nothing goes to a cloud service.</p>
 </tr>
 <tr>
 <td align="left">Linux</td>
-<td align="left"><code>-linux-x64.deb</code> or <code>-linux-x64.AppImage</code></td>
+<td align="left"><code>-linux-x64.deb</code></td>
 <td align="left">included; needs the same GPU and driver, the CUDA 12 runtime libraries (<code>libcudart.so.12</code>, <code>libcublas.so.12</code>) and <code>libgomp1</code> installed, and glibc 2.39 or newer (Ubuntu 24.04+)</td>
+</tr>
+<tr>
+<td align="left">Linux</td>
+<td align="left"><code>-linux-x64.AppImage</code></td>
+<td align="left">not included: the app connects to a server you run (the archive or the Docker image), or starts an installed <code>hypnos</code></td>
 </tr>
 </tbody></table></div>
 <p>On a Mac, open the <code>.dmg</code> and drag Hypnos to Applications. On Windows, run the installer. On
-Linux, install the <code>.deb</code> (<code>sudo apt install ./hypnos-desktop-*.deb</code>) or make the AppImage
+Linux, install the <code>.deb</code> (<code>sudo apt install ./hypnos-desktop-*.deb</code>), or make the AppImage
 executable and run it. The app carries its own server, so there is nothing else to install
-(on Linux, the CUDA runtime from NVIDIA&#39;s repository: <code>apt install cuda-cudart-12-8 libcublas-12-8</code>).</p>
+(on Linux, the CUDA runtime from NVIDIA&#39;s repository: <code>apt install cuda-cudart-12-8 libcublas-12-8</code>); the AppImage is the exception and needs a server to talk to.</p>
 <p>The app can also talk to a Hypnos server elsewhere: one you run on the same computer (the
 server release archive, or the Docker image) or one on another machine. Section 12 shows the
 local server dialog, section 11 the connection settings.</p>

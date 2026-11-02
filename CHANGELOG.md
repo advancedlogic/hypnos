@@ -9,11 +9,12 @@ config, and its notes say so).
 ## 0.7.2 (2026-11-02)
 
 ### Added
-- The desktop installers for Windows (`.msi` / `.setup.exe`) and Linux (`.deb` / `.AppImage`)
-  carry the server, as the macOS app has since 0.4: the app starts it with itself, keeps its
-  config and models in the app data folder (`%APPDATA%\Hypnos\`, `~/.local/share/Hypnos/`) and
-  runs the guided setup on first launch. The Windows app also packs the CUDA 12 runtime; the
-  Linux one needs it installed, like the archive (DESK-32).
+- The desktop installers for Windows (`.msi` / `.setup.exe`) and Linux (`.deb`) carry the
+  server, as the macOS app has since 0.4: the app starts it with itself, keeps its config and
+  models in the app data folder (`%APPDATA%\Hypnos\`, `~/.local/share/Hypnos/`) and runs the
+  guided setup on first launch. The Windows app also packs the CUDA 12 runtime; the Linux
+  `.deb` needs it installed, like the archive. The AppImage still comes without the server
+  (DESK-32, DESK-33).
 
 ### Build and CI
 - The engines' CMake builds are kept as assets of the `engines` prerelease, shared by every
