@@ -4,11 +4,14 @@ A native chat app for a running Hypnos server, in the spirit of the Ollama app: 
 chat with streaming answers, and keep a panel open with what the server is doing (which model
 sits in which memory tier, how much of each tier is used, what the last answer cost).
 
-On macOS (Apple Silicon) the app carries the server and starts it with itself, as the Ollama
-app does; its config and models live in `~/Library/Application Support/Hypnos/`. On Windows and
-Linux it does not contain the server: point it at a running Hypnos (`./run.sh start backend`, a
-release archive, the Docker image, another machine), or let it start an installed `hypnos` on
-this machine from its Local server dialog. Any platform can connect to a remote server instead.
+The installers carry the server and the app starts it with itself, as the Ollama app does:
+the Metal build on macOS (Apple Silicon), the CUDA build on Windows (with the CUDA 12 runtime)
+and Linux (the CUDA 12 runtime libraries installed as for the archive). Its config and models
+live in the app's data folder (`~/Library/Application Support/Hypnos/`, `%APPDATA%\Hypnos\`,
+`~/.local/share/Hypnos/`). An app built without the server (`tauri build` alone) can point at a
+running Hypnos (`./run.sh start backend`, a release archive, the Docker image, another machine)
+or start an installed `hypnos` on this machine from its Local server dialog. Any build can
+connect to a remote server instead.
 
 Built with Tauri 2, Svelte 5 (runes) and Tailwind 3, the same web stack as `frontend/`. Every call
 to the server is made by the Rust side with the Rust SDK (`sdk/rust`); the web UI only calls the
@@ -108,7 +111,7 @@ screenshots/capture.mjs` (`--only <scene>` for one).
   app reconnects by itself when the server comes back.
 
 - **Local server** (the server button in the header): runs `hypnos` on this machine and
-  connects the app to it. The binary is detected (the server bundled in the macOS app, this
+  connects the app to it. The binary is detected (the server bundled in the app, this
   checkout's `backend/target/release`, a `hypnos` beside the app, then PATH) or entered by hand, with an
   optional config (its folder becomes the working directory, so its relative model paths work;
   without one the server reads `hypnos.toml` beside the binary) and a port. The dialog shows the
@@ -116,12 +119,18 @@ screenshots/capture.mjs` (`--only <scene>` for one).
   on that port, in which case the app just connects to it. The app stops the server it started
   (gracefully, SIGTERM on Linux/macOS) when you quit, and never stops one it did not start.
 
-- **Bundled server (macOS)**: the `.dmg` carries `hypnos` (`Contents/MacOS`), its sd.cpp library
-  (`Contents/Frameworks`), the espeak data, the playground and a config template
-  (`Contents/Resources`). On first launch the app writes `~/Library/Application
-  Support/Hypnos/hypnos.toml` from that template and starts the server with it (Start with the app
-  is on by default). Model files go in its models folder, `~/Library/Application
-  Support/Hypnos/models/` unless you choose another (see Models). Before each start the app disables the models whose files are missing, since the server
+- **Bundled server**: the installers carry `hypnos` as a Tauri sidecar beside the app's binary
+  (`Contents/MacOS`, the install folder, `/usr/bin`), its sd.cpp library (`Contents/Frameworks`
+  on macOS; with the resources elsewhere), the espeak data, the playground and a config template
+  in `server/` under the app's resources (`Contents/Resources`, the install folder,
+  `/usr/lib/Hypnos`). The Windows app also carries the CUDA 12 runtime DLLs and ONNX Runtime's
+  CUDA provider; the Linux one needs the CUDA 12 runtime libraries and `libgomp1` installed,
+  like the archive (the app sets `HYPNOS_RESOURCE_DIR` and `LD_LIBRARY_PATH` so the server
+  finds its data and library where the installer put them). On first launch the app writes
+  `hypnos.toml` from that template into its data folder (`~/Library/Application
+  Support/Hypnos/`, `%APPDATA%\Hypnos\`, `~/.local/share/Hypnos/`) and starts the server with
+  it (Start with the app is on by default). Model files go in its `models/` folder there unless
+  you choose another (see Models). Before each start the app disables the models whose files are missing, since the server
   refuses a config with missing weights, and enables them again once the files are there; the
   log view lists both. A model you disable yourself in that config stays disabled. Edit the config
   freely: only the guided setup rewrites its models (keeping a `.bak`); delete it to get the
@@ -240,7 +249,8 @@ Prerequisites, besides Node.js 18+ and Rust (rustup stable):
 ```bash
 # from the repository root
 ./run.sh build desktop     # npm install + tauri build --no-bundle (an .app bundle on macOS,
-                           # with the server inside when backend/target/release/hypnos exists)
+                           # with the server inside when backend/target/release/hypnos exists;
+                           # run.bat build desktop does the same on Windows, through Git's bash)
 ./run.sh start desktop     # open the built app (stop / status / logs desktop work too)
 
 # development, with hot reload of the web side
@@ -254,17 +264,26 @@ npx tauri build            # installers for this OS under src-tauri/target/relea
 app in one go. `run.bat build desktop` / `run.bat start desktop` do the same on Windows. The `desktop` target is
 never part of `all`. `HYPNOS_PROFILE=debug` builds and starts the debug binary.
 
-To bundle the server by hand (Apple Silicon): build it (`./run.sh build backend`) and the
-playground (`cd frontend && npm run build`), stage it, then merge the bundling config:
+To bundle the server by hand: build it (`./run.sh build backend`; `run.bat build backend`) and
+the playground (`cd frontend && npm run build`), stage it, then merge the platform's bundling
+config (`tauri.server-macos.conf.json`, `tauri.server-windows.conf.json`,
+`tauri.server-linux.conf.json`):
 
 ```bash
-./desktop/scripts/stage-server.sh          # or --archive hypnos-<version>-macos-arm64-metal.tar.gz
+./desktop/scripts/stage-server.sh          # or --archive hypnos-<version>-<platform>.tar.gz|.zip
+                                           # (Windows: --cuda-runtime hypnos-<version>-windows-x64-cuda12-runtime.zip)
 cd desktop && npx tauri build --bundles dmg --config src-tauri/tauri.server-macos.conf.json
+cd desktop && npx tauri build --bundles nsis,msi --config src-tauri/tauri.server-windows.conf.json
+cd desktop && npx tauri build --bundles deb,appimage --config src-tauri/tauri.server-linux.conf.json
 ```
 
-The staging folder (`src-tauri/server/`) is git-ignored. Without the merged config, `tauri dev`,
-`tauri build` and clippy do not need a server build. `release.yml` stages the server from the
-`macos-arm64-metal` archive of the same run.
+The staging folder (`src-tauri/server/`) is git-ignored; on Windows the script runs in Git
+for Windows' bash and takes the CUDA runtime DLLs from `$CUDA_PATH/bin` when no zip is given.
+Without the merged config, `tauri dev`, `tauri build` and clippy do not need a server build.
+`release.yml` stages each platform's server from the archive of the same run. tauri-build also
+copies the staged files next to the app binary in `src-tauri/target/<profile>/`, so the app
+built there starts its own server as the installed one does (its resource folder is the
+executable's on Windows, `../Resources` on macOS, `../lib/Hypnos` on Linux).
 
 The UI needs the Tauri side for every server call, so it does not run in a plain browser.
 

@@ -5,12 +5,35 @@ use std::path::PathBuf;
 /// Where a data folder that ships with the binary (`espeak-ng-data`, `frontend`) may sit, in
 /// order: beside the executable (release archives, Docker, the cargo target dir), then
 /// `../Resources` when the executable is in an app bundle's `Contents/MacOS` (the server bundled
-/// in the macOS desktop app, DESK-16).
+/// in the macOS desktop app, DESK-16), then the folder named by `HYPNOS_RESOURCE_DIR`, which the
+/// desktop app sets when it starts the server it carries on Windows (the app's install folder)
+/// and Linux (`/usr/lib/Hypnos`, where Tauri installs an app's resources) (DESK-32).
 pub fn beside_executable(exe_dir: &std::path::Path, name: &str) -> Vec<PathBuf> {
+    let resources = std::env::var_os(RESOURCE_DIR_VAR)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
+    data_dir_candidates(exe_dir, name, resources.as_deref())
+}
+
+/// The environment variable that names an extra folder holding the server's data folders.
+pub const RESOURCE_DIR_VAR: &str = "HYPNOS_RESOURCE_DIR";
+
+/// `beside_executable` with the resource folder given instead of read from the environment.
+pub fn data_dir_candidates(
+    exe_dir: &std::path::Path,
+    name: &str,
+    resources: Option<&std::path::Path>,
+) -> Vec<PathBuf> {
     let mut dirs = vec![exe_dir.join(name)];
     if exe_dir.file_name().is_some_and(|n| n == "MacOS") {
         if let Some(contents) = exe_dir.parent() {
             dirs.push(contents.join("Resources").join(name));
+        }
+    }
+    if let Some(resources) = resources {
+        let dir = resources.join(name);
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
         }
     }
     dirs
@@ -1484,6 +1507,28 @@ mod tests {
                 PathBuf::from("/Applications/Hypnos.app/Contents/MacOS/espeak-ng-data"),
                 PathBuf::from("/Applications/Hypnos.app/Contents/Resources/espeak-ng-data"),
             ]
+        );
+        // The desktop app on Linux: the sidecar in /usr/bin, the data where Tauri puts the
+        // app's resources, named through HYPNOS_RESOURCE_DIR.
+        assert_eq!(
+            data_dir_candidates(
+                Path::new("/usr/bin"),
+                "frontend",
+                Some(Path::new("/usr/lib/Hypnos"))
+            ),
+            vec![
+                PathBuf::from("/usr/bin/frontend"),
+                PathBuf::from("/usr/lib/Hypnos/frontend"),
+            ]
+        );
+        // On Windows the resources sit in the install folder, beside the binary: listed once.
+        assert_eq!(
+            data_dir_candidates(
+                Path::new("/opt/hypnos"),
+                "frontend",
+                Some(Path::new("/opt/hypnos"))
+            ),
+            vec![PathBuf::from("/opt/hypnos/frontend")]
         );
     }
 

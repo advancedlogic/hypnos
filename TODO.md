@@ -51,7 +51,7 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
 
 | UI | API | ENG | MEM | PERF | BUG | BUILD | DOC | TEST | DESK |
 |----|-----|-----|-----|------|-----|-------|-----|------|------|
-| 3  | 13  | 5   | 8   | 11   | 8   | 11    | 7   | 6    | 20   |
+| 3  | 13  | 5   | 8   | 11   | 8   | 11    | 7   | 6    | 33   |
 
 ---
 
@@ -235,6 +235,37 @@ IDs are never reused: when a card is done it moves to **Done** and keeps its ID.
       cache, the second shows the time.
 
 ## Done
+
+- [x] 🩵 **DESK-32** `P1` Bundle the server inside the Windows and Linux apps too
+      As DESK-16 did on macOS: the `.msi` / `.setup.exe` and the `.deb` / `.AppImage` carry the
+      CUDA server of the same release, the app starts it with itself, writes its config into the
+      app data folder (`%APPDATA%\Hypnos\`, `~/.local/share/Hypnos/`) and runs the guided setup
+      on first launch. Tauri's layout differs from the macOS bundle: the sidecar lands beside the
+      app's binary (the install folder, `/usr/bin`), the resources in the install folder /
+      `/usr/lib/Hypnos`, so the server gets `HYPNOS_RESOURCE_DIR` (read by
+      `hypnos_core::config::beside_executable` and the catalog lookup) from the app, and on
+      Linux `LD_LIBRARY_PATH` for `libstable-diffusion.so`. `mainBinaryName` pins the app's
+      binary to `hypnos-desktop` so Tauri's kebab-cased product name (`hypnos`) cannot clash
+      with the sidecar on Linux. `stage-server.sh` stages all three platforms (from the build
+      or the release archive; the Windows app also packs the CUDA 12 runtime DLLs from the
+      release's cudart zip or `$CUDA_PATH/bin`, and ONNX Runtime's CUDA provider as the archive
+      does); `tauri.server-windows.conf.json` / `-linux` map the staged resources, the Linux one
+      adds `libgomp1` to the `.deb`'s depends. release.yml's desktop job waits for the three
+      server builds and stages each platform's archive; `run.sh build desktop` stages on Linux
+      and Windows (Git Bash) as on macOS, `run.bat build desktop` through Git for Windows' bash.
+      Not bundled: the CUDA runtime on Linux (NVIDIA's apt packages, as for the archive); the
+      app's `.deb` still builds on 22.04 while the server inside needs glibc 2.39 (documented).
+      Done 2026-11-02 on Windows: staged from the local release build (CUDA 13's DLLs from
+      `bin/x64`), `tauri build --no-bundle` with the Windows config put `hypnos.exe`, the DLLs,
+      the data and `server/` beside the app; the app from `target/release` detected the bundled
+      server, wrote `%APPDATA%\Hypnos\hypnos.toml`, disabled the seven models without files
+      and started it, which served the playground. That local server binary is an older build
+      (0.4.0; the vendored llama-cpp-rs tree on this machine is behind its patches, so the
+      backend did not rebuild), so the catalog lookup through `HYPNOS_RESOURCE_DIR` is covered
+      by hypnos-core's unit test only; the desktop crate's tests do not run on this machine
+      (its test binary fails to load, STATUS_ENTRYPOINT_NOT_FOUND, and HEAD's did not compile
+      on Windows), CI runs them on Linux. The installers and the Linux layout run in the next
+      release build.
 
 - [x] 🟥 **BUG-9** `P0` A crafted GGUF header crashed the server (stack overflow)
       `gguf.rs` skipped arrays of arrays recursively, one level per 12 bytes of header and no

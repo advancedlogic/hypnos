@@ -196,6 +196,10 @@ their usual exceptions.
   `models.manifest`), overridden by `HYPNOS_MODELS_DIR`, e.g. to keep 31 GB on another drive.
   Without the key they resolve against the working directory, as configs written before it do.
   Startup logs the folder in use (`Model files models_dir=…`).
+- Data folders (`espeak-ng-data`, `frontend`, `models.catalog.toml`) are looked for beside the
+  binary, then in `../Resources` of a macOS app bundle, then in `HYPNOS_RESOURCE_DIR` (the
+  catalog in its `server/` subfolder), which the desktop app sets for the server it carries on
+  Windows and Linux; `server.frontend_dir` names the playground folder outright.
 - `server.request_log_level`: `info` keeps metadata only and is the right level for anything
   exposed beyond a trusted group; `debug` stores prompts and completions; `trace` stores payloads
   with media replaced by placeholders. `POST /v1/logs/level` changes it at runtime.

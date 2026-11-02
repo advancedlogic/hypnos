@@ -46,8 +46,9 @@ jobs:
           name: frontend-dist
           path: frontend/dist
 
-  # The server archives (build-server.yml). CUDA and macOS are separate calls so the desktop job,
-  # whose macOS app bundles the Metal server (DESK-16), only waits for the macOS one.
+  # The server archives (build-server.yml), one call per platform: the Docker image waits for
+  # the Linux one only, and the desktop job, whose apps bundle the server (DESK-16, DESK-32),
+  # for all three.
   # ubuntu-24.04 sets the glibc floor of the Linux binary (2.39); ort's prebuilt static ONNX
   # Runtime needs glibc 2.38+ and GCC 14's libstdc++, so 22.04 cannot link. -j 2 caps nvcc at about
   # four processes (cargo -j is also each engine's CMake --parallel); more runs out of the
@@ -97,12 +98,13 @@ jobs:
   #   Windows: WINDOWS_CERTIFICATE (base64 .pfx) and WINDOWS_CERTIFICATE_PASSWORD.
   # Without them macOS gets an ad-hoc signature (Gatekeeper offers "Open Anyway" instead of
   # calling the app damaged) and Windows none (SmartScreen: "More info > Run anyway").
-  # The macOS app carries the Metal server from the macos-arm64-metal archive (DESK-16), hence
-  # `needs: build-macos`; `!cancelled()` keeps a failed macOS server build from skipping the
-  # Linux and Windows installers (the macOS one then fails at its download step).
+  # Each app carries its platform's server from the archive of the same run (DESK-16 on
+  # macOS, DESK-32 on Windows and Linux: the Windows app also packs the CUDA 12 runtime zip),
+  # hence `needs` on the three builds; `!cancelled()` keeps one failed server build from
+  # skipping the other installers (that platform's then fails at its download step).
   desktop:
     name: desktop ${{ matrix.platform }}
-    needs: build-macos
+    needs: [build-linux, build-windows, build-macos]
     if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
@@ -110,10 +112,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 22.04 keeps the glibc floor of the .deb and the AppImage low (2.35).
-          - { platform: linux-x64, os: ubuntu-22.04, bundles: "deb,appimage" }
-          - { platform: windows-x64, os: windows-2022, bundles: "msi,nsis" }
-          - { platform: macos-arm64, os: macos-15, bundles: "dmg" }
+          # 22.04 keeps the glibc floor of the app itself low (2.35); the server inside, built
+          # on 24.04, needs glibc 2.39 like the archive.
+          - { platform: linux-x64, os: ubuntu-22.04, bundles: "deb,appimage", server: linux-x64-cuda, config: tauri.server-linux.conf.json }
+          - { platform: windows-x64, os: windows-2022, bundles: "msi,nsis", server: windows-x64-cuda, config: tauri.server-windows.conf.json }
+          - { platform: macos-arm64, os: macos-15, bundles: "dmg", server: macos-arm64-metal, config: tauri.server-macos.conf.json }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
@@ -151,16 +154,18 @@ jobs:
           $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
           Remove-Item $pfx
           "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
-      - name: Server for the app bundle (macOS)
-        if: runner.os == 'macOS'
+      - name: Server for the app bundle
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: hypnos-macos-arm64-metal
+          name: hypnos-${{ matrix.server }}
           path: dist-server
-      - name: Stage the server (macOS)
-        if: runner.os == 'macOS'
+      - name: Stage the server
         shell: bash
-        run: ./desktop/scripts/stage-server.sh --archive dist-server/hypnos-*-macos-arm64-metal.tar.gz
+        run: |
+          archive=$(ls dist-server/hypnos-*-${{ matrix.server }}.tar.gz dist-server/hypnos-*-${{ matrix.server }}.zip 2>/dev/null | head -1)
+          extra=()
+          [ "$RUNNER_OS" = Windows ] && extra=(--cuda-runtime dist-server/hypnos-*-windows-x64-cuda12-runtime.zip)
+          ./desktop/scripts/stage-server.sh --archive "$archive" ${extra[@]+"${extra[@]}"}
       - name: Build the installers
         working-directory: desktop
         shell: bash
@@ -207,9 +212,7 @@ jobs:
               '.bundle.windows.certificateThumbprint = $t | .bundle.windows.digestAlgorithm = "sha256" | .bundle.windows.timestampUrl = "http://timestamp.digicert.com"' <<<"$config")
           fi
           echo "tauri config overrides: $(jq -c 'if .bundle.windows then .bundle.windows.certificateThumbprint = "***" else . end' <<<"$config")"
-          server=()
-          [ "$RUNNER_OS" = macOS ] && server=(--config src-tauri/tauri.server-macos.conf.json)
-          npx tauri build --bundles ${{ matrix.bundles }} ${server[@]+"${server[@]}"} --config "$config"
+          npx tauri build --bundles ${{ matrix.bundles }} --config src-tauri/${{ matrix.config }} --config "$config"
       # Tauri notarizes and staples the app inside the .dmg, not the .dmg: a downloaded, quarantined
       # image would assess as "Unnotarized Developer ID". Notarize and staple the image as well.
       - name: Notarize the disk image (macOS)
@@ -246,7 +249,7 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME}"
-          [[ "$GITHUB_REF" == refs/tags/* ]] || version="$(git describe --tags --always)"
+          [[ "$GITHUB_REF" == refs/tags/* ]] || version="$(git describe --tags --always --match 'v*')"
           mkdir -p dist
           bundle=desktop/src-tauri/target/release/bundle
           for f in "$bundle"/dmg/*.dmg "$bundle"/msi/*.msi "$bundle"/nsis/*.exe "$bundle"/deb/*.deb "$bundle"/appimage/*.AppImage; do
@@ -343,7 +346,9 @@ jobs:
           | \`windows-x64-cuda\` | an NVIDIA GPU from Turing on (RTX 20+), driver 570+, plus \`windows-x64-cuda12-runtime.zip\` unpacked beside \`hypnos.exe\` (or the CUDA Toolkit 12.x) |
           | \`macos-arm64-metal\` | Apple Silicon, macOS 14+ |
 
-          Desktop app (a chat client with live server stats; it connects to a running Hypnos):
+          Desktop app (a chat client with live server stats, with the server above inside: it
+          starts it for you and downloads models on first run; the Windows app carries the CUDA
+          runtime, the Linux one needs it installed as the archive does):
           \`hypnos-desktop-*-macos-arm64.dmg\`, \`-windows-x64.msi\` / \`.setup.exe\`,
           \`-linux-x64.deb\` / \`.AppImage\`. ${SIGNING_NOTE}
 

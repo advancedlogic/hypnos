@@ -2,19 +2,23 @@
 //! port, keeps its output for the log view, and stops it when asked or when the app quits.
 //! Health and readiness go through the Rust SDK (`hypnos-client`).
 //!
-//! The macOS app can carry the server (DESK-16): `hypnos` in `Contents/MacOS`, its dylib in
-//! `Contents/Frameworks`, the data and a config template in `Contents/Resources`. The bundle is
-//! read-only (its signature covers it), so the bundled server runs with a config the app owns
-//! in `~/Library/Application Support/Hypnos/` (`hypnos.toml`, `models/`). Before each start the
-//! app disables the models of that config whose files are missing (the server refuses to start
-//! otherwise) and enables them again once the files are there; models the user disabled stay
-//! disabled. Elsewhere the app finds an installed binary: this checkout's build, one beside the
-//! app, or PATH.
+//! The app can carry the server (DESK-16 on macOS, DESK-32 on Windows and Linux): `hypnos` as a
+//! Tauri sidecar beside the app's own binary (`Contents/MacOS`, the install folder, `/usr/bin`),
+//! its sd.cpp library in `Contents/Frameworks` / beside it / with the resources, and the data
+//! (espeak, playground, catalog) with a config template in `server/` under the app's resources
+//! (`Contents/Resources`, the install folder, `/usr/lib/Hypnos`). The bundle is read-only (an
+//! installer or a signature covers it), so the bundled server runs with a config the app owns
+//! in its data folder (`~/Library/Application Support/Hypnos/`, `%APPDATA%\Hypnos\`,
+//! `~/.local/share/Hypnos/`: `hypnos.toml`, `models/`). Before each start the app disables the
+//! models of that config whose files are missing (the server refuses to start otherwise) and
+//! enables them again once the files are there; models the user disabled stay disabled.
+//! Without a bundled server the app finds an installed binary: this checkout's build, one
+//! beside the app, or PATH.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -30,6 +34,31 @@ const STOP_GRACE: Duration = Duration::from_secs(15);
 const BINARY_NAME: &str = "hypnos.exe";
 #[cfg(not(windows))]
 const BINARY_NAME: &str = "hypnos";
+/// Read by the server (`hypnos_core::config::beside_executable`): a folder holding its data
+/// folders, which the bundled server on Windows and Linux needs since its data sits with the
+/// app's resources rather than beside the binary.
+const RESOURCE_DIR_VAR: &str = "HYPNOS_RESOURCE_DIR";
+
+/// The app's resource folder, set once at startup: `Contents/Resources` on macOS, the install
+/// folder on Windows, `/usr/lib/Hypnos` on Linux (`$APPDIR/usr/lib/Hypnos` in an AppImage),
+/// the cargo target dir of a development build.
+static RESOURCES: OnceLock<PathBuf> = OnceLock::new();
+
+pub(crate) fn init_resources<R: Runtime>(app: &AppHandle<R>) {
+    if let Ok(dir) = app.path().resource_dir() {
+        let _ = RESOURCES.set(dir);
+    }
+}
+
+fn resources() -> Option<&'static Path> {
+    RESOURCES.get().map(PathBuf::as_path)
+}
+
+/// A file of the bundled server's data, `server/<name>` under the app's resources (the config
+/// template, `models.manifest`, `models.catalog.toml`), when the app carries the server.
+pub(crate) fn bundle_file(name: &str) -> Option<PathBuf> {
+    existing(resources()?.join("server").join(name))
+}
 
 /// What the user chose (or the app detected) to run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,24 +209,33 @@ fn beside_app() -> Option<PathBuf> {
     existing(std::env::current_exe().ok()?.parent()?.join(BINARY_NAME))
 }
 
-/// The server inside this app's bundle (DESK-16): `Contents/MacOS/hypnos` with the config
-/// template the bundling build puts in `Contents/Resources/server/`.
+/// The server inside this app's bundle (DESK-16, DESK-32): the sidecar `hypnos` beside the
+/// app's binary, with the config template the bundling build puts in `server/` under the
+/// app's resources. A bare `hypnos` beside the app without the template is `beside-app`.
 fn bundled() -> Option<PathBuf> {
     let binary = beside_app()?;
-    bundled_template(&binary)?;
+    bundled_template(resources()?)?;
     Some(binary)
 }
 
-fn bundled_template(binary: &Path) -> Option<PathBuf> {
-    let macos = binary.parent()?;
-    if macos.file_name()? != "MacOS" {
-        return None;
-    }
-    existing(macos.parent()?.join("Resources/server/hypnos.toml"))
+fn bundled_template(resources: &Path) -> Option<PathBuf> {
+    existing(resources.join("server").join("hypnos.toml"))
 }
 
-/// The folder the bundled server's config and models live in, `~/Library/Application
-/// Support/Hypnos`: outside the bundle, which must stay unchanged for its signature.
+/// Whether `binary` is the server bundled in this app (and so needs the app's resources).
+fn is_bundled(binary: &Path) -> bool {
+    match (
+        bundled().and_then(|b| b.canonicalize().ok()),
+        binary.canonicalize(),
+    ) {
+        (Some(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// The folder the bundled server's config and models live in: `Hypnos` in the app data folder
+/// (`~/Library/Application Support`, `%APPDATA%`, `~/.local/share`), outside the bundle, which
+/// must stay unchanged for its signature or its installer's records.
 fn managed_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     Ok(app
         .path()
@@ -207,13 +245,13 @@ fn managed_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
 }
 
 /// The bundled server's config, written from the bundle's template the first time.
-fn managed_config<R: Runtime>(app: &AppHandle<R>, binary: &Path) -> Result<PathBuf, String> {
+fn managed_config<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let dir = managed_dir(app)?;
     let config = dir.join("hypnos.toml");
     std::fs::create_dir_all(dir.join("models"))
         .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
     if !config.exists() {
-        let template = bundled_template(binary).ok_or("the app bundle has no config template")?;
+        let template = bundle_file("hypnos.toml").ok_or("the app bundle has no config template")?;
         std::fs::copy(&template, &config)
             .map_err(|e| format!("could not write {}: {e}", config.display()))?;
     }
@@ -237,7 +275,7 @@ pub fn local_server_detect<R: Runtime>(app: AppHandle<R>) -> Result<Detected, St
         });
     };
     let config = match source {
-        "bundled" => Some(managed_config(&app, &binary)?),
+        "bundled" => Some(managed_config(&app)?),
         "repo" => repo_config(&binary),
         _ => None,
     };
@@ -417,7 +455,6 @@ pub async fn local_server_start<R: Runtime>(
         .or_else(|| binary.parent())
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
-    let bin_dir = binary.parent().map(Path::to_path_buf).unwrap_or_default();
 
     let mut cmd = Command::new(&binary);
     if let Some(c) = config {
@@ -430,22 +467,7 @@ pub async fn local_server_start<R: Runtime>(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    // The stable-diffusion shared library sits next to the binary (and in deps/ for a cargo
-    // build); `run.sh` sets the same loader paths.
-    #[cfg(target_os = "macos")]
-    cmd.env(
-        "DYLD_LIBRARY_PATH",
-        join_paths(&bin_dir, "DYLD_LIBRARY_PATH"),
-    );
-    #[cfg(target_os = "linux")]
-    cmd.env("LD_LIBRARY_PATH", join_paths(&bin_dir, "LD_LIBRARY_PATH"));
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        let _ = &bin_dir;
-    }
+    apply_server_env(&mut cmd, &binary);
 
     let mut child = cmd
         .spawn()
@@ -500,9 +522,41 @@ pub fn is_managed<R: Runtime>(app: &AppHandle<R>, config: &Path) -> bool {
     }
 }
 
-#[cfg(unix)]
-pub(crate) fn join_paths(first: &Path, var: &str) -> std::ffi::OsString {
+/// What a server process the app runs needs from its environment: the loader path for the
+/// sd.cpp shared library (beside the binary and in `deps/` for a cargo build, as `run.sh` sets
+/// it; with the app's resources for the bundled server on Linux), `HYPNOS_RESOURCE_DIR` so the
+/// bundled server finds its data where the installer put it on Windows and Linux (on macOS it
+/// looks in `../Resources` by itself), and no console window on Windows.
+pub(crate) fn apply_server_env(cmd: &mut Command, binary: &Path) {
+    let bundled = is_bundled(binary).then(resources).flatten();
+    if let Some(res) = bundled {
+        cmd.env(RESOURCE_DIR_VAR, res);
+    }
+    let bin_dir = binary.parent().map(Path::to_path_buf).unwrap_or_default();
+    #[cfg(target_os = "macos")]
+    cmd.env(
+        "DYLD_LIBRARY_PATH",
+        join_paths(&bin_dir, None, "DYLD_LIBRARY_PATH"),
+    );
+    #[cfg(target_os = "linux")]
+    cmd.env(
+        "LD_LIBRARY_PATH",
+        join_paths(&bin_dir, bundled, "LD_LIBRARY_PATH"),
+    );
+    #[cfg(windows)]
+    {
+        // tokio's Command has creation_flags of its own; the DLLs sit beside the binary.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let _ = (&bin_dir, bundled);
+    }
+}
+
+/// `first`, `first/deps`, `extra`, then the variable's current value.
+#[cfg_attr(windows, allow(dead_code))]
+pub(crate) fn join_paths(first: &Path, extra: Option<&Path>, var: &str) -> std::ffi::OsString {
     let mut paths = vec![first.to_path_buf(), first.join("deps")];
+    paths.extend(extra.map(Path::to_path_buf));
     if let Some(existing) = std::env::var_os(var) {
         paths.extend(std::env::split_paths(&existing));
     }
@@ -772,22 +826,29 @@ weights_path = "gone.gguf"
     }
 
     #[test]
-    fn a_bundled_server_needs_the_app_layout_and_its_template() {
+    fn a_bundled_server_needs_the_template_in_the_resources() {
         let root = scratch("bundle");
-        let macos = root.join("Hypnos.app/Contents/MacOS");
-        std::fs::create_dir_all(&macos).unwrap();
-        std::fs::write(macos.join(BINARY_NAME), b"").unwrap();
-        assert_eq!(bundled_template(&macos.join(BINARY_NAME)), None);
-        let resources = root.join("Hypnos.app/Contents/Resources/server");
+        // The app's resources without a staged server (a plain build): no bundled server.
+        let resources = root.join("Hypnos.app/Contents/Resources");
         std::fs::create_dir_all(&resources).unwrap();
-        std::fs::write(resources.join("hypnos.toml"), CONFIG).unwrap();
+        assert_eq!(bundled_template(&resources), None);
+        std::fs::create_dir_all(resources.join("server")).unwrap();
+        std::fs::write(resources.join("server/hypnos.toml"), CONFIG).unwrap();
         assert_eq!(
-            bundled_template(&macos.join(BINARY_NAME)),
-            Some(resources.join("hypnos.toml"))
+            bundled_template(&resources),
+            Some(resources.join("server").join("hypnos.toml"))
         );
-        // A binary beside a plain executable (target/release, an archive) is not a bundle.
-        std::fs::write(root.join(BINARY_NAME), b"").unwrap();
-        assert_eq!(bundled_template(&root.join(BINARY_NAME)), None);
+        // Windows: the resources are the install folder itself.
+        let install = root.join("Program Files/Hypnos");
+        std::fs::create_dir_all(install.join("server")).unwrap();
+        assert_eq!(bundled_template(&install), None);
+        std::fs::write(install.join("server/hypnos.toml"), CONFIG).unwrap();
+        assert_eq!(
+            bundled_template(&install),
+            Some(install.join("server").join("hypnos.toml"))
+        );
+        // Not in a bundle (no resource dir known, as in these tests): no bundled file either.
+        assert_eq!(bundle_file("hypnos.toml"), None);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -861,8 +922,11 @@ weights_path = "gone.gguf"
             .to_path_buf();
         let mut child = std::process::Command::new(&binary)
             .args([config.as_str(), "--port", &port.to_string()])
-            .env("DYLD_LIBRARY_PATH", join_paths(&dir, "DYLD_LIBRARY_PATH"))
-            .env("LD_LIBRARY_PATH", join_paths(&dir, "LD_LIBRARY_PATH"))
+            .env(
+                "DYLD_LIBRARY_PATH",
+                join_paths(&dir, None, "DYLD_LIBRARY_PATH"),
+            )
+            .env("LD_LIBRARY_PATH", join_paths(&dir, None, "LD_LIBRARY_PATH"))
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()

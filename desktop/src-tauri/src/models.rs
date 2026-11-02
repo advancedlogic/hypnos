@@ -1,8 +1,8 @@
 //! Model files for the local server (DESK-17): the lineup from `models.manifest`, downloads with
 //! resume and verification, and the folder they live in.
 //!
-//! The manifest is the one `./run.sh models` reads (`backend/models.manifest`; the macOS app
-//! bundles a copy in `Contents/Resources/server/`). Its `local` column is a path under the models
+//! The manifest is the one `./run.sh models` reads (`backend/models.manifest`; an app with the
+//! server inside bundles a copy in `server/` under its resources). Its `local` column is a path under the models
 //! folder, which is the config's `[server] models_dir` (relative to the config's folder), or
 //! `<config folder>/models` for a config without one. Sizes and SHA-256 sums come from the hosts:
 //! the Hugging Face tree API (`lfs.oid` is the SHA-256 of an LFS file) and the GitHub release API
@@ -394,9 +394,7 @@ pub async fn hf_token_check(token: String) -> Result<String, String> {
 
 /// `models.manifest`: the bundled copy, else this checkout's.
 fn manifest_path() -> Option<PathBuf> {
-    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    let bundled = exe_dir.parent()?.join("Resources/server/models.manifest");
-    if bundled.is_file() {
+    if let Some(bundled) = crate::local_server::bundle_file("models.manifest") {
         return Some(bundled);
     }
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../backend/models.manifest");

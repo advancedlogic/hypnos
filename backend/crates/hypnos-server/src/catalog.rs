@@ -19,7 +19,8 @@ pub const FILE_NAME: &str = "models.catalog.toml";
 
 /// Where the catalog is: `$HYPNOS_CATALOG`, else `./models.catalog.toml` (a server started in
 /// `backend/`), else beside the executable (release archives, `Contents/Resources[/server]` in
-/// the macOS app), else this checkout's (tests, the mock server).
+/// the macOS app, `$HYPNOS_RESOURCE_DIR/server` in the Windows and Linux apps), else this
+/// checkout's (tests, the mock server).
 pub fn locate() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("HYPNOS_CATALOG").filter(|p| !p.is_empty()) {
         return Some(PathBuf::from(p));
@@ -33,6 +34,14 @@ pub fn locate() -> Option<PathBuf> {
         if let Some(contents) = dir.parent() {
             candidates.push(contents.join("Resources/server").join(FILE_NAME));
         }
+    }
+    // The desktop app's bundle on Windows and Linux keeps it in `server/` under the folder it
+    // names (DESK-32), as the macOS bundle does under Resources.
+    if let Some(resources) = std::env::var_os(hypnos_core::config::RESOURCE_DIR_VAR)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+    {
+        candidates.push(resources.join("server").join(FILE_NAME));
     }
     candidates.push(
         Path::new(env!("CARGO_MANIFEST_DIR"))

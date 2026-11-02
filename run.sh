@@ -305,7 +305,7 @@ build_frontend() {
 }
 
 # build_playground: dependencies plus the production bundle (frontend/dist), which the server
-# serves at / and the macOS app bundles.
+# serves at / and the desktop app bundles with the server.
 build_playground() {
     build_frontend || return 1
     echo "[Hypnos] Building the playground bundle (npm run build) -> frontend/dist"
@@ -315,17 +315,25 @@ build_playground() {
 
 # build_desktop: npm install + `tauri build --no-bundle` (the app binary; `--bundles app` on macOS; the installers are
 # made by release.yml). Tauri compiles the Rust side with the cargo first on PATH (rustup's).
-# On Apple Silicon with a release server build, the app bundles that server (DESK-16): staged by
-# desktop/scripts/stage-server.sh and merged in with tauri.server-macos.conf.json.
+# With a release server build, the app bundles that server (DESK-16 on Apple Silicon, DESK-32 on
+# x86-64 Linux and Windows): staged by desktop/scripts/stage-server.sh and merged in with the
+# platform's tauri.server-<os>.conf.json. tauri-build copies the staged files next to the app
+# binary too, so the built app starts its own server as the installed one does.
 build_desktop() {
     echo "[Hypnos] Building the desktop app ($HYPNOS_PROFILE profile) -> $DESKTOP_BIN"
     local flags=("${DESKTOP_BUILD_FLAGS[@]}")
-    if [ "$(uname -s)/$(uname -m)" = Darwin/arm64 ] && [ -x "$ROOT_DIR/backend/target/release/hypnos" ]; then
+    local server_conf="" server_bin="$ROOT_DIR/backend/target/release/hypnos"
+    case "$(uname -s)/$(uname -m)" in
+        Darwin/arm64) server_conf=tauri.server-macos.conf.json ;;
+        Linux/x86_64) server_conf=tauri.server-linux.conf.json ;;
+        MINGW*|MSYS*|CYGWIN*) server_conf=tauri.server-windows.conf.json; server_bin="$server_bin.exe" ;;
+    esac
+    if [ -n "$server_conf" ] && [ -x "$server_bin" ]; then
         if [ ! -f "$ROOT_DIR/frontend/dist/index.html" ]; then
             (cd "$ROOT_DIR/frontend" && npm install && npm run build) || { echo "[Hypnos] frontend build FAILED."; return 1; }
         fi
         "$ROOT_DIR/desktop/scripts/stage-server.sh" || { echo "[Hypnos] staging the server FAILED."; return 1; }
-        flags+=(--config src-tauri/tauri.server-macos.conf.json)
+        flags+=(--config "src-tauri/$server_conf")
     else
         echo "[Hypnos] no release server build to bundle (./run.sh build backend first): the app runs an installed one."
     fi

@@ -59,6 +59,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            local_server::init_resources(app.handle());
             app.manage(hypnos::Hypnos::default());
             app.manage(local_server::LocalServer::default());
             app.manage(models::ModelFiles::default());

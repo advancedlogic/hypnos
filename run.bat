@@ -250,14 +250,37 @@ exit /b 0
 
 REM build_desktop: npm install + `tauri build --no-bundle` (the app binary; release.yml makes the
 REM installers). Tauri compiles the Rust side with the cargo first on PATH (rustup's, set above).
+REM With a release server build, the app bundles that server (DESK-32): staged by
+REM desktop\scripts\stage-server.sh, which runs in Git for Windows' bash, and merged in with
+REM tauri.server-windows.conf.json; tauri-build copies the staged files next to the app binary.
 :build_desktop
 echo [Hypnos] Building the desktop app ^(%HYPNOS_PROFILE% profile^) -^> %DESKTOP_EXE%
 call :ensure_msvc_env
+set "SERVER_CONF="
+if exist "%ROOT%\backend\target\release\hypnos.exe" (
+    set "GIT_BASH="
+    for %%B in ("%ProgramFiles%\Git\bin\bash.exe" "%ProgramFiles(x86)%\Git\bin\bash.exe" "%LocalAppData%\Programs\Git\bin\bash.exe") do (
+        if not defined GIT_BASH if exist "%%~B" set "GIT_BASH=%%~B"
+    )
+    if not defined GIT_BASH (
+        echo [Hypnos] Git for Windows' bash.exe not found: the server is not bundled ^(the app runs an installed one^).
+    ) else (
+        if not exist "%ROOT%\frontend\dist\index.html" call :build_playground
+        "!GIT_BASH!" "%ROOT%\desktop\scripts\stage-server.sh"
+        if errorlevel 1 (
+            echo [Hypnos] staging the server FAILED.
+            exit /b 1
+        )
+        set "SERVER_CONF=--config src-tauri\tauri.server-windows.conf.json"
+    )
+) else (
+    echo [Hypnos] no release server build to bundle ^(run.bat build backend first^): the app runs an installed one.
+)
 pushd "%ROOT%\desktop"
 call npm install
 set "BUILD_RC=!errorlevel!"
 if "!BUILD_RC!"=="0" (
-    call npx tauri build --no-bundle %DESKTOP_BUILD_FLAG%
+    call npx tauri build --no-bundle %DESKTOP_BUILD_FLAG% !SERVER_CONF!
     set "BUILD_RC=!errorlevel!"
 )
 popd

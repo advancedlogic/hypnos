@@ -190,13 +190,14 @@ jobs:
           name: frontend-dist
           path: frontend/dist
 
+      # --match: the `engines` prerelease tag (BUILD-13) is not a version.
       - name: Package
         shell: bash
         env:
           MACOS_NOTARIZED: ${{ steps.macsign.outputs.notarized }}
         run: |
           version="${GITHUB_REF_NAME}"
-          [[ "$GITHUB_REF" == refs/tags/* ]] || version="$(git describe --tags --always)"
+          [[ "$GITHUB_REF" == refs/tags/* ]] || version="$(git describe --tags --always --match 'v*')"
           ./backend/scripts/package-release.sh ${{ matrix.platform }} --version "$version" --out dist
 
       # cudart / cuBLAS are redistributable; shipped separately like llama.cpp's cudart archive,
@@ -206,7 +207,7 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME}"
-          [[ "$GITHUB_REF" == refs/tags/* ]] || version="$(git describe --tags --always)"
+          [[ "$GITHUB_REF" == refs/tags/* ]] || version="$(git describe --tags --always --match 'v*')"
           bin="$(cygpath -u "$CUDA_PATH")/bin"
           mkdir -p dist/cudart
           cp "$bin"/cudart64_12.dll "$bin"/cublas64_12.dll "$bin"/cublasLt64_12.dll dist/cudart/

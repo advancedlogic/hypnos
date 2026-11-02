@@ -13,8 +13,8 @@
 //! server; another config gets the block to copy (`models_catalog_block`).
 //!
 //! The catalog is read here, not from the server, so the dialog works while the server is
-//! stopped: the bundled copy (`Contents/Resources/server/models.catalog.toml`, staged by
-//! `stage-server.sh`), else this checkout's `backend/models.catalog.toml`. Its files (repo,
+//! stopped: the bundled copy (`server/models.catalog.toml` under the app's resources, staged
+//! by `stage-server.sh`), else this checkout's `backend/models.catalog.toml`. Its files (repo,
 //! remote, local, size, platform) come from this parse: the picker needs sizes and folder
 //! entries for every variant up front, which `hypnos --catalog-files` does not print and which
 //! would take a process per entry. The `[[models]]` block comes from the server binary
@@ -208,9 +208,7 @@ impl Entry {
 
 /// `models.catalog.toml`: the bundled copy, else this checkout's (as `models::manifest_path`).
 pub(crate) fn catalog_path() -> Option<PathBuf> {
-    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    let bundled = exe_dir.parent()?.join("Resources/server").join(FILE_NAME);
-    if bundled.is_file() {
+    if let Some(bundled) = crate::local_server::bundle_file(FILE_NAME) {
         return Some(bundled);
     }
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -451,7 +449,8 @@ fn append_block(text: &str, block: &str, id: &str) -> Result<String, String> {
 }
 
 /// A command running the server binary against the catalog the app read (`HYPNOS_CATALOG`),
-/// with the loader paths `run.sh` sets, in the catalog's folder, killed when dropped.
+/// with the environment the app gives the server (`local_server::apply_server_env`), in the
+/// catalog's folder, killed when dropped.
 pub(crate) fn server_command(binary: &Path, catalog: &Path) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(binary);
     cmd.env("HYPNOS_CATALOG", catalog)
@@ -460,26 +459,7 @@ pub(crate) fn server_command(binary: &Path, catalog: &Path) -> tokio::process::C
     if let Some(dir) = catalog.parent() {
         cmd.current_dir(dir);
     }
-    #[cfg(target_os = "macos")]
-    if let Some(dir) = binary.parent() {
-        cmd.env(
-            "DYLD_LIBRARY_PATH",
-            crate::local_server::join_paths(dir, "DYLD_LIBRARY_PATH"),
-        );
-    }
-    #[cfg(target_os = "linux")]
-    if let Some(dir) = binary.parent() {
-        cmd.env(
-            "LD_LIBRARY_PATH",
-            crate::local_server::join_paths(dir, "LD_LIBRARY_PATH"),
-        );
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    crate::local_server::apply_server_env(&mut cmd, binary);
     cmd
 }
 

@@ -39,15 +39,18 @@ Download the installer for your system from the
 | System | File | Server |
 | :--- | :--- | :--- |
 | macOS (Apple Silicon) | `hypnos-desktop-<version>-macos-arm64.dmg` | included: the app starts it for you |
-| Windows | `-windows-x64.msi` or `-windows-x64.setup.exe` | not included |
-| Linux | `-linux-x64.deb` or `-linux-x64.AppImage` | not included |
+| Windows | `-windows-x64.msi` or `-windows-x64.setup.exe` | included, with the CUDA runtime; needs an NVIDIA GPU (RTX 20 or newer) with driver 570 or newer, and the Microsoft Visual C++ 2015-2022 redistributable (x64) |
+| Linux | `-linux-x64.deb` or `-linux-x64.AppImage` | included; needs the same GPU and driver, the CUDA 12 runtime libraries (`libcudart.so.12`, `libcublas.so.12`) and `libgomp1` installed, and glibc 2.39 or newer (Ubuntu 24.04+) |
 
-On a Mac, open the `.dmg` and drag Hypnos to Applications. The app carries its own server, so
-there is nothing else to install.
+On a Mac, open the `.dmg` and drag Hypnos to Applications. On Windows, run the installer. On
+Linux, install the `.deb` (`sudo apt install ./hypnos-desktop-*.deb`) or make the AppImage
+executable and run it. The app carries its own server, so there is nothing else to install
+(on Linux, the CUDA runtime from NVIDIA's repository: `apt install cuda-cudart-12-8
+libcublas-12-8`).
 
-On Windows and Linux the app needs a Hypnos server to talk to: one you run on the same computer
-(the server release archive, or the Docker image) or one on another machine. Section 12 shows
-how the app can start a server installed on this computer.
+The app can also talk to a Hypnos server elsewhere: one you run on the same computer (the
+server release archive, or the Docker image) or one on another machine. Section 12 shows the
+local server dialog, section 11 the connection settings.
 
 The release notes say whether the installers are signed. If they are not:
 
@@ -57,7 +60,7 @@ The release notes say whether the installers are signed. If they are not:
 
 ## 2. The first start
 
-### On a Mac: the guided setup
+### The guided setup
 
 The first time you open the app it has no models yet, so it opens the **guided setup**. It
 recommends models that fit your computer and downloads them for you.
@@ -87,7 +90,7 @@ recommends models that fit your computer and downloads them for you.
 "Choose models myself" opens the Models dialog instead (section 10). "Not now" closes the setup;
 open it again later from **Models > Guided setup…**.
 
-### On Windows and Linux, or with another server
+### With another server
 
 Click the status in the top right (it says *Unreachable* until a server answers) to open the
 **Connection** settings, enter the server's address (for example `http://localhost:9999`, or
@@ -370,11 +373,12 @@ Hypnos server on this computer and connects the app to it.
 
 ![The Local server dialog: the server binary, its configuration, the port, and its live output](images/desktop/local-server.png)
 
-- **Binary**: the server program. On a Mac it is the one inside the app; elsewhere **Detect**
-  looks for an installed `hypnos`, or enter its path.
-- **Config**: the server's configuration file. The Mac app keeps its own in
-  `~/Library/Application Support/Hypnos/hypnos.toml`. **Models…** and **Set up…** open the Models
-  dialog and the guided setup for it.
+- **Binary**: the server program, the one inside the app. **Detect** finds it again (or an
+  installed `hypnos` for an app built without one), or enter a path.
+- **Config**: the server's configuration file. The app keeps its own in its data folder
+  (`~/Library/Application Support/Hypnos/hypnos.toml` on a Mac, `%APPDATA%\Hypnos\hypnos.toml`
+  on Windows, `~/.local/share/Hypnos/hypnos.toml` on Linux). **Models…** and **Set up…** open
+  the Models dialog and the guided setup for it.
 - **Port**: where the server listens (9999 unless you change it).
 - **Start with the app**: starts the server when Hypnos opens, unless one already answers on
   that port, in which case the app simply connects to it.
@@ -382,8 +386,8 @@ Hypnos server on this computer and connects the app to it.
   not start.
 
 When you quit, the app stops the server it started; it never stops a server it did not start.
-On the Mac, models whose files are missing are switched off before each start (the server would
-refuse to start otherwise) and switched on again once their files are there.
+In the app's own config, models whose files are missing are switched off before each start (the
+server would refuse to start otherwise) and switched on again once their files are there.
 
 ## 13. The server panel
 
@@ -506,9 +510,9 @@ server's own log.
 | :--- | :--- |
 | Chats, the server address, your model choices | the app's data folder: `~/Library/Application Support/dev.hypnos.desktop/` (macOS), `%APPDATA%\dev.hypnos.desktop\` (Windows), `~/.local/share/dev.hypnos.desktop/` (Linux) |
 | API keys, the Hugging Face token | the system keychain |
-| The Mac server's configuration and models | `~/Library/Application Support/Hypnos/` (`hypnos.toml`, `models/`), unless you moved the models |
+| The bundled server's configuration and models | `~/Library/Application Support/Hypnos/` (macOS), `%APPDATA%\Hypnos\` (Windows), `~/.local/share/Hypnos/` (Linux): `hypnos.toml`, `models/`, unless you moved the models |
 | What the server records about requests | the server's memory only (the request log), until it restarts or is cleared |
 
 Your chats never leave your computer except as requests to the Hypnos server you connected to.
-To start over, delete the chats in the sidebar. On a Mac you can also delete `hypnos.toml` in
-the Hypnos folder above: the app writes a fresh one from its template at the next start.
+To start over, delete the chats in the sidebar. You can also delete `hypnos.toml` in the Hypnos
+folder above: the app writes a fresh one from its template at the next start.

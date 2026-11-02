@@ -115,6 +115,10 @@ Keep the `.p12` out of the repository and delete the local copy once the secret 
   the bundle: `Contents/MacOS/hypnos` as a sidecar and `Contents/Frameworks/libstable-diffusion.dylib`.
   Tauri signs both in its own pass, with the app's identity, so they share the team and library
   validation passes. The data folders go in `Contents/Resources`, which is not code.
+  `tauri.server-windows.conf.json` does the same on Windows (DESK-32): `hypnos.exe` as a
+  sidecar beside the app's `.exe`, which Tauri signs with the same certificate before it builds
+  the installers; the DLLs beside it (sd.cpp, the CUDA runtime, ONNX Runtime's provider) keep
+  their own publishers' signatures or none.
 - `desktop/src-tauri/Entitlements.plist`, referenced as `bundle.macOS.entitlements`, holds
   `com.apple.security.device.audio-input`. A Developer ID signature turns on the **hardened
   runtime**, and notarization requires it. The hardened runtime blocks the microphone

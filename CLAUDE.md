@@ -423,20 +423,30 @@ API means a change to `docs/api.md`, the mock server and the three SDKs. In Pyth
 Tauri 2 + Svelte 5 + Tailwind 3 (same versions as `frontend/`), its own `package.json` and a
 `src-tauri/` crate outside the backend workspace. `src-tauri/src/local_server.rs` can start a
 `hypnos` (detected or chosen), stream its output to the UI and stop it on quit, with health
-checks through `hypnos-client` (`sdk/rust`, a path dependency). The macOS app bundles the
-Metal server (DESK-16): `desktop/scripts/stage-server.sh` stages it in the git-ignored
-`src-tauri/server/` and `tauri.server-macos.conf.json` (merged with `--config` only by
-`run.sh build desktop`, release.yml and by hand, so dev builds and clippy need no server) puts
-it in `Contents/MacOS` (sidecar), `Contents/Frameworks` (dylib, found through the server's
-`@executable_path/../Frameworks` rpath) and `Contents/Resources` (espeak data and playground,
-found by the server through `hypnos_core::config::beside_executable`). The bundled server runs
-with a config the app writes to `~/Library/Application Support/Hypnos/`; `sync_models`
-disables models with missing files before each start and enables them again later (it resolves
-paths through `[server] models_dir` and changes nothing when that folder is missing).
+checks through `hypnos-client` (`sdk/rust`, a path dependency). The apps bundle the server
+(DESK-16 macOS, DESK-32 Windows and Linux): `desktop/scripts/stage-server.sh` stages the
+platform's build (or release archive; on Windows plus the CUDA 12 runtime DLLs from the
+release's cudart zip or `$CUDA_PATH/bin`) in the git-ignored `src-tauri/server/`, and
+`tauri.server-{macos,windows,linux}.conf.json` (merged with `--config` only by `run.sh build
+desktop` / `run.bat build desktop`, release.yml and by hand, so dev builds and clippy need no
+server) puts `hypnos` as a sidecar beside the app's binary (`Contents/MacOS`, the install
+folder, `/usr/bin`; `mainBinaryName` keeps the app's own binary `hypnos-desktop` so the two
+never clash) and the rest under the app's resources (`Contents/Resources`, the install folder,
+`/usr/lib/Hypnos`): the sd.cpp library (`Contents/Frameworks` on macOS, found through the
+server's `@executable_path/../Frameworks` rpath; beside the exe on Windows; on Linux through
+the `LD_LIBRARY_PATH` the app sets), espeak data, playground and `server/` (config template,
+manifest, catalog, licenses). The server finds its data through
+`hypnos_core::config::beside_executable`: beside the binary, `../Resources`, then
+`HYPNOS_RESOURCE_DIR`, which `local_server::apply_server_env` sets to Tauri's `resource_dir()`
+for the bundled binary (`bundle_file` reads the template, manifest and catalog from there). The
+bundled server runs with a config the app writes to `Hypnos/` in the app data folder
+(`~/Library/Application Support`, `%APPDATA%`, `~/.local/share`); `sync_models` disables
+models with missing files before each start and enables them again later (it resolves paths
+through `[server] models_dir` and changes nothing when that folder is missing).
 `src-tauri/src/models.rs` + `Models.svelte` (DESK-17) download the manifest's models (sizes and
 SHA-256 from the Hugging Face tree API and the GitHub release API, `.part` + `Range` resume,
 `models_set_dir` writes `models_dir` into the app's own config and moves the files); the
-bundle carries `Resources/server/models.manifest`. Ad-hoc
+bundle carries `server/models.manifest`. Ad-hoc
 builds have no hardened runtime (`hardenedRuntime: false`; its library validation refuses an
 ad-hoc dylib); a Developer ID build turns it on. Every server call is a command in `src-tauri/src/hypnos.rs` on `hypnos-client`
 (chat tokens over a `tauri::ipc::Channel`, cancel by request id); the webview has no HTTP

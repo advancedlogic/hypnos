@@ -159,7 +159,9 @@ The binaries link espeak-ng statically, so the archives are distributed under th
 later (see [License](#license)); each one includes the license texts and links its source tag.
 
 Releases after v0.2.0 also carry installers for the [desktop app](#desktop-app)
-(`hypnos-desktop-*.dmg`, `.msi` / `.setup.exe`, `.deb` / `.AppImage`).
+(`hypnos-desktop-*.dmg`, `.msi` / `.setup.exe`, `.deb` / `.AppImage`), each with the
+platform's server inside (the Windows app packs the CUDA runtime as well; the Linux one needs
+it installed as the archive does).
 
 ### Docker (CUDA)
 
@@ -592,8 +594,9 @@ aloud; each call in a collapsible panel with its input and output), attachments
 the server's live state (memory tiers, the models in each, the last answer's timings, evictions).
 On first run its guided setup asks what you want to do, recommends a lineup for the machine,
 downloads it and runs a short demo; the Models dialog adds, swaps and removes catalog models on the
-running server. The macOS app bundles the server; elsewhere it starts an installed one or connects
-to `http://localhost:9999` (the server URL and an API key, kept in the system keychain, are set in
+running server. The installers bundle the server (Metal on macOS, CUDA on Windows and Linux) and
+the app starts it with itself; it can also start an installed one or connect to
+`http://localhost:9999` (the server URL and an API key, kept in the system keychain, are set in
 its connection dialog).
 
 ```bash
