@@ -509,7 +509,22 @@ to one of those three documents, run the build and commit the result with it.
 
 ## Task tracking
 
-`TODO.md` is a card board with prefixed IDs (`UI-n`, `API-n`, `ENG-n`, `MEM-n`, `PERF-n`, `BUG-n`,
-`BUILD-n`, `DOC-n`, `TEST-n`) and `P0`-`P3` priorities; its Conventions section defines the card
-format. "Add a card to TODO" appends to Backlog with the next free ID; "implement XY-n" moves the
-card through In Progress to Done.
+Work is tracked in GitHub issues on the **Hypnos** project board
+(<https://github.com/users/advancedlogic/projects/4>, columns Backlog / In Progress / Done, the
+`Status` field). Each issue has one area label (`ui`, `api`, `engine`, `memory`, `perf`, `bug`,
+`build`, `documentation`, `test`, `desktop`) and one priority label (`P0`-`P3`: blocking, next
+up, normal, someday). The cards that lived in `TODO.md` were migrated with their old id in the
+title (`BUILD-13: …`), the done ones as closed issues; `TODO.md` is now the old id -> issue index,
+which is what the `(XY-n)` in older commits and in CHANGELOG.md point to. New issues have no
+prefixed id: they are `#n`.
+
+- "Add a card" / "open an issue": `gh issue create` with the area and priority labels, a short
+  imperative title, and a body with the problem, the approach and how to check it is done (the
+  depth the migrated cards have); then add it to the board in Backlog (`gh project item-add 4
+  --owner advancedlogic --url <issue>`, Status set with `gh project item-edit`).
+- "Implement #n": set its Status to In Progress, do the work, commit with `(#n)` at the end of the
+  subject and `Fixes #n` in the body (pushing to main closes it, and the board moves closed issues
+  to Done); before that, comment on the issue what was done and how it was verified, as the Done
+  cards did.
+- `gh issue list --label P1 --state open` / the board are the backlog; read an issue with `gh issue
+  view <n>`.

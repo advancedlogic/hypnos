@@ -1,0 +1,48 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The request (curl, SDK call or app steps), the model and its `[[models]]` block if it matters.
+      render: shell
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The server output around it, or the request's entry in `/v1/logs` (`x-request-id`).
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`hypnos --version`, or the release / commit"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux CUDA
+        - Windows CUDA
+        - macOS Apple Silicon (Metal)
+        - CPU only
+        - Docker image
+        - Desktop app
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: GPU / RAM
+      placeholder: "RTX 4090 24 GB, 64 GB RAM / M3 Max 64 GB"

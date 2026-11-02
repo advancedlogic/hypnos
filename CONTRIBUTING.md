@@ -78,24 +78,29 @@ Some changes come in sets, so that nothing falls out of step:
 
 ## The card board
 
-Work is tracked as cards in [TODO.md](TODO.md) (`UI-n`, `API-n`, `ENG-n`, `MEM-n`, `PERF-n`,
-`BUG-n`, `BUILD-n`, `DOC-n`, `TEST-n`, `DESK-n`; priorities `P0`-`P3`; its Conventions section has
-the format). A card moves from Backlog through In Progress to Done, and a done card says what was
-done and how it was checked. Open an issue first for anything large, so we can agree on the
-approach.
+Work is tracked in [GitHub issues](https://github.com/advancedlogic/hypnos/issues) on the
+[Hypnos board](https://github.com/users/advancedlogic/projects/4) (Backlog, In Progress, Done).
+Each issue carries an area label (`api`, `engine`, `memory`, `desktop`, `build`, …) and a priority
+(`P0` blocking, `P1` next up, `P2` normal, `P3` someday). Open an issue first for anything large,
+so we can agree on the approach, and say in the pull request which issue it fixes (`Fixes #n`).
+A closed issue says what was done and how it was checked. Older work has ids like `BUILD-13` in
+its title and in the commits; [TODO.md](TODO.md) maps each one to its issue.
 
 ## Commits
 
 One change per commit, with a message in this form:
 
 ```
-feat(desktop): the Models dialog's In use tab (DESK-29)
+feat(desktop): the Models dialog's In use tab (#123)
 
 What changed and why, in a few lines: the problem, the approach, how it was tested.
+
+Fixes #123
 ```
 
 The prefix is `feat`, `fix`, `perf`, `docs`, `build`, `test`, `refactor` or `style`, the scope
-the area (`server`, `engine`, `memory`, `desktop`, `sdk`, `ci`, …), and the card id at the end.
+the area (`server`, `engine`, `memory`, `desktop`, `sdk`, `ci`, …), and the issue at the end;
+`Fixes #n` in the body closes it when the commit reaches main.
 
 ## Licensing
 

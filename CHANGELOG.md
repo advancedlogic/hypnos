@@ -1,8 +1,8 @@
 # Changelog
 
-Notable changes per release. The ids in parentheses are the cards in [TODO.md](TODO.md), where
-each one is described in full. Releases are on
-[GitHub](https://github.com/advancedlogic/hypnos/releases); versions follow
+Notable changes per release. The ids in parentheses are issues, where each one is described in
+full: `#n`, or for older work a card id such as `BUILD-13`, which [TODO.md](TODO.md) maps to its
+issue. Releases are on [GitHub](https://github.com/advancedlogic/hypnos/releases); versions follow
 [Semantic Versioning](https://semver.org) (before 1.0, a minor version may change the API or the
 config, and its notes say so).
 
