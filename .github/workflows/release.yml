@@ -162,9 +162,15 @@ jobs:
       - name: Stage the server
         shell: bash
         run: |
-          archive=$(ls dist-server/hypnos-*-${{ matrix.server }}.tar.gz dist-server/hypnos-*-${{ matrix.server }}.zip 2>/dev/null | head -1)
+          # The archive is a .tar.gz (Linux, macOS) or a .zip (Windows): pick whichever exists
+          # (`ls` on the missing one would fail the step under -e).
+          archive=""
+          for f in dist-server/hypnos-*-${{ matrix.server }}.tar.gz dist-server/hypnos-*-${{ matrix.server }}.zip; do
+            if [ -f "$f" ]; then archive="$f"; fi
+          done
+          [ -n "$archive" ] || { echo "no server archive in dist-server:"; ls -l dist-server; exit 1; }
           extra=()
-          [ "$RUNNER_OS" = Windows ] && extra=(--cuda-runtime dist-server/hypnos-*-windows-x64-cuda12-runtime.zip)
+          if [ "$RUNNER_OS" = Windows ]; then extra=(--cuda-runtime dist-server/hypnos-*-windows-x64-cuda12-runtime.zip); fi
           ./desktop/scripts/stage-server.sh --archive "$archive" ${extra[@]+"${extra[@]}"}
       - name: Build the installers
         working-directory: desktop
