@@ -6,6 +6,22 @@ each one is described in full. Releases are on
 [Semantic Versioning](https://semver.org) (before 1.0, a minor version may change the API or the
 config, and its notes say so).
 
+## 0.7.2 (2026-11-02)
+
+### Added
+- The desktop installers for Windows (`.msi` / `.setup.exe`) and Linux (`.deb` / `.AppImage`)
+  carry the server, as the macOS app has since 0.4: the app starts it with itself, keeps its
+  config and models in the app data folder (`%APPDATA%\Hypnos\`, `~/.local/share/Hypnos/`) and
+  runs the guided setup on first launch. The Windows app also packs the CUDA 12 runtime; the
+  Linux one needs it installed, like the archive (DESK-32).
+
+### Build and CI
+- The engines' CMake builds are kept as assets of the `engines` prerelease, shared by every
+  branch and tag, instead of the Actions cache (BUILD-13).
+- `run.bat` loads the Visual Studio environment unless the shell is already a developer
+  prompt; a stray `rc.exe` on PATH no longer skips it. Version strings from `git describe`
+  ignore the `engines` tag.
+
 ## 0.7.1 (2026-11-01)
 
 Includes everything tagged 0.7.0, whose release run stopped at a formatting check and was never
