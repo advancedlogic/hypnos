@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>
+    // Google Analytics, loaded only after the visitor accepts it in the cookie banner (script.js).
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('consent', 'default', { ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', analytics_storage: 'denied' });
+    window.hypnosLoadAnalytics = function () {
+      if (window.hypnosAnalyticsLoaded) return;
+      window.hypnosAnalyticsLoaded = true;
+      gtag('consent', 'update', { analytics_storage: 'granted' });
+      var s = document.createElement('script');
+      s.async = true;
+      s.src = 'https://www.googletagmanager.com/gtag/js?id=G-XWGGG9649G';
+      document.head.appendChild(s);
+      gtag('js', new Date());
+      gtag('config', 'G-XWGGG9649G');
+    };
+    try { if (localStorage.getItem('hypnos-consent') === 'granted') window.hypnosLoadAnalytics(); } catch (e) {}
+  </script>
+  <title>Privacy policy · Hypnos</title>
+  <meta name="description" content="What the Hypnos website collects, why, and how to withdraw consent for Google Analytics.">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0d0f43">
+  <meta property="og:title" content="Privacy policy · Hypnos">
+  <meta property="og:description" content="What the Hypnos website collects, why, and how to withdraw consent for Google Analytics.">
+  <meta property="og:image" content="../assets/logo-256.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/favicon.png">
+  <link rel="apple-touch-icon" href="../assets/logo-256.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="../docs.css">
+  <script>
+    // Apply the stored theme before the first paint to avoid a flash.
+    try {
+      var t = localStorage.getItem('hypnos-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  </script>
+</head>
+<body class="docs-page">
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container header-row">
+      <a class="brand" href="../index.html" aria-label="Hypnos home">
+        <img src="../assets/logo-256.png" alt="" width="36" height="36">
+        <span>Hypnos</span>
+      </a>
+      <nav class="nav" id="nav" aria-label="Documentation">
+        <a href="index.html">Docs</a>
+        <a href="desktop-manual.html">Desktop manual</a>
+        <a href="api.html">API reference</a>
+        <a href="operating.html">Operating guide</a>
+        <a href="https://github.com/advancedlogic/hypnos" rel="noopener">GitHub</a>
+      </nav>
+      <div class="header-actions">
+        <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+          <svg class="sun" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg class="moon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="icon-btn menu-btn" id="menu-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="nav">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="container">
+      <p class="crumbs"><a href="../index.html">Hypnos</a> › <a href="index.html">Docs</a> › <span>Privacy</span></p>
+      <article class="prose">
+        <h1>Privacy policy</h1>
+        <p class="docs-source">Last updated 3 November 2026.</p>
+        <p>This policy covers this website (the Hypnos landing page and its documentation). It does not cover the Hypnos software: the server and the desktop app run on your own machine and send nothing to us.</p>
+
+        <h2 id="who">Who is responsible</h2>
+        <p>The site is run by Antonio Linari, the maintainer of Hypnos (the data controller under the GDPR). For any question or request about your data, contact the maintainer through GitHub at <a href="https://github.com/advancedlogic" rel="noopener">github.com/advancedlogic</a>.</p>
+
+        <h2 id="always">What happens on every visit</h2>
+        <ul>
+          <li><strong>Hosting.</strong> Like any web server, the server that delivers these pages receives your IP address, the page requested, the time, the referring page and your browser's user agent, which it needs to send you the page and to keep the service secure (legitimate interest, art. 6(1)(f) GDPR). We do not use these logs to profile anyone.</li>
+          <li><strong>Fonts.</strong> The pages load their typefaces (Inter, Space Grotesk) from Google Fonts, so your browser sends your IP address and user agent to Google when it fetches them (legitimate interest in a consistent presentation, art. 6(1)(f) GDPR). See <a href="https://developers.google.com/fonts/faq/privacy" rel="noopener">Google Fonts' privacy FAQ</a>.</li>
+          <li><strong>Your browser's storage.</strong> The site keeps two values in your browser's local storage: your theme choice (<code>hypnos-theme</code>) and your cookie choice (<code>hypnos-consent</code>). They stay on your device, are never sent to anyone, and you can delete them by clearing the site's data.</li>
+        </ul>
+
+        <h2 id="analytics">Google Analytics, only with your consent</h2>
+        <p>If you click <em>Accept</em> in the cookie banner, the site loads Google Analytics 4 to count visits and see which pages are useful. Nothing from Google Analytics is loaded and no analytics cookie is set before that, or if you click <em>Decline</em>.</p>
+        <ul>
+          <li><strong>What is collected:</strong> the pages you view, how you reached the site, your browser, device type, screen size, language and approximate location (country or city, derived from your IP address, which Google Analytics 4 does not store), and a random identifier.</li>
+          <li><strong>Cookies:</strong> <code>_ga</code> and <code>_ga_&lt;id&gt;</code>, which recognise a returning browser; they last up to two years.</li>
+          <li><strong>Legal basis:</strong> your consent (art. 6(1)(a) GDPR and the ePrivacy rules on cookies).</li>
+          <li><strong>Recipient:</strong> Google Ireland Limited, Gordon House, Barrow Street, Dublin 4, Ireland, as our processor. Data may be transferred to Google LLC in the United States, which is certified under the EU-US Data Privacy Framework.</li>
+          <li><strong>Retention:</strong> the analytics data is deleted after the retention period set for the property (two months).</li>
+          <li><strong>Withdrawing consent:</strong> click <em>Cookie settings</em> at the bottom of any page and choose <em>Decline</em>; the site stops loading Google Analytics and deletes its cookies. Withdrawal does not affect what was collected before it.</li>
+        </ul>
+        <p>More in <a href="https://policies.google.com/technologies/partner-sites" rel="noopener">how Google uses data from sites that use its services</a> and <a href="https://policies.google.com/privacy" rel="noopener">Google's privacy policy</a>.</p>
+
+        <h2 id="rights">Your rights</h2>
+        <p>You have the right to access the data about you, to have it corrected or deleted, to restrict or object to its processing, to data portability, and to withdraw consent at any time. You also have the right to lodge a complaint with a data protection supervisory authority, in particular the one where you live or work.</p>
+        <p>We do not sell your data, use it for advertising or make automated decisions about you.</p>
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <div class="footer-brand">
+        <img src="../assets/logo-256.png" alt="" width="40" height="40">
+        <div>
+          <strong>Hypnos</strong>
+          <p>OpenAI-compatible multi-modal inference server with a 3-tier memory scheduler.</p>
+        </div>
+      </div>
+      <nav class="footer-links" aria-label="Project links">
+        <a href="https://github.com/advancedlogic/hypnos" rel="noopener">Source</a>
+        <a href="https://github.com/advancedlogic/hypnos/releases" rel="noopener">Releases</a>
+        <a href="index.html">Docs</a>
+        <a href="https://github.com/advancedlogic/hypnos/blob/main/README.md" rel="noopener">README</a>
+        <a href="https://github.com/advancedlogic/hypnos/blob/main/backend/hypnos.example.toml" rel="noopener">Example config</a>
+        <a href="privacy.html" data-privacy-link>Privacy</a>
+        <button type="button" class="footer-link-button" data-cookie-settings>Cookie settings</button>
+      </nav>
+      <p class="footer-license">Source code under Apache-2.0 or MIT, at your option. Binaries built with the default engines link espeak-ng and are distributed under GPL-3.0-or-later. Model weights carry their own licenses.</p>
+    </div>
+  </footer>
+
+  <script src="../script.js" defer></script>
+</body>
+</html>

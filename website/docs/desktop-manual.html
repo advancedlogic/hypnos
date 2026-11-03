@@ -3,6 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>
+    // Google Analytics, loaded only after the visitor accepts it in the cookie banner (script.js).
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('consent', 'default', { ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', analytics_storage: 'denied' });
+    window.hypnosLoadAnalytics = function () {
+      if (window.hypnosAnalyticsLoaded) return;
+      window.hypnosAnalyticsLoaded = true;
+      gtag('consent', 'update', { analytics_storage: 'granted' });
+      var s = document.createElement('script');
+      s.async = true;
+      s.src = 'https://www.googletagmanager.com/gtag/js?id=G-XWGGG9649G';
+      document.head.appendChild(s);
+      gtag('js', new Date());
+      gtag('config', 'G-XWGGG9649G');
+    };
+    try { if (localStorage.getItem('hypnos-consent') === 'granted') window.hypnosLoadAnalytics(); } catch (e) {}
+  </script>
   <title>Hypnos Desktop manual · Hypnos</title>
   <meta name="description" content="The user manual of the Hypnos desktop app: installing, the guided setup, chatting, attachments, voice, images, tools, models, settings, the local server and troubleshooting.">
   <meta name="color-scheme" content="dark light">
@@ -665,6 +683,8 @@ folder above: the app writes a fresh one from its template at the next start.</p
         <a href="index.html">Docs</a>
         <a href="https://github.com/advancedlogic/hypnos/blob/main/README.md" rel="noopener">README</a>
         <a href="https://github.com/advancedlogic/hypnos/blob/main/backend/hypnos.example.toml" rel="noopener">Example config</a>
+        <a href="privacy.html" data-privacy-link>Privacy</a>
+        <button type="button" class="footer-link-button" data-cookie-settings>Cookie settings</button>
       </nav>
       <p class="footer-license">Source code under Apache-2.0 or MIT, at your option. Binaries built with the default engines link espeak-ng and are distributed under GPL-3.0-or-later. Model weights carry their own licenses.</p>
     </div>

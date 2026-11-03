@@ -278,6 +278,25 @@ td code { white-space: nowrap; }
 .footer-links { display: flex; flex-wrap: wrap; gap: 8px 22px; align-content: flex-start; justify-content: flex-end; }
 .footer-links a { color: #e9ebff; font-weight: 500; font-size: 0.92rem; }
 .footer-links a:hover { color: #ff8a3d; text-decoration: none; }
+.footer-link-button { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; color: #e9ebff; font-weight: 500; font-size: 0.92rem; }
+.footer-link-button:hover { color: #ff8a3d; }
+
+/* Cookie consent banner (script.js); Accept and Decline weigh the same, as GDPR guidance asks. */
+.cookie-banner {
+  position: fixed; z-index: 100; left: var(--gutter); right: var(--gutter); bottom: var(--gutter);
+  max-width: 640px; margin: 0 auto; padding: 16px 18px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); font-size: 0.9rem;
+}
+.cookie-banner p { margin: 0; flex: 1 1 300px; line-height: 1.5; }
+.cookie-banner a { color: var(--accent-text); }
+.cookie-actions { display: flex; gap: 10px; }
+.cookie-btn {
+  padding: 9px 18px; border-radius: 10px; font: inherit; font-weight: 600; cursor: pointer;
+  background: var(--accent); color: var(--on-accent); border: 1px solid var(--accent);
+}
+.cookie-btn:hover { background: #ff7a26; }
 .footer-license { grid-column: 1 / -1; font-size: 0.8rem; color: #8e93c9; margin: 8px 0 0; border-top: 1px solid rgba(255, 255, 255, 0.1); padding-top: 18px; }
 
 /* Responsive */
