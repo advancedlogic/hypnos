@@ -49,7 +49,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
-      - uses: lukka/get-cmake@f86dd60acae0d132056913e248bdabf0e0580b7a # v4.4.5
+      - uses: lukka/get-cmake@16e8153a8b4918849d92aad131befe67a3705daa # v4.5.0
 
       # sccache for the engines' C, C++ and CUDA objects (CMake reads the *_COMPILER_LAUNCHER
       # variables from the environment), stored in the GitHub Actions cache. A tag run reads the
